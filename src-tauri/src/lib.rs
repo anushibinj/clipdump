@@ -1,3 +1,4 @@
+mod autostart;
 mod platform;
 mod state;
 mod tray;
@@ -33,6 +34,12 @@ pub fn run() {
             .build(),
     );
 
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        None,
+    ));
+
     builder
         .manage(AppState::default())
         .on_window_event(|win, event| {
@@ -66,6 +73,8 @@ pub fn run() {
                     eprintln!("clipdump: could not register hotkey: {e}");
                 }
             }
+            #[cfg(desktop)]
+            autostart::enable_on_first_run(app);
             tray::build(app)?;
             Ok(())
         })
