@@ -25,8 +25,11 @@ use crate::search::{PathChecker, ResultDto, SearchRequest, TypeFilter};
 use crate::state::AppState;
 use crate::store::Store;
 
+pub mod preview;
 #[cfg(test)]
 mod tests;
+
+pub use preview::{PreviewDto, preview_item};
 
 /// The history store, or a plain error when it failed to open at startup (the
 /// bar and tray still run in that case, see `lib::start_capture`).
@@ -72,4 +75,16 @@ pub fn search(
         filter.unwrap_or_default(),
         limit,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// get_preview
+// ---------------------------------------------------------------------------
+
+/// The Tab pane content of one item, capped in size (see [`preview`]).
+#[tauri::command(async)]
+pub fn get_preview(app: AppHandle, id: u64) -> Result<PreviewDto, String> {
+    let store = store(&app)?;
+    let state = app.state::<AppState>();
+    preview_item(&store, state.paths.as_ref(), id)
 }

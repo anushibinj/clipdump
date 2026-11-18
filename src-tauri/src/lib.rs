@@ -72,7 +72,10 @@ pub fn run() {
     builder
         // Keep `build.rs` (COMMANDS) and capabilities/default.json in step with this
         // list: each command is a permission the main window must be granted.
-        .invoke_handler(tauri::generate_handler![commands::search])
+        .invoke_handler(tauri::generate_handler![
+            commands::search,
+            commands::get_preview
+        ])
         .manage(AppState::default())
         .on_window_event(|win, event| {
             if win.label() != window::LABEL {
