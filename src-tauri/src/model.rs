@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-/// What an item holds. The discriminant is stored in `items.kind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// What an item holds. The discriminant is stored in `items.kind`. Serialized
+/// to the webview as `"text"`, `"image"` or `"files"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum ClipKind {
     Text = 0,

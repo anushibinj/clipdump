@@ -14,8 +14,13 @@
 //! * Smart case and Latin normalization come from nucleo itself
 //!   (`CaseMatching::Smart`, `Normalization::Smart`).
 
-// Temporary: the query plan is wired into ranking in the next commits.
-#![allow(dead_code)]
+mod dto;
+mod paths;
+
+pub use dto::{MatchSource, ResultDto, SNIPPET_CHARS, render};
+pub use paths::{
+    CachedPathChecker, FsPathChecker, MISSING_CHECK_MAX, MISSING_TTL, PathChecker, count_missing,
+};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -405,6 +410,17 @@ fn rank_recent<'a>(
             score: 0.0,
         })
         .collect()
+}
+
+/// Rank and render in one call: the lock free form of a search, used by tests
+/// and the benchmark. The app goes through `Store::search`, which holds the read
+/// lock for the ranking only.
+pub fn search<'a>(
+    items: impl Iterator<Item = &'a Arc<ClipItem>>,
+    req: &SearchRequest<'_>,
+    paths: &dyn PathChecker,
+) -> Vec<ResultDto> {
+    render(&rank(items, req), req, paths)
 }
 
 #[cfg(test)]

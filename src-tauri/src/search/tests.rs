@@ -283,3 +283,262 @@ fn exact_substring_beats_a_better_scoring_fuzzy_match() {
     let r = ranked(&items, "cpc", TypeFilter::All);
     assert_eq!(ids(&r), [1]);
 }
+
+// -- missing files: checker, cache, TTL ------------------------------------------
+
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::time::{Duration, Instant};
+
+/// A checker over a fixed set of existing paths that counts its calls.
+struct FakeFs {
+    present: Mutex<HashSet<String>>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl FakeFs {
+    fn new(present: &[&str]) -> (Self, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fs = Self {
+            present: Mutex::new(present.iter().map(|p| (*p).to_string()).collect()),
+            calls: Arc::clone(&calls),
+        };
+        (fs, calls)
+    }
+}
+
+impl PathChecker for FakeFs {
+    fn exists(&self, path: &str) -> bool {
+        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+        self.present.lock().contains(path)
+    }
+}
+
+use parking_lot::Mutex;
+
+/// A cached checker whose clock is a counter of milliseconds.
+fn cached(present: &[&str]) -> (CachedPathChecker, Arc<AtomicUsize>, Arc<AtomicU64>) {
+    let (fs, calls) = FakeFs::new(present);
+    let ms = Arc::new(AtomicU64::new(0));
+    let base = Instant::now();
+    let clock_ms = Arc::clone(&ms);
+    let c = CachedPathChecker::with_clock(
+        Box::new(fs),
+        Duration::from_millis(2000),
+        Box::new(move || base + Duration::from_millis(clock_ms.load(AtomicOrdering::SeqCst))),
+    );
+    (c, calls, ms)
+}
+
+#[test]
+fn count_missing_counts_paths_that_do_not_exist() {
+    let (fs, _) = FakeFs::new(&["/a", "/c"]);
+    let list: Vec<FileRef> = ["/a", "/b", "/c", "/d"]
+        .iter()
+        .map(|p| FileRef {
+            path: (*p).into(),
+            size: 1,
+            is_dir: false,
+        })
+        .collect();
+    assert_eq!(count_missing(&list, &fs), 2);
+    assert_eq!(count_missing(&[], &fs), 0);
+}
+
+#[test]
+fn count_missing_stops_at_the_per_item_cap() {
+    let (fs, calls) = FakeFs::new(&[]);
+    let list: Vec<FileRef> = (0..MISSING_CHECK_MAX + 50)
+        .map(|i| FileRef {
+            path: format!("/gone/{i}"),
+            size: 1,
+            is_dir: false,
+        })
+        .collect();
+    assert_eq!(count_missing(&list, &fs) as usize, MISSING_CHECK_MAX);
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), MISSING_CHECK_MAX);
+}
+
+#[test]
+fn the_cache_answers_within_the_ttl_and_rechecks_after_it() {
+    let (c, calls, ms) = cached(&["/here"]);
+    assert!(c.exists("/here"));
+    assert!(!c.exists("/gone"));
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+    // Within the TTL: no new disk access.
+    ms.store(1999, AtomicOrdering::SeqCst);
+    assert!(c.exists("/here"));
+    assert!(!c.exists("/gone"));
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+    // At the TTL the entry is stale.
+    ms.store(2000, AtomicOrdering::SeqCst);
+    assert!(c.exists("/here"));
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
+    assert_eq!(c.len(), 2);
+}
+
+#[test]
+fn a_stale_answer_is_replaced_when_the_file_changes() {
+    let (fs, _) = FakeFs::new(&[]);
+    let present = Arc::new(fs);
+    struct Shared(Arc<FakeFs>);
+    impl PathChecker for Shared {
+        fn exists(&self, p: &str) -> bool {
+            self.0.exists(p)
+        }
+    }
+    let ms = Arc::new(AtomicU64::new(0));
+    let base = Instant::now();
+    let m = Arc::clone(&ms);
+    let c = CachedPathChecker::with_clock(
+        Box::new(Shared(Arc::clone(&present))),
+        Duration::from_millis(2000),
+        Box::new(move || base + Duration::from_millis(m.load(AtomicOrdering::SeqCst))),
+    );
+    assert!(!c.exists("/new"));
+    present.present.lock().insert("/new".into());
+    assert!(!c.exists("/new"), "still the cached answer inside the TTL");
+    ms.store(2500, AtomicOrdering::SeqCst);
+    assert!(c.exists("/new"));
+}
+
+#[test]
+fn the_real_checker_sees_real_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, b"x").unwrap();
+    assert!(FsPathChecker.exists(file.to_str().unwrap()));
+    assert!(FsPathChecker.exists(dir.path().to_str().unwrap()));
+    assert!(!FsPathChecker.exists(dir.path().join("nope").to_str().unwrap()));
+}
+
+// -- result DTOs -------------------------------------------------------------
+
+/// Run the whole search with an injected checker.
+fn run(items: &[Arc<ClipItem>], query: &str, paths: &dyn PathChecker) -> Vec<ResultDto> {
+    search(
+        items.iter(),
+        &SearchRequest::new(query, TypeFilter::All, NOW),
+        paths,
+    )
+}
+
+#[test]
+fn a_text_result_carries_metadata_but_no_full_content() {
+    let long = "needle ".to_string() + &"filler ".repeat(500);
+    let item = with(text(7, &long, 5 * DAY), |i| {
+        i.use_count = 3;
+        i.pinned = true;
+        // The store keeps a 300 char preview.
+        i.preview = Arc::from(&long[..300]);
+    });
+    let (fs, _) = FakeFs::new(&[]);
+    let r = run(&[item], "needle", &fs);
+    let d = &r[0];
+    assert_eq!(d.id, 7);
+    assert_eq!(d.kind, ClipKind::Text);
+    assert_eq!(d.match_source, MatchSource::Text);
+    assert_eq!((d.use_count, d.pinned), (3, true));
+    assert_eq!(d.created_at, NOW - 5 * DAY);
+    assert_eq!((d.file_count, d.missing_files, d.has_thumb), (0, 0, false));
+    assert_eq!(d.preview.chars().count(), 300);
+    assert_eq!(d.snippet, None, "the preview shows the match");
+    assert_eq!(d.match_indices, [0, 1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn the_dto_serializes_as_camel_case_json() {
+    let (fs, _) = FakeFs::new(&[]);
+    let r = run(&[image(1, "invoice total", DAY)], "invoice", &fs);
+    let v = serde_json::to_value(&r[0]).unwrap();
+    let obj = v.as_object().unwrap();
+    for key in [
+        "id",
+        "kind",
+        "preview",
+        "snippet",
+        "matchIndices",
+        "matchSource",
+        "createdAt",
+        "useCount",
+        "pinned",
+        "width",
+        "height",
+        "byteSize",
+        "fileCount",
+        "missingFiles",
+        "hasThumb",
+    ] {
+        assert!(obj.contains_key(key), "missing {key}");
+    }
+    assert_eq!(obj.len(), 15, "no stray fields: {obj:?}");
+    assert_eq!(v["kind"], "image");
+    assert_eq!(v["matchSource"], "ocr");
+    assert_eq!(v["hasThumb"], true);
+}
+
+#[test]
+fn an_ocr_match_gets_a_snippet_around_it_and_indices_into_the_snippet() {
+    let ocr = format!(
+        "{} the secret passphrase is here {}",
+        "lorem ".repeat(60),
+        "ipsum ".repeat(60)
+    );
+    let (fs, _) = FakeFs::new(&[]);
+    let r = run(&[image(1, &ocr, 1)], "passphrase", &fs);
+    let d = &r[0];
+    assert_eq!(d.match_source, MatchSource::Ocr);
+    let snip = d.snippet.as_deref().expect("OCR matches carry a snippet");
+    assert!(snip.chars().count() <= SNIPPET_CHARS);
+    assert!(snip.contains("passphrase"));
+    assert!(!snip.contains("  "), "whitespace is collapsed");
+    // The indices point at "passphrase" inside the snippet.
+    let hl: String = d
+        .match_indices
+        .iter()
+        .map(|&i| snip.chars().nth(i as usize).unwrap())
+        .collect();
+    assert_eq!(hl, "passphrase");
+    assert_eq!(
+        d.preview, "Image 1920x1080",
+        "the preview is not the OCR text"
+    );
+}
+
+#[test]
+fn file_results_count_files_and_missing_ones() {
+    let item = files(
+        2,
+        &["/docs/report.pdf", "/docs/old.txt", "/docs/report2.pdf"],
+        1,
+    );
+    let (fs, calls) = FakeFs::new(&["/docs/report.pdf"]);
+    let r = run(&[item], "report", &fs);
+    let d = &r[0];
+    assert_eq!(d.kind, ClipKind::Files);
+    assert_eq!(d.match_source, MatchSource::File);
+    assert_eq!(d.file_count, 3);
+    assert_eq!(d.missing_files, 2);
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
+}
+
+#[test]
+fn existence_is_checked_only_for_returned_file_items() {
+    let (fs, calls) = FakeFs::new(&[]);
+    let items = [
+        files(1, &["/a/matching.txt"], 1),
+        files(2, &["/a/other.txt"], 2),
+        text(3, "matching text", 3),
+    ];
+    let r = run(&items, "matching", &fs);
+    assert_eq!(r.len(), 2);
+    assert_eq!(
+        calls.load(AtomicOrdering::SeqCst),
+        1,
+        "item 2 did not match"
+    );
+    // A text only search never touches the checker.
+    calls.store(0, AtomicOrdering::SeqCst);
+    let _ = run(&[text(3, "x", 1)], "x", &fs);
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+}
