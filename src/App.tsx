@@ -25,6 +25,7 @@ import {
   onBarHidden,
   onBarShown,
   onHistoryChanged,
+  onHistoryRecovered,
   onSettingsChanged,
   onSettingsOpen,
   setSettings as saveSettingsDto,
@@ -50,6 +51,8 @@ function App() {
   const [confirming, setConfirming] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
   const [historyTick, setHistoryTick] = useState(0);
+  // The sentence the user dismissed, so the recovery notice does not come back on the next open.
+  const [recoveryDismissed, setRecoveryDismissed] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -59,8 +62,12 @@ function App() {
 
   // ---- latest values for the stable callbacks below -------------------------
 
-  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref });
-  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref };
+  // The history was moved aside at startup: a message that stays until dismissed (the 5 second
+  // notices take the footer first, then it comes back).
+  const recovery = stats?.recovery && stats.recovery !== recoveryDismissed ? stats.recovery : null;
+
+  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery });
+  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery };
 
   // ---- footer messages ----------------------------------------------------
 
@@ -202,10 +209,12 @@ function App() {
           setView((v) => (v === "settings" ? "search" : "settings"));
           break;
         case "escape":
-          // Layers, innermost first: pending confirmation, settings, preview, then the bar.
+          // Layers, innermost first: pending confirmation, settings, preview, the recovery notice
+          // (the keyboard way to dismiss it), then the bar.
           if (c.confirming) disarm();
           else if (c.view === "settings") setView("search");
           else if (c.previewOpen) setPreviewOpen(false);
+          else if (c.recovery) setRecoveryDismissed(c.recovery);
           else hideBar().catch(() => {});
           break;
       }
@@ -252,6 +261,8 @@ function App() {
         onSettingsOpen(() => setView("settings")),
         // The tray toggled Pause capture (the bar can stay visible in pinned mode).
         onSettingsChanged(() => loadSettings()),
+        // The history was moved aside at startup; `get_stats` carries the sentence.
+        onHistoryRecovered(() => loadStats()),
       );
     } catch {
       // No event bus (plain browser without the mock): the UI still works, it just never refreshes by itself.
@@ -282,12 +293,14 @@ function App() {
 
   // The shortcut hints belong to the search view; settings shows the footer only for a message.
   const footer =
-    view === "settings" && !notice ? null : (
-      <footer className="flex h-9 shrink-0 items-center border-t px-3">
+    view === "settings" && !notice && !recovery ? null : (
+      <footer className="flex min-h-9 shrink-0 items-center border-t px-3 py-1">
         {confirming ? (
           <ConfirmInline count={unpinned} windowMs={CONFIRM_WINDOW_MS} />
         ) : notice ? (
           <Notice {...notice} onDismiss={dismissNotice} />
+        ) : recovery ? (
+          <Notice kind="error" message={recovery} wrap onDismiss={() => setRecoveryDismissed(recovery)} />
         ) : (
           <KbdHints />
         )}

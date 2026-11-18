@@ -65,6 +65,8 @@ const control = {
   hotkeyStartupError: null as string | null,
   /** `open_data_folder` rejects with this message when set. */
   openFolderError: null as string | null,
+  /** `get_stats` reports that the history was moved aside at startup (the recovery notice). */
+  recovery: null as string | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -207,6 +209,7 @@ function stats() {
       : "",
     keyProtector: "dpapi",
     hotkeyError: control.hotkeyStartupError,
+    recovery: control.recovery,
   };
 }
 
@@ -335,6 +338,7 @@ const hooks = {
     control.loginItemError = false;
     control.hotkeyStartupError = null;
     control.openFolderError = null;
+    control.recovery = null;
     load(200);
     changed();
   },

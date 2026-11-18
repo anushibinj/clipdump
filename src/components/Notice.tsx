@@ -8,24 +8,27 @@ export interface NoticeState {
 
 interface NoticeProps extends NoticeState {
   onDismiss: () => void;
+  /** A message that matters and is long (the history was moved aside): wrap it over up to three lines. */
+  wrap?: boolean;
 }
 
 /**
  * A non-blocking message in the footer, for example when copying fails.
  * It never takes focus and goes away on its own (the caller owns the timer).
  */
-export function Notice({ kind, message, onDismiss }: NoticeProps) {
+export function Notice({ kind, message, onDismiss, wrap = false }: NoticeProps) {
   const Icon = kind === "error" ? TriangleAlert : Info;
   return (
     <div
       role={kind === "error" ? "alert" : "status"}
       className={cn(
-        "flex w-full min-w-0 items-center gap-2 text-xs",
+        "flex w-full min-w-0 gap-2 text-xs",
+        wrap ? "items-start py-0.5 leading-snug" : "items-center",
         kind === "error" ? "text-destructive" : "text-muted-foreground",
       )}
     >
-      <Icon className="size-3.5 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate" title={message}>
+      <Icon className={cn("size-3.5 shrink-0", wrap && "mt-px")} aria-hidden />
+      <span className={cn("min-w-0 flex-1", wrap ? "line-clamp-3" : "truncate")} title={message}>
         {message}
       </span>
       <button

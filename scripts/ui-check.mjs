@@ -482,6 +482,31 @@ async function keys(browser, url) {
   const m2 = await page.locator('[role="option"] mark').allInnerTexts();
   check("highlights work with accented characters", m2.length > 0 && m2.every((m) => m === "brûlée"), JSON.stringify(m2));
 
+  // the history was moved aside at startup: a notice that stays until dismissed
+  await reset();
+  const sentence = "The history database was damaged and could not be opened. The old file was moved to history.corrupt-1700000000.db in C:\\Users\\me\\AppData\\Local\\clipdump, and a new empty history was started.";
+  await page.evaluate((m) => {
+    window.__clipMock.control.recovery = m;
+    window.__clipMock.emit("history:recovered");
+  }, sentence);
+  await settle();
+  const rec = page.locator('footer [role="alert"]');
+  check("history:recovered shows the recovery notice", (await rec.count()) === 1 && (await rec.innerText()).includes("history.corrupt-1700000000.db"));
+  await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await page.waitForTimeout(5600);
+  check("the recovery notice does not time out", (await rec.count()) === 1);
+  const hides1 = (await calls("hide_bar")).length;
+  await page.keyboard.press("Escape");
+  await settle();
+  check("Esc dismisses the recovery notice without hiding the bar", (await rec.count()) === 0 && (await calls("hide_bar")).length === hides1);
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  check("a dismissed recovery notice stays dismissed on the next open", (await rec.count()) === 0);
+  await page.keyboard.press("Escape");
+  await settle();
+  check("the next Esc hides the bar again", (await calls("hide_bar")).length === hides1 + 1);
+
   check("no console errors or page errors", problems.length === 0, problems.slice(0, 3).join(" | "));
   console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
   await page.context().close();

@@ -126,6 +126,11 @@ export interface StatsDto {
   keyProtector: string;
   /** Set when the configured hotkey could not be registered (another app owns it), else null. */
   hotkeyError: string | null;
+  /**
+   * Set for the whole run when the history was damaged (or its key unreadable) at startup and
+   * was moved aside: what happened, the folder and the new file names. Show it until dismissed.
+   */
+  recovery: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +218,8 @@ export const EVENTS = {
   settingsOpen: "settings:open",
   /** Settings changed behind the UI's back (the tray toggled Pause capture): call `getSettings` again. */
   settingsChanged: "settings:changed",
+  /** The history was moved aside at startup: call `getStats`, its `recovery` field has the sentence. */
+  historyRecovered: "history:recovered",
 } as const;
 
 type Handler = () => void;
@@ -228,6 +235,7 @@ export const onHistoryChanged = (h: Handler) => on(EVENTS.historyChanged, h);
 /** The tray asked for the settings view. */
 export const onSettingsOpen = (h: Handler) => on(EVENTS.settingsOpen, h);
 export const onSettingsChanged = (h: Handler) => on(EVENTS.settingsChanged, h);
+export const onHistoryRecovered = (h: Handler) => on(EVENTS.historyRecovered, h);
 
 // ---------------------------------------------------------------------------
 // Thumbnails and images: the `clip` URI scheme
