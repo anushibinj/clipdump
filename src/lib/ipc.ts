@@ -36,6 +36,8 @@ export interface ResultDto {
   byteSize: number;
   fileCount: number;
   missingFiles: number;
+  /** Lines of a text item (1 for a single line), 0 for other kinds. */
+  lineCount: number;
   hasThumb: boolean;
 }
 
@@ -216,6 +218,9 @@ export const onSettingsOpen = (h: Handler) => on(EVENTS.settingsOpen, h);
  * `clip://localhost` on macOS and Linux.
  */
 export function clipOrigin(windowsLike: boolean = isWindowsLike()): string {
+  // `vite --mode mock` (browser, fake backend): the dev server draws the pictures.
+  // The constant folds away in production builds.
+  if (import.meta.env.MODE === "mock") return "/mock-clip";
   return windowsLike ? "http://clip.localhost" : "clip://localhost";
 }
 
