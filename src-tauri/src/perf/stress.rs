@@ -111,6 +111,13 @@ struct Params {
     /// Check memory and search latency too. Off for the smoke test of the normal
     /// suite, which shares its process (and CPUs) with hundreds of other tests.
     strict: bool,
+    /// Run with `--perf` logging on and print its p50 and p95 table. Off in the
+    /// smoke test (the switch is process wide and other tests share the process).
+    perf_log: bool,
+    /// Threads that play the watcher. One generates 4K pictures at about 6 a
+    /// second, which at full speed is slower than ingest takes them, so full speed
+    /// runs use two.
+    producers: usize,
 }
 
 fn env_num(name: &str) -> Option<u64> {
@@ -137,6 +144,8 @@ impl Params {
             csv: std::env::var_os("CLIPDUMP_STRESS_CSV").map(PathBuf::from),
             ocr_drain_secs: n("OCR_DRAIN_SECS", 60),
             strict: true,
+            perf_log: true,
+            producers: n("PRODUCERS", if rate == 0 { 2 } else { 1 }) as usize,
         }
     }
 
@@ -153,10 +162,10 @@ impl Params {
 // A small deterministic generator (no rand crate: the runs must be repeatable)
 // ---------------------------------------------------------------------------
 
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         // xorshift64*
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
@@ -164,16 +173,16 @@ impl Rng {
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    fn below(&mut self, n: u64) -> u64 {
+    pub(super) fn below(&mut self, n: u64) -> u64 {
         self.next() % n.max(1)
     }
 
-    fn range(&mut self, lo: usize, hi: usize) -> usize {
+    pub(super) fn range(&mut self, lo: usize, hi: usize) -> usize {
         lo + self.below((hi - lo + 1) as u64) as usize
     }
 }
 
-const WORDS: &[&str] = &[
+pub(super) const WORDS: &[&str] = &[
     "meeting",
     "notes",
     "invoice",
@@ -238,7 +247,7 @@ const WORDS: &[&str] = &[
     "archive",
 ];
 
-fn sentence(rng: &mut Rng, words: usize) -> String {
+pub(super) fn sentence(rng: &mut Rng, words: usize) -> String {
     let mut s = String::new();
     for k in 0..words {
         if k > 0 {
@@ -251,7 +260,7 @@ fn sentence(rng: &mut Rng, words: usize) -> String {
 
 /// Text of about `bytes` bytes: sentences, one per line (every third line
 /// CRLF, like text copied from a Windows app).
-fn paragraphs(rng: &mut Rng, i: usize, bytes: usize) -> String {
+pub(super) fn paragraphs(rng: &mut Rng, i: usize, bytes: usize) -> String {
     let mut t = format!("entry {i}: ");
     let mut line = 0;
     while t.len() < bytes {
@@ -263,7 +272,7 @@ fn paragraphs(rng: &mut Rng, i: usize, bytes: usize) -> String {
     t
 }
 
-fn code(rng: &mut Rng, i: usize) -> String {
+pub(super) fn code(rng: &mut Rng, i: usize) -> String {
     let mut t = format!("// entry {i}\n");
     for k in 0..rng.range(5, 80) {
         let w = WORDS[rng.below(WORDS.len() as u64) as usize];
@@ -274,7 +283,7 @@ fn code(rng: &mut Rng, i: usize) -> String {
     t
 }
 
-fn url(rng: &mut Rng, i: usize) -> String {
+pub(super) fn url(rng: &mut Rng, i: usize) -> String {
     let (a, b) = (
         WORDS[rng.below(WORDS.len() as u64) as usize],
         WORDS[rng.below(WORDS.len() as u64) as usize],
@@ -292,13 +301,13 @@ fn url(rng: &mut Rng, i: usize) -> String {
 /// A screenshot like picture: flat window areas, a title gradient, lines of
 /// text like marks and one region of photo like noise (which does not compress,
 /// so PNGs come out between a few hundred KB and a few MB, like real ones).
-struct Pictures {
+pub(super) struct Pictures {
     base: Rgba,
     noise: (u32, u32, u32, u32),
 }
 
 impl Pictures {
-    fn new(w: u32, h: u32) -> Self {
+    pub(super) fn new(w: u32, h: u32) -> Self {
         let mut px = vec![0u8; (w as usize) * (h as usize) * 4];
         let mut put = |x0: u32, y0: u32, x1: u32, y1: u32, c: [u8; 4]| {
             for y in y0.min(h)..y1.min(h) {
@@ -357,7 +366,7 @@ impl Pictures {
     /// Picture number `i`: the base, with the noise region flattened for every
     /// other one (so sizes vary) and a 32 x 32 stamp whose colour encodes `i`
     /// (so every picture hashes differently).
-    fn make(&self, i: u32) -> Rgba {
+    pub(super) fn make(&self, i: u32) -> Rgba {
         let mut p = self.base.clone();
         let w = p.width as usize;
         if i % 2 == 1 {
@@ -392,22 +401,24 @@ impl Pictures {
     /// The clipboard bytes of picture `i` in one of the three formats the Windows
     /// watcher hands over: the registered PNG format, `CF_DIBV5` (what Win+Shift+S
     /// uses) and a plain 24 bit `CF_DIB`.
-    fn image_data(&self, i: u32) -> ImageData {
+    pub(super) fn image_data(&self, i: u32) -> ImageData {
+        let format = match i % 5 {
+            0 | 1 => ImageFormat::Png,
+            2 | 3 => ImageFormat::Dibv5,
+            _ => ImageFormat::Dib,
+        };
+        self.image_data_in(i, format)
+    }
+
+    /// Picture `i` in a given format.
+    pub(super) fn image_data_in(&self, i: u32, format: ImageFormat) -> ImageData {
         let pic = self.make(i);
-        match i % 5 {
-            0 | 1 => ImageData {
-                format: ImageFormat::Png,
-                bytes: encode_png(&pic).expect("png"),
-            },
-            2 | 3 => ImageData {
-                format: ImageFormat::Dibv5,
-                bytes: pics::dibv5_bitfields(&pic, false),
-            },
-            _ => ImageData {
-                format: ImageFormat::Dib,
-                bytes: pics::dib24(&pic, false),
-            },
-        }
+        let bytes = match format {
+            ImageFormat::Png => encode_png(&pic).expect("png"),
+            ImageFormat::Dibv5 => pics::dibv5_bitfields(&pic, false),
+            ImageFormat::Dib => pics::dib24(&pic, false),
+        };
+        ImageData { format, bytes }
     }
 }
 
@@ -417,13 +428,13 @@ impl Pictures {
 
 /// Real files for the file list entries, so `stat` and the image thumbnail code
 /// run for real; the rest of each list is made up paths.
-struct FileFixtures {
+pub(super) struct FileFixtures {
     _dir: tempfile::TempDir,
     real: Vec<PathBuf>,
 }
 
 impl FileFixtures {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().expect("fixture dir");
         let mut real = Vec::new();
         for k in 0..4 {
@@ -440,7 +451,7 @@ impl FileFixtures {
         Self { _dir: dir, real }
     }
 
-    fn list(&self, rng: &mut Rng, i: usize) -> Vec<PathBuf> {
+    pub(super) fn list(&self, rng: &mut Rng, i: usize) -> Vec<PathBuf> {
         let n = rng.range(1, 200);
         let mut v = Vec::with_capacity(n);
         let real = rng.range(0, self.real.len().min(n));
@@ -484,9 +495,9 @@ struct Generator {
 }
 
 impl Generator {
-    fn new(p: &Params) -> Self {
+    fn new(p: &Params, k: usize) -> Self {
         Self {
-            rng: Rng(0xC11D_0001),
+            rng: Rng(0xC11D_0001 + 7919 * k as u64),
             pics: Pictures::new(p.width, p.height),
             files: FileFixtures::new(),
             image_pct: p.image_pct,
@@ -564,6 +575,8 @@ struct CountingSink {
     /// Longest `Store::insert` seen, in microseconds (the write lock is held
     /// inside it).
     insert_max_us: AtomicU64,
+    /// Every `Store::insert`, in microseconds, for its distribution.
+    insert_us: Mutex<Vec<u64>>,
 }
 
 impl ItemSink for CountingSink {
@@ -573,8 +586,9 @@ impl ItemSink for CountingSink {
             Inserted::New(_) => self.new.fetch_add(1, Ordering::Relaxed),
             Inserted::Bumped(_) => self.bumped.fetch_add(1, Ordering::Relaxed),
         };
-        self.insert_max_us
-            .fetch_max(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+        let us = t.elapsed().as_micros() as u64;
+        self.insert_max_us.fetch_max(us, Ordering::Relaxed);
+        self.insert_us.lock().unwrap().push(us);
     }
 
     fn bump(&self, hash: u128) {
@@ -704,6 +718,16 @@ struct Sample {
     free: u64,
 }
 
+/// A search that took more than 20 ms, and how long the same query took when
+/// asked again at once.
+#[derive(Clone, Copy, Debug)]
+struct SlowSearch {
+    at_ms: u64,
+    us: u64,
+    again_us: u64,
+    query: &'static str,
+}
+
 const QUERIES: &[&str] = &[
     "",
     "m",
@@ -751,6 +775,11 @@ struct Report {
     min_free: u64,
     search_us: Vec<u64>,
     insert_max_us: u64,
+    insert_p50_us: u64,
+    slow_searches: Vec<SlowSearch>,
+    insert_p99_us: u64,
+    steady_trimmed_rss: u64,
+    perf_table: String,
     final_items: usize,
     final_pinned: usize,
     final_images: usize,
@@ -826,6 +855,12 @@ impl Report {
             mb(self.rss_end).max(mb(self.rss_mid)) - mb(self.rss_mid),
             mb(self.steady_rss),
         );
+        if self.steady_trimmed_rss > 0 {
+            eprintln!(
+                "memory (RSS) after the allocator is told to give its free memory back (malloc_trim): {:.0} MB",
+                mb(self.steady_trimmed_rss)
+            );
+        }
         eprintln!(
             "cache: max {:.1} MB of budget {:.0} MB",
             self.max_cache as f64 / MB as f64,
@@ -855,14 +890,37 @@ impl Report {
             self.ocr_left_at_stop
         );
         eprintln!(
-            "search every 50 ms during the run: {} searches, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms, max {:.3} ms (limit p95 {SEARCH_P95_MAX_MS} ms); longest Store::insert {:.3} ms",
+            "search every 50 ms during the run: {} searches, p50 {:.3} ms, p95 {:.3} ms, p99 {:.3} ms, max {:.3} ms (limit p95 {SEARCH_P95_MAX_MS} ms); Store::insert p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms",
             s.len(),
             ms(p50),
             ms(p95),
             ms(p99),
             ms(max),
+            ms(self.insert_p50_us),
+            ms(self.insert_p99_us),
             ms(self.insert_max_us),
         );
+        for s in self.slow_searches.iter().take(8) {
+            eprintln!(
+                "slow search at {:.1} s: {:.1} ms for {:?}, the same query again at once {:.3} ms",
+                s.at_ms as f64 / 1000.0,
+                ms(s.us),
+                s.query,
+                ms(s.again_us)
+            );
+        }
+        if self.slow_searches.len() > 8 {
+            eprintln!(
+                "... and {} more slow searches",
+                self.slow_searches.len() - 8
+            );
+        }
+        if !self.perf_table.is_empty() {
+            eprintln!(
+                "perf log of this run (what --perf records, same code):\n{}",
+                self.perf_table
+            );
+        }
         eprintln!(
             "graceful shutdown {} ms, reopen {} ms",
             self.shutdown_ms, self.reopen_ms
@@ -901,7 +959,7 @@ impl Report {
     }
 }
 
-fn open_store(
+pub(super) fn open_store(
     dir: &Path,
     settings: &Arc<std::sync::RwLock<Settings>>,
     ocr: &OcrQueueHandle,
@@ -920,7 +978,7 @@ fn open_store(
     )
 }
 
-fn snapshot(store: &Store) -> Vec<ClipItem> {
+pub(super) fn snapshot(store: &Store) -> Vec<ClipItem> {
     store
         .read()
         .iter_newest_first()
@@ -930,6 +988,12 @@ fn snapshot(store: &Store) -> Vec<ClipItem> {
 
 fn run(p: &Params) -> Report {
     let started = Instant::now();
+    let perf_since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let perf_path = p
+        .perf_log
+        .then(|| super::enable_for_harness(&std::env::temp_dir().join("clipdump-stress-perf")));
     let mut problems = Vec::new();
     let parent = p.dir.clone().unwrap_or_else(std::env::temp_dir);
     let tmp = tempfile::Builder::new()
@@ -960,13 +1024,16 @@ fn run(p: &Params) -> Report {
         new: AtomicU64::new(0),
         bumped: AtomicU64::new(0),
         insert_max_us: AtomicU64::new(0),
+        insert_us: Mutex::default(),
     });
     let (tx, rx) = crossbeam_channel::bounded::<IngestMsg>(p.queue);
     let pool = IngestPool::start(rx.clone(), sink.clone()).expect("ingest pool");
 
     // The generator holds the base picture (33 MB at 4K): build it before the
     // baseline, so the baseline contains the harness's own fixed memory.
-    let mut generator = Generator::new(p);
+    let generators: Vec<Generator> = (0..p.producers.max(1))
+        .map(|k| Generator::new(p, k))
+        .collect();
     let baseline = procmem::rss().map_or(0, |r| r.now);
 
     let abort: Arc<Mutex<Option<String>>> = Arc::default();
@@ -1025,54 +1092,80 @@ fn run(p: &Params) -> Report {
     // -- concurrent search every 50 ms -------------------------------------------
     let searcher = {
         let (store, stop) = (Arc::clone(&store), Arc::clone(&stop));
+        let t0 = t0;
         thread::spawn(move || {
             let paths = CachedPathChecker::default();
             let mut lat = Vec::new();
+            let mut slow = Vec::new();
             let mut q = 0;
+            let run = |query: &str| {
+                let t = Instant::now();
+                // The function behind the `search` command, so `--perf` times it too.
+                let found =
+                    crate::commands::search_items(&store, &paths, query, TypeFilter::All, Some(50));
+                std::hint::black_box(found);
+                t.elapsed().as_micros() as u64
+            };
             while !stop.load(Ordering::Relaxed) {
                 let query = QUERIES[q % QUERIES.len()];
                 q += 1;
-                let mut req = SearchRequest::new(query, TypeFilter::All, store.now_ms());
-                req.limit = 50;
-                let t = Instant::now();
-                let found = store.search(&req, &paths);
-                lat.push(t.elapsed().as_micros() as u64);
-                std::hint::black_box(found);
+                let us = run(query);
+                lat.push(us);
+                if us > 20_000 {
+                    // A stall: ask again at once. If the repeat is fast, the query
+                    // itself is not slow, something else held the search up.
+                    let again = run(query);
+                    slow.push(SlowSearch {
+                        at_ms: t0.elapsed().as_millis() as u64,
+                        us,
+                        again_us: again,
+                        query,
+                    });
+                }
                 thread::sleep(Duration::from_millis(50));
             }
-            lat
+            (lat, slow)
         })
     };
 
-    // -- producer (plays the clipboard watcher) ----------------------------------
-    let producer = {
-        let (produced, abort) = (Arc::clone(&produced), Arc::clone(&abort));
-        let (total, rate) = (p.total, p.rate);
-        thread::spawn(move || {
-            let begin = Instant::now();
-            for i in 0..total {
-                if abort.lock().unwrap().is_some() {
-                    break;
-                }
-                if rate > 0 {
-                    let due = begin + Duration::from_secs_f64(i as f64 / f64::from(rate));
-                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
-                        thread::sleep(wait);
+    // -- producers (play the clipboard watcher) ----------------------------------
+    // Producer k sends the entries i with i % producers == k; all share the channel.
+    let n_producers = generators.len();
+    let producers: Vec<_> = generators
+        .into_iter()
+        .enumerate()
+        .map(|(k, mut generator)| {
+            let (produced, abort, tx) = (Arc::clone(&produced), Arc::clone(&abort), tx.clone());
+            let (total, rate) = (p.total, p.rate);
+            thread::spawn(move || {
+                let begin = Instant::now();
+                for i in (k..total).step_by(n_producers) {
+                    if abort.lock().unwrap().is_some() {
+                        break;
                     }
+                    if rate > 0 {
+                        let due = begin + Duration::from_secs_f64(i as f64 / f64::from(rate));
+                        if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                            thread::sleep(wait);
+                        }
+                    }
+                    let (_, msg) = generator.entry(i);
+                    if tx.send(msg).is_err() {
+                        break;
+                    }
+                    produced.fetch_add(1, Ordering::Relaxed);
                 }
-                let (_, msg) = generator.entry(i);
-                if tx.send(msg).is_err() {
-                    break;
-                }
-                produced.fetch_add(1, Ordering::Relaxed);
-            }
-            // `tx` drops here: the pool ends once the channel is drained.
+            })
         })
-    };
+        .collect();
+    // Only the producers' clones keep the channel open now: the pool ends when they
+    // are done and the queue is drained.
+    drop(tx);
 
     // -- pins: a few early items, which must survive everything ------------------
     let pin_after = (p.total / 20).clamp(20, 400) as u64;
-    while produced.load(Ordering::Relaxed) < pin_after && !producer.is_finished() {
+    while produced.load(Ordering::Relaxed) < pin_after && !producers.iter().all(|h| h.is_finished())
+    {
         thread::sleep(Duration::from_millis(20));
     }
     thread::sleep(Duration::from_millis(300));
@@ -1102,7 +1195,9 @@ fn run(p: &Params) -> Report {
         }
     }
 
-    producer.join().expect("producer");
+    for h in producers {
+        h.join().expect("producer");
+    }
     pool.join();
     let ingest_elapsed = t0.elapsed();
 
@@ -1121,11 +1216,34 @@ fn run(p: &Params) -> Report {
     store.persist().flush().expect("flush");
     thread::sleep(Duration::from_millis(500));
     let steady_rss = procmem::rss().map_or(0, |r| r.now);
+    // How much of that is the allocator keeping free memory for reuse (glibc does,
+    // the Windows heap returns big blocks at once): ask it to give it back.
+    #[cfg(target_os = "linux")]
+    let steady_trimmed_rss = {
+        // SAFETY: malloc_trim has no preconditions.
+        unsafe { libc::malloc_trim(0) };
+        procmem::rss().map_or(0, |r| r.now)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let steady_trimmed_rss = 0;
     let aborted = abort.lock().unwrap().clone();
+    let perf_table = match perf_path.flatten() {
+        Some(path) => {
+            super::sync();
+            super::disable_for_harness();
+            let samples: Vec<_> = super::summary::read_log(&path)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s.at_ms >= perf_since)
+                .collect();
+            super::summary::render_markdown(&super::summary::summarize(&samples))
+        }
+        None => String::new(),
+    };
 
     stop.store(true, Ordering::Relaxed);
     sampler.join().unwrap();
-    let search_us = searcher.join().unwrap();
+    let (search_us, slow_searches) = searcher.join().unwrap();
     let samples = Arc::try_unwrap(samples).unwrap().into_inner().unwrap();
 
     // -- invariants ----------------------------------------------------------------
@@ -1275,6 +1393,9 @@ fn run(p: &Params) -> Report {
     let max_cache = samples.iter().map(|s| s.cache_bytes).max().unwrap_or(0);
     let final_images = before.iter().filter(|i| i.kind == ClipKind::Image).count();
     let insert_max_us = sink.insert_max_us.load(Ordering::Relaxed);
+    let mut ins = std::mem::take(&mut *sink.insert_us.lock().unwrap());
+    ins.sort_unstable();
+    let (insert_p50_us, insert_p99_us) = (percentile(&ins, 50), percentile(&ins, 99));
     let t = Instant::now();
     store.persist().shutdown().expect("shutdown");
     drop(sink);
@@ -1342,6 +1463,11 @@ fn run(p: &Params) -> Report {
         min_free: samples.iter().map(|s| s.free).min().unwrap_or(0),
         search_us,
         insert_max_us,
+        insert_p50_us,
+        slow_searches,
+        insert_p99_us,
+        steady_trimmed_rss,
+        perf_table,
         final_items: before.len(),
         final_pinned: before.iter().filter(|i| i.pinned).count(),
         final_images,
@@ -1415,6 +1541,7 @@ fn stress_full_speed_capped_256mb() {
 fn stress_harness_smoke() {
     let mut p = Params::from_env("smoke", 300, 0, 0);
     p.strict = false;
+    p.perf_log = false;
     p.width = 320;
     p.height = 200;
     p.min_free_mb = 64;

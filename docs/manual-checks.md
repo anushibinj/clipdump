@@ -954,3 +954,121 @@ These are the cases the container cannot reproduce (it has no DPAPI).
       medium, large, extra large icon views), in the Alt+Tab list, in Task Manager and on the
       desktop shortcut is the indigo clipboard, crisp at each size, with transparent corners.
 - [ ] The tray icon is the 32 px indigo variant and still reads on both taskbar modes.
+
+## Phase 14: performance verification (Windows only)
+
+Every number of PLAN.md Section 4 that depends on Windows, WebView2 or the real clipboard is
+still unmeasured: the container is Linux, so `docs/perf.md` lists them as PENDING with the
+command that produces each one. This section is that list as steps, and the reboot test.
+Tick a box only with the number written next to it in `docs/perf.md`. Use the installed or
+release build (`pnpm tauri build`, or `pnpm tauri dev --release`), not a debug build: debug
+Rust is ten times slower and says nothing about the budgets.
+
+### The `--perf` session (hotkey, search, ingest, OCR, copy, startup)
+`--perf` (or `CLIPDUMP_PERF=1`) makes the app time its own work. One line per event goes to
+`%LOCALAPPDATA%\clipdump\perf.log` (bounded, at most about 4 MB) and to stderr; never any
+clipboard content. A quit from the tray writes `perf-summary.md` next to it: samples, p50, p95
+and max per event against the Section 4 budget. With the flag off nothing is measured, there is
+no extra thread and no extra IPC.
+
+- [ ] Quit Clipdump. Start `clipdump.exe --perf` (PowerShell: `$env:CLIPDUMP_PERF=1; .\clipdump.exe`).
+      The first lines say `perf logging to ...perf.log`, `loaded N items in X ms`, and the log has
+      `startup_load` and `startup_ready`.
+- [ ] Hotkey to bar visible: press the hotkey 30 times, closing the bar with Esc between
+      presses (wait a second each time). Events `hotkey_to_shown` (the backend share: the call
+      returned) and `hotkey_to_painted` (two animation frames after `bar:shown`, which is the
+      closest the app can measure to "visible with a focused input"). Budget: p95 of
+      `hotkey_to_painted` under 50 ms. Note the very first press after the start separately: the
+      window is pre-warmed (created, page loaded, first search done while hidden), so it should
+      be within the same band as the others. If the first one is far slower, that is a finding.
+- [ ] Also press the hotkey once with another app in full screen and once on the secondary
+      monitor; the number should not change.
+- [ ] Search: type a 10 letter word at normal speed with 1,000 items (see Phase 10's real
+      keystroke latency check for the DevTools way). Events `search_core` (Rust scan, budget p95
+      under 1 ms), `search_ipc` (the command handler) and `search_rtt` (what the webview saw,
+      includes IPC and serialization). The one frame budget for keystroke to rendered rows
+      (16 ms) is the DevTools measurement; `search_rtt` is only its IPC part.
+- [ ] Ingest: take 10 screenshots with Win+Shift+S at the real resolution of your biggest
+      monitor, copy 10 texts of different sizes and 5 files selections in Explorer. Events
+      `ingest_image` (budget under 300 ms, no OCR), `ingest_text`, `ingest_files`, and `ocr`
+      (budget under 1 s for a 1080p screenshot; `n` is the pixel count, so note which size).
+- [ ] Copy back: restart the app (the blob cache is empty), then Ctrl+Enter a 4K screenshot
+      (`copy_image`, budget under 150 ms, `copy_payload` is its file read and decrypt part), then
+      Ctrl+Enter a text and a file selection (`copy_text` under 20 ms, `copy_files`).
+- [ ] Quit from the tray, open `perf-summary.md`, copy its table into `docs/perf.md` (the
+      Windows column) with the date, the CPU and the Windows version.
+- [ ] `clipdump.exe --perf-summary "%LOCALAPPDATA%\clipdump\perf.log" > summary.md` prints the
+      same table for an existing log without starting the app.
+
+### Idle RAM and CPU (budgets: under 120 MB whole process incl. WebView2, about 0% CPU)
+- [ ] With the bar hidden and the history at 1,000 items (use the stress run below, or a few
+      days of use), wait two minutes after start. Task Manager, Details tab, group by
+      "Clipdump" in the Processes tab: the sum of Clipdump and its `msedgewebview2.exe`
+      children is the figure. PowerShell for the sum of the WebView2 processes of this app only
+      (they carry the app's data folder in their command line):
+      `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*com.clipdump.app*' } | ForEach-Object { (Get-Process -Id $_.ProcessId).WorkingSet64 } | Measure-Object -Sum`
+      plus `(Get-Process clipdump).WorkingSet64`. Note both "working set" and "private bytes"
+      (Task Manager's "Memory" column is private working set; use that for the budget).
+- [ ] Idle CPU: Task Manager "CPU" column stays 0 for the app and all its children for a minute
+      with nothing copied; Resource Monitor, Overview, CPU, "Average CPU" of the same
+      processes below 0.1.
+- [ ] After pressing the hotkey 20 times and copying 10 big screenshots, wait a minute: memory
+      comes back down (the 64 MB blob cache is the budgeted part; nothing should keep growing).
+
+### Stress run on Windows (same Rust harness as the Linux figures)
+`node scripts/stress.mjs` from the repo root (Node 22, the MSVC Rust toolchain). It builds the
+`perf` profile and runs three scenarios of 10,000 mixed entries (text, URLs, code, big texts up
+to 1 MB, file lists of 1 to 200 paths and 12% 4K screenshots in PNG, DIBV5 and DIB form) through
+the real ingest, store and encrypted persistence, with the real DPAPI key, and checks the
+invariants listed at the top of `src-tauri/src/perf/stress.rs`. Needs about 3 GB of free disk
+(it stops itself below 2 GB free, `--min-free-mb`). Use a folder on the system disk (`--dir`) to
+include Windows Defender scanning in the figures; run it once with Defender real time scanning
+on (the normal case). Reports and CSV samples go to `%TEMP%\clipdump-stress`.
+- [ ] `node scripts/stress.mjs burst`, `full` and `capped` all print "invariants: all held" and
+      exit 0; copy the three reports into `docs/perf.md`.
+- [ ] `node scripts/stress.mjs cold`: the first open after the page cache is cold cannot be
+      forced on Windows from the harness (it reports "warm"); do the real cold start below.
+- [ ] `node scripts/stress.mjs restart` passes (it is also part of `cargo test`).
+
+### Cold start (budget: 1,000 items, 300 of them screenshots, under 300 ms)
+- [ ] Build a history of 1,000 items with 300 screenshots: close Clipdump, then
+      `$env:CLIPDUMP_RESTART_KEEP_DIR="C:\clip-cold"; node scripts/stress.mjs cold` writes the history
+      (1,000 items, 300 screenshots of 1920x1080 with thumbnails and about 1,500 characters of OCR text each) to
+      `C:\clip-cold\clipdump`. The key in that folder is protected by DPAPI for your user, so the app can
+      open it: move your own `%LOCALAPPDATA%\clipdump` aside and copy `C:\clip-cold\clipdump` there
+      (put yours back afterwards).
+- [ ] Restart the PC (cold file cache), log in, start `clipdump.exe --perf` once: `startup_load`
+      is the budget figure (`Store::open`: read, decrypt, index), `startup_ready` adds opening the
+      database and the integrity check. Both go in `docs/perf.md`. Repeat with the app started
+      twice in a row for the warm figure.
+
+### Restart test: reboot, then everything is still there
+The automated version (`restart_keeps_items_pins_and_ocr_search`, in `cargo test`) covers a
+graceful shutdown and a kill with the real store; what only a real restart shows is DPAPI, the
+OS flushing its file cache, autostart and WebView2 starting fresh.
+- [ ] Before: with Clipdump running (installed, "start at login" on), copy: 3 texts, a URL, a
+      Win+Shift+S screenshot of a window with a distinctive word in it, an Explorer file
+      selection. Pin one text and the screenshot (Ctrl+P). Wait until the OCR badge is gone or
+      the Settings stats show no pending OCR. Note the item order and the pinned ones.
+- [ ] Restart Windows (Start, Restart; not sleep, not sign-out). Sign in and wait for the tray
+      icon; do not start anything by hand (the autostart does it).
+- [ ] Press the hotkey: every item from before is listed in the same order, the pins are at
+      the top, thumbnails show, and the empty query shows them with no delay.
+- [ ] Type the distinctive word from the screenshot: the screenshot is found, matched through OCR
+      (snippet shown). Ctrl+Enter it and paste into Paint: the picture is complete.
+- [ ] Ctrl+Enter the file selection and paste into Explorer; Ctrl+Enter a text and paste.
+- [ ] The tray tooltip says "Clipdump", not paused; no recovery notice in the bar.
+- [ ] Repeat once with a forced kill instead of a clean restart: copy a text, wait one second,
+      end the process in Task Manager (End task), start the app again: the text is there. (The
+      writer commits within 50 ms; the WAL covers the rest.)
+- [ ] Repeat once with a power-off style stop if you have a VM: hard reset right after copying
+      something and waiting a second: the history opens, possibly without the last item, never
+      with the recovery notice.
+
+### First show against later shows (pre-warm)
+- [ ] After a start (`--perf`), wait ten seconds, then press the hotkey: the first
+      `hotkey_to_painted` is within a few ms of the median of the next twenty. The window is
+      created hidden at startup, the page loaded, React mounted, the font loaded, the first
+      empty search answered and the first rows' thumbnails fetched before the first press. If the
+      first show is slower, say by how much: WebView2 may suspend a hidden window's rendering, in
+      which case the fix is to show the bar off screen for one frame at startup.

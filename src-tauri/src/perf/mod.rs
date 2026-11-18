@@ -42,8 +42,12 @@
 //! Everything but the free functions is plain data and instances, so the tests do
 //! not touch global state.
 
+#[cfg(test)]
+mod ingest;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod procmem;
+#[cfg(test)]
+mod restart;
 #[cfg(test)]
 mod stress;
 pub mod summary;
@@ -321,6 +325,9 @@ pub const SUMMARY_FILE: &str = "perf-summary.md";
 
 enum Msg {
     Sample(Sample),
+    /// Write everything queued so far to the file, then answer.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Sync(Sender<()>),
     Stop,
 }
 
@@ -359,6 +366,16 @@ impl Logger {
         self.dropped.load(Ordering::Relaxed)
     }
 
+    /// Wait until every sample recorded before this call is in the file. For the
+    /// stress harness and the tests; the app never needs it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn sync(&self) {
+        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        if self.tx.send(Msg::Sync(ack_tx)).is_ok() {
+            let _ = ack_rx.recv();
+        }
+    }
+
     /// Write out what is queued and end the thread. Idempotent.
     pub fn stop(&self) {
         let handle = self.handle.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -378,7 +395,15 @@ impl Drop for Logger {
 
 fn write_loop(rx: &Receiver<Msg>, mut file: BoundedFile, echo: bool) {
     while let Ok(msg) = rx.recv() {
-        let Msg::Sample(s) = msg else { break };
+        let s = match msg {
+            Msg::Sample(s) => s,
+            Msg::Sync(ack) => {
+                let _ = file.flush();
+                let _ = ack.send(());
+                continue;
+            }
+            Msg::Stop => break,
+        };
         let line = s.format_line();
         if echo {
             eprintln!("clipdump: {line}");
@@ -494,6 +519,40 @@ pub fn start_logger(dir: &Path) {
             eprintln!("clipdump: perf log not started: {e}");
             ENABLED.store(false, Ordering::Relaxed);
         }
+    }
+}
+
+/// The stress harness runs the real pipeline with perf logging on, so its report can
+/// carry the same p50 and p95 table as a `--perf` session. Starts the logger in `dir`
+/// (the first call of the process wins) and returns its path.
+#[cfg(test)]
+pub fn enable_for_harness(dir: &Path) -> Option<PathBuf> {
+    ENABLED.store(true, Ordering::Relaxed);
+    if LOGGER.get().is_none() {
+        let path = dir.join(LOG_FILE);
+        // No stderr echo: the harness reports the table instead of ten thousand lines.
+        if let Ok(l) = Logger::start(&path, LOG_CAP_BYTES, false) {
+            let _ = LOGGER.set(l);
+            let _ = LOG_PATH.set(path);
+        }
+    }
+    LOG_PATH.get().cloned()
+}
+
+/// Undo [`enable_for_harness`] (the logger stays, nothing is recorded).
+#[cfg(test)]
+pub fn disable_for_harness() {
+    if let Some(l) = LOGGER.get() {
+        l.sync();
+    }
+    ENABLED.store(false, Ordering::Relaxed);
+}
+
+/// Wait until what was recorded so far is in the log file.
+#[cfg(test)]
+pub fn sync() {
+    if let Some(l) = LOGGER.get() {
+        l.sync();
     }
 }
 
