@@ -116,3 +116,41 @@ pub fn copy_item(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
     };
     copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || window::hide(&app))
 }
+
+// ---------------------------------------------------------------------------
+// delete_item, toggle_pin, clear_history
+// ---------------------------------------------------------------------------
+
+/// Delete one item, pinned or not (an explicit delete always wins). Returns
+/// whether it existed: deleting an item that retention just evicted is not an
+/// error. The store removes the blob and thumbnail files.
+pub fn delete_one(store: &Store, id: u64) -> bool {
+    store.remove(id)
+}
+
+/// Flip the pin of `id`; returns the new state.
+pub fn toggle_pin_of(store: &Store, id: u64) -> Result<bool, String> {
+    store
+        .toggle_pin(id)
+        .ok_or_else(|| "item not found".to_owned())
+}
+
+/// "Clear history": delete every unpinned item. Returns how many were removed.
+pub fn clear_unpinned(store: &Store) -> usize {
+    store.clear_unpinned()
+}
+
+#[tauri::command(async)]
+pub fn delete_item(app: AppHandle, id: u64) -> Result<bool, String> {
+    Ok(delete_one(store(&app)?.as_ref(), id))
+}
+
+#[tauri::command(async)]
+pub fn toggle_pin(app: AppHandle, id: u64) -> Result<bool, String> {
+    toggle_pin_of(store(&app)?.as_ref(), id)
+}
+
+#[tauri::command(async)]
+pub fn clear_history(app: AppHandle) -> Result<usize, String> {
+    Ok(clear_unpinned(store(&app)?.as_ref()))
+}

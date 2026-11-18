@@ -508,3 +508,88 @@ fn the_platform_writer_is_a_stub_that_fails_until_phase_11() {
     assert!(r.is_err());
     assert_eq!(fx.store.get(id).unwrap().use_count, 0);
 }
+
+// -- delete, pin, clear ------------------------------------------------------
+
+#[test]
+fn delete_removes_one_item_even_when_pinned() {
+    let fx = Fx::new();
+    let a = fx.text("keep");
+    let b = fx.text("pinned but deleted");
+    assert_eq!(toggle_pin_of(&fx.store, b), Ok(true));
+    assert!(delete_one(&fx.store, b));
+    assert_eq!(fx.ids(), vec![a]);
+    assert!(!delete_one(&fx.store, b), "already gone is not an error");
+    assert_eq!(
+        fx.db_ids(),
+        vec![a as i64],
+        "the row is gone from SQLite too"
+    );
+}
+
+#[test]
+fn delete_removes_the_blob_files_of_an_image() {
+    let fx = Fx::new();
+    let id = fx.image(1, 1000);
+    fx.flush();
+    assert!(fx.store.get_blob(id).is_ok());
+    let files = |sub: &str| {
+        walk(&fx.dir.path().join(sub))
+            .into_iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "bin"))
+            .count()
+    };
+    assert_eq!((files("blobs"), files("thumbs")), (1, 1));
+    assert!(delete_one(&fx.store, id));
+    fx.flush();
+    assert!(fx.store.get_blob(id).is_err());
+    assert_eq!(files("blobs"), 0);
+    assert_eq!(files("thumbs"), 0);
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn toggle_pin_flips_and_reports_unknown_ids() {
+    let fx = Fx::new();
+    let a = fx.text("a");
+    assert_eq!(toggle_pin_of(&fx.store, a), Ok(true));
+    assert!(fx.store.get(a).unwrap().pinned);
+    assert_eq!(toggle_pin_of(&fx.store, a), Ok(false));
+    assert!(!fx.store.get(a).unwrap().pinned);
+    assert_eq!(
+        toggle_pin_of(&fx.store, 99),
+        Err("item not found".to_owned())
+    );
+}
+
+#[test]
+fn clear_history_keeps_pinned_items() {
+    let fx = Fx::new();
+    let a = fx.text("a");
+    let b = fx.text("b");
+    let img = fx.image(1, 500);
+    fx.text("c");
+    toggle_pin_of(&fx.store, a).unwrap();
+    toggle_pin_of(&fx.store, img).unwrap();
+    assert_eq!(clear_unpinned(&fx.store), 2);
+    let mut left = fx.ids();
+    left.sort_unstable();
+    assert_eq!(left, vec![a, img]);
+    assert!(fx.store.get(b).is_none());
+    assert_eq!(fx.db_ids(), vec![a as i64, img as i64]);
+    assert_eq!(clear_unpinned(&fx.store), 0, "nothing left to clear");
+}

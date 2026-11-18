@@ -75,7 +75,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::search,
             commands::get_preview,
-            commands::copy_item
+            commands::copy_item,
+            commands::delete_item,
+            commands::toggle_pin,
+            commands::clear_history
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {
