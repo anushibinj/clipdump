@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Clipdump app icon: a clipboard on an indigo rounded square. No text.
+       Source of the whole icon set: `pnpm tauri icon src-tauri/icons-src/icon.svg`
+       (see scripts/render-icons.mjs for the tray icons). Palette: indigo 600 to 800
+       background, zinc 50 board, zinc 800 clip, indigo 400 and 500 lines. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#3730a3"/>
+    </linearGradient>
+    <linearGradient id="board" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e4e4e7"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <!-- board shadow -->
+  <rect x="260" y="226" width="504" height="640" rx="64" fill="#1e1b4b" opacity="0.35"/>
+  <!-- board -->
+  <rect x="256" y="200" width="512" height="640" rx="64" fill="url(#board)"/>
+  <!-- clip -->
+  <rect x="368" y="144" width="288" height="152" rx="56" fill="#27272a"/>
+  <rect x="428" y="188" width="168" height="40" rx="20" fill="#52525b"/>
+  <!-- text lines -->
+  <rect x="336" y="400" width="352" height="48" rx="24" fill="#6366f1"/>
+  <rect x="336" y="512" width="352" height="48" rx="24" fill="#818cf8"/>
+  <rect x="336" y="624" width="352" height="48" rx="24" fill="#818cf8"/>
+  <rect x="336" y="736" width="216" height="48" rx="24" fill="#a5b4fc"/>
+</svg>
