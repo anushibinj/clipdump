@@ -126,3 +126,94 @@ The log never contains clipboard content.
   emitted but nobody receives it.
 - Queued OCR (Phase 7): image rows stay `ocr_status = 0`.
 - Retention, in-memory store, search (Phases 6 and 8).
+
+## Phase 6: In-memory store, retention, cache
+
+Phase 6 replaces the temporary Phase 5 sink with the real store: items live in
+RAM (metadata, search text, thumbnails), every change is queued to the encrypted
+database, retention runs after every insert and every 15 minutes, and big
+payloads go through a 64 MB byte budgeted cache. There is still no search or UI
+(Phases 8 to 10), so the checks use the terminal log from `pnpm tauri dev` and the
+files in `%LOCALAPPDATA%\clipdump\`. On start the log shows
+`clipdump: loaded N items in N ms`. The Phase 5 `ingested ...` lines are
+unchanged.
+
+### Restart persistence with real data
+- [ ] Copy about 20 mixed items (several texts, a multi line text, two
+      screenshots, a file list, a folder). Quit from the tray, start the app
+      again: the start line says `loaded 20 items` (the same count as before the
+      restart, minus nothing).
+- [ ] Copy one of the same texts again after the restart: the item count in the
+      next restart does not grow (dedup survives the restart; check with a
+      SQLite viewer: `SELECT count(*) FROM items`, and `use_count` of that row
+      went up by one).
+- [ ] Copy the same screenshot from Paint (DIB) and from Chrome "Copy image"
+      (PNG): one row only, `use_count` 1.
+- [ ] Copy 5 new items after a restart: their `id` values continue after the
+      highest id from before the restart (ids are not reused).
+- [ ] Kill the process hard (Task Manager, End task) right after a copy and
+      start again: at worst the last copy (within about 50 ms) is missing, the
+      rest is intact and the app starts normally.
+- [ ] Copy a text over 64 KB (for example a 200 KB log), restart: the item is
+      still there (its full text is read from the database on demand, Phase 9
+      shows it in the preview).
+
+### Cold start timing (target: under 300 ms for 1,000 items)
+- [ ] Build a 1,000 item history (a script that copies 1,000 distinct short texts
+      works, or copy a few hundred and let Phase 14's stress script fill the
+      rest), quit, then start a release build (`pnpm tauri build`, run the exe
+      from a terminal). Record the `loaded 1000 items in N ms` line. It must be
+      under 300 ms; run it three times, the first run is cold (file cache) and
+      the later ones warm. The Linux numbers in the Phase 6 report are not a
+      substitute: Windows has NTFS, Defender and slower file opens, and the
+      thumbnail files are read one by one at startup.
+- [ ] Same with a history that includes 300 screenshots (so 300 thumbnail files
+      are read at start). If this is over budget, the thumbnail reads are the
+      first suspect (note the number; the fix is packing thumbnails into SQLite).
+- [ ] Windows Defender real time protection on and off: note whether the cold
+      start differs much.
+
+### Retention (1,000 items, 30 days, disk cap)
+- [ ] With the default settings copy more than 1,000 distinct short texts (a
+      small script that sets the clipboard in a loop works). The row count in
+      `history.db` stays at 1,000 and the oldest ones are gone.
+- [ ] Pin three items (no pin UI before Phase 10: set `pinned = 1` on three rows
+      with a SQLite tool while the app is closed), start the app, copy 1,100
+      more items: the three pinned rows are still there and the unpinned count is
+      1,000.
+- [ ] Age: while the app is closed, edit `created_at` of a few unpinned rows to a
+      date 31 days ago (`created_at` is unix milliseconds) and set one pinned
+      row the same way. Start the app: the unpinned old rows are deleted at
+      start, the pinned one stays, and their files under `blobs\` and `thumbs\`
+      are gone.
+- [ ] Leave the app running across a clock change: set the system date 31 days
+      ahead, wait up to 15 minutes (or restart), the old unpinned items are
+      evicted. Set the date back afterwards.
+- [ ] Disk cap: temporarily put `disk_cap_bytes` to 50 MB in
+      `Settings::default()` (no settings file before Phase 12), copy ten 4K
+      screenshots (several MB each): the oldest screenshot rows and their
+      `blobs\` and `thumbs\` files disappear until the folder is about 50 MB or
+      less. SQLite and WAL overhead is not counted, so allow a few MB extra.
+- [ ] Deleting files: after any eviction, confirm the matching `blobs\xx\*.bin`
+      and `thumbs\xx\*.bin` files were removed (no growth of the folders).
+
+### RAM behavior with many large screenshots
+- [ ] Copy 30 different 4K screenshots (each is a lossless PNG of several MB).
+      In Task Manager the process memory must not grow by 30 times the PNG size:
+      blobs are written to disk and are not kept in RAM after ingest. Expect
+      growth of roughly 10 KB per item for the thumbnail plus the transient
+      decode buffers while a screenshot is being processed.
+- [ ] Phase 9 and 11 will exercise the blob cache (copying an image back). When
+      they land, copy back 100 different screenshots in a row: the working set
+      stays within about 64 MB above the idle level (the cache budget) instead of
+      growing with the number of screenshots.
+- [ ] Idle CPU stays near 0% with the app idle for a minute (the retention
+      thread sleeps 15 minutes at a time and the writer blocks on its channel).
+- [ ] Quit from the tray: the process exits and does not stay in Task Manager
+      (the retention thread stops when the app state is dropped).
+
+### Not testable yet
+- Search, OCR results and the `missing` badge for moved or deleted files (Phases
+  7 to 9).
+- Cache hits while copying an item back (Phase 11 uses `Store::get_blob` and
+  `get_full_text`; the cache and the byte budget are covered by unit tests).
