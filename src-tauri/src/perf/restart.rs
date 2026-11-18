@@ -554,3 +554,102 @@ fn copy_image_cpu_parts_4k_cache_miss() {
     }
     eprintln!("=== END COPY CPU PARTS ===\n");
 }
+
+/// Search in Rust over the 1,000 item history of the cold start measurement (300
+/// screenshots with 1,500 characters of OCR text, 600 texts of which 40 are big,
+/// 100 file lists): per query the p50, p95 and maximum of 400 searches each, with
+/// a path checker that says every file exists (so it is the search, not `stat`),
+/// and the empty query once more through the real `CachedPathChecker` with its
+/// cache empty each time (the worst case of showing the bar: every file item among
+/// the first 50 rows is `stat`ed, up to 128 paths each).
+///
+/// ```text
+/// cargo test --profile perf --lib search_timing_1000 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "measurement, see docs/perf.md"]
+fn search_timing_1000_items() {
+    use crate::commands::search_items;
+    use crate::search::PathChecker;
+
+    struct Yes;
+    impl PathChecker for Yes {
+        fn exists(&self, _: &str) -> bool {
+            true
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("clipdump");
+    let settings = Arc::new(std::sync::RwLock::new(Settings::default()));
+    let mix = Mix {
+        texts: 560,
+        big_texts: 40,
+        images: 300,
+        files: 100,
+        width: 1920,
+        height: 1080,
+        ocr_chars: 1500,
+    };
+    let live = fill(&dir, &settings, &mix);
+    live.worker.stop();
+    assert_eq!(live.store.len(), 1000);
+    let store = &live.store;
+    let queries = [
+        "",
+        "m",
+        "me",
+        "mee",
+        "meeting",
+        "budget",
+        "Budget",
+        "snap",
+        "restartocr",
+        "invoice total",
+        "https",
+        "fn ",
+        "img:",
+        "file:",
+        "zzzzqq",
+    ];
+    let pct = |v: &[u64], p: u32| crate::perf::summary::percentile(v, p) as f64 / 1000.0;
+    eprintln!("\n=== SEARCH TIMING, 1,000 items ===");
+    eprintln!(
+        "(path checker: every file exists; {} build)",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "optimized"
+        }
+    );
+    for q in queries {
+        let mut us = Vec::new();
+        for _ in 0..400 {
+            let t = Instant::now();
+            let r = search_items(store, &Yes, q, TypeFilter::All, Some(50));
+            us.push(t.elapsed().as_micros() as u64);
+            std::hint::black_box(r);
+        }
+        us.sort_unstable();
+        eprintln!(
+            "  {q:>14?}: p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms",
+            pct(&us, 50),
+            pct(&us, 95),
+            *us.last().unwrap() as f64 / 1000.0
+        );
+    }
+    let mut us = Vec::new();
+    for _ in 0..200 {
+        let fresh = CachedPathChecker::default();
+        let t = Instant::now();
+        std::hint::black_box(search_items(store, &fresh, "", TypeFilter::All, Some(50)));
+        us.push(t.elapsed().as_micros() as u64);
+    }
+    us.sort_unstable();
+    eprintln!(
+        "  empty query, real stat of the file rows, cache empty: p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms",
+        pct(&us, 50),
+        pct(&us, 95),
+        *us.last().unwrap() as f64 / 1000.0
+    );
+    eprintln!("=== END SEARCH TIMING ===\n");
+}

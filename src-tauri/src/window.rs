@@ -179,6 +179,43 @@ pub fn show(app: &AppHandle) {
     crate::perf::hotkey_elapsed(crate::perf::Event::HotkeyToShown);
 }
 
+/// Where the pre-warm show puts the window: far outside every monitor, the place
+/// Windows itself parks minimized windows, so nothing flashes on a screen.
+const PREWARM_SPOT: i32 = -32_000;
+
+/// Experimental, off unless `CLIPDUMP_PREWARM=1`: show the bar once, off screen,
+/// a moment after startup and hide it again, so the first frame of the webview is
+/// rendered before the first real hotkey press. A hidden window may not have
+/// rendered anything yet (the compositor surface of the webview is created when
+/// it is first shown), which would make the very first show slower than later
+/// ones; `--perf` then shows it as a first `hotkey_to_painted` far above the rest
+/// (measured under Xvfb with WebKitGTK: about 62 ms against 21 ms). Whether
+/// WebView2 behaves the same, and whether this removes it, has to be measured on
+/// Windows (docs/manual-checks.md, Phase 14). Off by default because showing a
+/// window can take the focus from what the user is doing at login, and nothing
+/// here can check that. Runs on its own thread: it only sleeps and calls window
+/// methods, which Tauri forwards to the main thread. A hotkey press inside the
+/// short window it is visible hides it (harmless: press again).
+pub fn prewarm(app: &AppHandle) {
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("clipdump-prewarm".into())
+        .spawn(move || {
+            // The page needs a moment to load and mount first.
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let Some(w) = main_window(&app) else { return };
+            if w.is_visible().unwrap_or(true) {
+                return; // pinned bar, or the user was faster
+            }
+            let _ = w.set_position(PhysicalPosition::new(PREWARM_SPOT, PREWARM_SPOT));
+            let _ = w.show();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            // `hide` of the window itself, not `window::hide`: the UI never saw
+            // `bar:shown`, so it must not see `bar:hidden` either.
+            let _ = w.hide();
+        });
+}
+
 /// Pinned-bar mode at startup: show the bar where it belongs without taking the
 /// keyboard focus away from whatever the user is doing (nobody pressed a key).
 pub fn show_pinned(app: &AppHandle) {

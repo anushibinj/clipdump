@@ -156,6 +156,8 @@ pub fn run() {
             start_capture(app);
             if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
                 window::show_pinned(app.handle());
+            } else if std::env::var_os("CLIPDUMP_PREWARM").is_some_and(|v| v == "1") {
+                window::prewarm(app.handle());
             }
             #[cfg(debug_assertions)]
             smoke_hooks(app);
