@@ -73,6 +73,18 @@ fn position_on_cursor_monitor(app: &AppHandle, w: &WebviewWindow) {
     let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
+/// Give the bar keyboard focus. Windows and macOS need the explicit request.
+/// On Linux/GTK a `present()` right after `map` produced a spurious focus-out
+/// under openbox (seen in the Xvfb smoke test), which the blur handler turned
+/// into an instant hide; the window manager focuses a freshly mapped window on
+/// its own there. Linux is not a product target, this only keeps dev runs sane.
+fn focus(w: &WebviewWindow) {
+    #[cfg(not(target_os = "linux"))]
+    let _ = w.set_focus();
+    #[cfg(target_os = "linux")]
+    let _ = w;
+}
+
 pub fn show(app: &AppHandle) {
     let Some(w) = main_window(app) else { return };
 
@@ -82,7 +94,7 @@ pub fn show(app: &AppHandle) {
 
     position_on_cursor_monitor(app, &w);
     let _ = w.show();
-    let _ = w.set_focus();
+    focus(&w);
     let _ = w.emit_to(LABEL, EVENT_SHOWN, ());
 }
 
@@ -103,7 +115,7 @@ pub fn toggle(app: &AppHandle) {
     match (visible, pinned) {
         // Pinned-bar mode: hotkey only focuses the always-visible bar.
         (true, true) => {
-            let _ = w.set_focus();
+            focus(&w);
             let _ = w.emit_to(LABEL, EVENT_SHOWN, ());
         }
         (true, false) => hide(app),
