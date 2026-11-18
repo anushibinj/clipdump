@@ -11,6 +11,7 @@
 pub mod changed;
 pub mod files;
 pub mod image;
+pub mod sink;
 pub mod text;
 
 use std::sync::Arc;
