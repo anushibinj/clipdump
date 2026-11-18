@@ -255,6 +255,11 @@ pub struct StoreStats {
     pub disk_bytes: u64,
     /// Bytes currently in the blob and full text cache.
     pub cache_bytes: usize,
+    /// Image items whose OCR has not run yet (queued, or OCR is turned off).
+    pub ocr_pending: usize,
+    /// Image items skipped because no OCR language is installed. The settings
+    /// screen shows `ocr::OCR_UNAVAILABLE_HINT` when this is above zero.
+    pub ocr_unavailable: usize,
 }
 
 pub struct Store {
@@ -262,7 +267,7 @@ pub struct Store {
     persist: Arc<Persist>,
     cache: cache::BlobCache,
     next_id: AtomicU64,
-    /// Phase 7 plugs the OCR worker in here. Called once per new image item.
+    /// The OCR queue (`ocr::OcrQueueHandle`). Called once per new image item.
     ocr: Arc<dyn OcrQueue>,
     /// Fired after every change (debounced). `None` in tests that do not care.
     changed: Option<HistoryChanged>,
@@ -350,11 +355,23 @@ impl Store {
 
     pub fn stats(&self) -> StoreStats {
         let g = self.items.read();
+        // One pass over at most a few thousand items; stats are read rarely
+        // (the settings screen), never on the search path.
+        let (mut ocr_pending, mut ocr_unavailable) = (0, 0);
+        for i in g.iter_newest_first().filter(|i| i.kind == ClipKind::Image) {
+            match i.ocr_status {
+                OcrStatus::Pending => ocr_pending += 1,
+                OcrStatus::Unavailable => ocr_unavailable += 1,
+                OcrStatus::Done | OcrStatus::Failed => {}
+            }
+        }
         StoreStats {
             items: g.len(),
             pinned: g.pinned_count(),
             disk_bytes: g.disk_bytes(),
             cache_bytes: self.cache.bytes(),
+            ocr_pending,
+            ocr_unavailable,
         }
     }
 
