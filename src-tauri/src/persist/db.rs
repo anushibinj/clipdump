@@ -282,6 +282,34 @@ pub fn max_id(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM items", [], |r| r.get(0))?)
 }
 
+/// Record that an item was copied again: bumps `use_count` and sets
+/// `last_used_at` (unix ms). Returns false if the id does not exist.
+pub fn update_used(conn: &Connection, id: i64, last_used_at: i64) -> Result<bool> {
+    let mut stmt = conn.prepare_cached(
+        "UPDATE items SET last_used_at = ?2, use_count = use_count + 1 WHERE id = ?1",
+    )?;
+    Ok(stmt.execute(params![id, last_used_at])? > 0)
+}
+
+/// Pin or unpin an item. Returns false if the id does not exist.
+pub fn set_pinned(conn: &Connection, id: i64, pinned: bool) -> Result<bool> {
+    let mut stmt = conn.prepare_cached("UPDATE items SET pinned = ?2 WHERE id = ?1")?;
+    Ok(stmt.execute(params![id, pinned])? > 0)
+}
+
+/// Store the OCR result (already encrypted; `None` when there is no text, for
+/// example on failure) and the new status. Returns false if the id does not exist.
+pub fn set_ocr(
+    conn: &Connection,
+    id: i64,
+    ocr_enc: Option<&[u8]>,
+    status: OcrStatus,
+) -> Result<bool> {
+    let mut stmt =
+        conn.prepare_cached("UPDATE items SET ocr_enc = ?2, ocr_status = ?3 WHERE id = ?1")?;
+    Ok(stmt.execute(params![id, ocr_enc, status.code()])? > 0)
+}
+
 // QUERIES-MARKER
 
 #[cfg(test)]
@@ -471,5 +499,55 @@ pub(crate) mod tests {
     #[test]
     fn empty_table_has_max_id_zero() {
         assert_eq!(max_id(&memory()).unwrap(), 0);
+    }
+
+    fn meta_of(conn: &Connection, id: i64) -> MetaRow {
+        load_all_meta(conn, 1 << 20).unwrap().into_iter().find(|m| m.id == id).unwrap()
+    }
+
+    #[test]
+    fn update_used_bumps_count_and_time() {
+        let conn = memory();
+        insert_item(&conn, &sample(1)).unwrap();
+        insert_item(&conn, &sample(2)).unwrap();
+        assert!(update_used(&conn, 1, 50_000).unwrap());
+        assert!(update_used(&conn, 1, 60_000).unwrap());
+        let m = meta_of(&conn, 1);
+        assert_eq!((m.use_count, m.last_used_at), (2, 60_000));
+        assert_eq!(m.created_at, 1_001, "created_at never changes");
+        assert_eq!(meta_of(&conn, 2).use_count, 0, "other rows untouched");
+        // The copied item is now the newest.
+        assert_eq!(load_all_meta(&conn, 1 << 20).unwrap()[0].id, 1);
+        assert!(!update_used(&conn, 99, 1).unwrap(), "unknown id");
+    }
+
+    #[test]
+    fn set_pinned_toggles_one_row() {
+        let conn = memory();
+        insert_item(&conn, &sample(1)).unwrap();
+        insert_item(&conn, &sample(2)).unwrap();
+        assert!(set_pinned(&conn, 1, true).unwrap());
+        assert!(meta_of(&conn, 1).pinned);
+        assert!(!meta_of(&conn, 2).pinned);
+        assert!(set_pinned(&conn, 1, false).unwrap());
+        assert!(!meta_of(&conn, 1).pinned);
+        assert!(!set_pinned(&conn, 99, true).unwrap());
+    }
+
+    #[test]
+    fn set_ocr_stores_text_and_status() {
+        let conn = memory();
+        let mut img = sample(1);
+        img.kind = ClipKind::Image;
+        insert_item(&conn, &img).unwrap();
+        assert_eq!(meta_of(&conn, 1).ocr_status, OcrStatus::Pending);
+        assert!(set_ocr(&conn, 1, Some(&[8, 8, 8]), OcrStatus::Done).unwrap());
+        let m = meta_of(&conn, 1);
+        assert_eq!((m.ocr_enc, m.ocr_status), (Some(vec![8, 8, 8]), OcrStatus::Done));
+        // A failure clears the text and records why there is none.
+        assert!(set_ocr(&conn, 1, None, OcrStatus::Failed).unwrap());
+        let m = meta_of(&conn, 1);
+        assert_eq!((m.ocr_enc, m.ocr_status), (None, OcrStatus::Failed));
+        assert!(!set_ocr(&conn, 99, None, OcrStatus::Unavailable).unwrap());
     }
 }
