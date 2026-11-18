@@ -6,6 +6,8 @@ mod model;
 #[allow(dead_code)]
 mod persist;
 mod platform;
+// Minimal runtime settings; Phase 12 persists them.
+mod settings;
 mod state;
 mod tray;
 mod window;
