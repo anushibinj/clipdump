@@ -552,7 +552,7 @@ impl Store {
         ids.len()
     }
 
-    /// The item was copied back (Phase 11): move it to the top and count a use.
+    /// The item was copied back (`copy_item`): move it to the top and count a use.
     pub fn mark_used(&self, id: u64) -> bool {
         let mut items = self.items.write();
         let at = items.stamp(self.now());
@@ -645,8 +645,8 @@ impl Store {
         self.cache.get_or_load(id, || self.persist.read_blob(&name))
     }
 
-    /// What to put on the clipboard to copy item `id` back (Phase 9 `copy_item`,
-    /// written by Phase 11): the full text, the PNG bytes with the pixel size, or
+    /// What to put on the clipboard to copy item `id` back (`copy_item` hands it
+    /// to the platform writer): the full text, the PNG bytes with the pixel size, or
     /// the file paths. Loads from the cache or disk like [`Store::get_full_text`]
     /// and [`Store::get_blob`], so call it off the UI thread.
     pub fn payload(&self, id: u64) -> Result<Payload> {

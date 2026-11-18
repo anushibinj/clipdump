@@ -152,9 +152,8 @@ pub fn fold_for_search(text: &Arc<str>) -> Arc<str> {
     }
 }
 
-/// What the app asks the OS clipboard to hold when copying an item back
-/// (Phase 11). Minimal on purpose: Phase 11 may extend it, the variants map 1:1
-/// to [`ClipKind`].
+/// What the app asks the OS clipboard to hold when copying an item back. The
+/// variants map 1:1 to [`ClipKind`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Payload {
     /// Plain text, written as `CF_UNICODETEXT`.

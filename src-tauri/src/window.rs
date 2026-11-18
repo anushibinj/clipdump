@@ -86,7 +86,7 @@ fn focus(w: &WebviewWindow) {
 pub fn show(app: &AppHandle) {
     let Some(w) = main_window(app) else { return };
 
-    // Remember who had focus so Phase 11 can paste back into it. Must happen
+    // Remember who had focus so auto-paste can go back to it. Must happen
     // before we take focus.
     crate::platform::remember_foreground(app, &w);
 

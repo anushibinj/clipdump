@@ -142,7 +142,8 @@ export function getPreview(id: number): Promise<PreviewDto> {
 /**
  * Copy an item back to the clipboard and hide the bar; with `paste`, also paste
  * into the window that was focused before the bar opened. Rejects with a plain
- * message (use `errorMessage`). Until Phase 11 it always rejects.
+ * message (use `errorMessage`). A message that starts with "copied, but" means the
+ * item is on the clipboard and only the auto-paste failed.
  */
 export function copyItem(id: number, paste = false): Promise<void> {
   return invoke<void>("copy_item", { id, paste });

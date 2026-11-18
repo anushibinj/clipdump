@@ -599,7 +599,7 @@ async function shots(browser, url) {
     await page.keyboard.press("Control+Shift+Delete");
     await shot("10-confirm-clear");
     await page.keyboard.press("Escape");
-    await page.evaluate(() => (window.__clipMock.control.copyError = "copying to the clipboard is not implemented yet (todo Phase 11)"));
+    await page.evaluate(() => (window.__clipMock.control.copyError = "clipboard writing is not supported on this platform"));
     await page.keyboard.press("Control+Enter");
     await shot("11-copy-error");
     await page.keyboard.press("Control+,");

@@ -20,13 +20,13 @@ pub struct AppState {
     /// Runtime settings. Minimal until Phase 12 loads and saves them.
     pub settings: Arc<RwLock<Settings>>,
     /// Records the app's own clipboard writes so the watcher can ignore the echo.
-    /// Phase 11's copy path calls `note_write` on it.
+    /// `copy_item` calls `note_write_as` on it around every clipboard write.
     pub self_write: Arc<SelfWriteGuard>,
     /// "Pinned bar" mode: the bar stays visible and does not hide on blur.
     /// Setting stub until Phase 12 wires it to settings.json. Default off.
     pub pinned_bar: AtomicBool,
     /// Raw handle (HWND on Windows, 0 elsewhere) of the window that had focus
-    /// before the bar opened. Used by auto-paste in Phase 11.
+    /// before the bar opened. `copy_item` takes it for auto-paste.
     pub prev_foreground: AtomicIsize,
     /// File existence checks for search rows and previews, cached for 2 seconds
     /// so typing never repeats a `stat` (see `search::paths`).

@@ -59,9 +59,7 @@ clipboard content. Skips print a short reason, or nothing when paused.
 
 ### Not testable yet (arrive with later phases)
 - Self-write suppression (500 ms text echo, 150 ms image echo, bump to top):
-  needs the Phase 11 copy path. Unit tests cover the logic, the real Windows
-  behavior must be re-checked in Phase 11 by copying an item back and confirming
-  that no new history entry appears.
+  checked in the Phase 11 section below.
 - Source app name stored with the item (Phase 5).
 
 ## Phase 5: Ingest pipeline
@@ -421,9 +419,9 @@ images and with `fetch`, and is refused for commands outside the capability.
       work: they are driven from Rust and need no frontend permission.
 
 ### Commands on Windows
-- [ ] `copy_item` is still the Phase 11 stub: `invoke("copy_item", { id, paste: false })`
-      rejects with `copying to the clipboard is not implemented yet (todo Phase 11)`,
-      the bar stays open and the item does not move to the top.
+- [ ] `copy_item` works since Phase 11: `invoke("copy_item", { id, paste: false })`
+      resolves, the item is on the clipboard and moves to the top (checked in
+      the Phase 11 section).
 - [ ] `get_preview` of a text copied from a big file (a few MB) returns at most
       about 200 KB of `text` with `truncated: true` and the real `totalChars`.
 - [ ] `get_preview` of a screenshot shows `width`, `height`, `ocrStatus` and
@@ -513,9 +511,9 @@ WebView2, so everything below still needs a Windows run.
 - [ ] Pinned items are on top with an empty query and show the pin icon.
 
 ### Keyboard (inside the bar)
-- [ ] `Ctrl+Enter` and `Enter` both copy and hide the bar (auto-paste on Enter
-      arrives with the setting in Phase 12). Until Phase 11, both show "Could not
-      copy: ..." in the footer, the bar stays open and keeps working.
+- [ ] `Ctrl+Enter` and `Enter` both copy and hide the bar; `Enter` also pastes
+      once "Paste on Enter" is on (Phase 11 section). A copy that fails shows
+      "Could not copy: ..." in the footer, the bar stays open and keeps working.
 - [ ] `Ctrl+1` to `Ctrl+9`, `Ctrl+P`, `Ctrl+Delete`, `Shift+Delete`: act on the
       right row. After a delete the next row is selected.
 - [ ] `Ctrl+Shift+Delete`: the footer asks to press again (with the count of
@@ -555,7 +553,7 @@ WebView2, so everything below still needs a Windows run.
       the backend appears and the field returns to the stored value.
 - [ ] Ignored apps: add `notepad.exe`, copy in Notepad: nothing is captured.
 - [ ] Disabled on purpose, with the note "Saved in a later update": hotkey,
-      Paste on Enter, Start at login. "Open data folder" is disabled with a
+      Start at login (Paste on Enter works since Phase 11, in memory only). "Open data folder" is disabled with a
       tooltip (no backend command yet).
 - [ ] The stats show items, pinned, disk use, RAM cache and the key protector
       (`dpapi`); with no OCR language installed the OCR hint explains how to add one.
@@ -577,3 +575,139 @@ WebView2, so everything below still needs a Windows run.
       If Windows is over budget, the first knobs are the result limit (the
       backend default is 50 rows; `search(query, filter, limit)` in `ipc.ts`
       takes a smaller one) and the rows' `content-visibility`.
+
+## Phase 11: Copy and auto-paste
+
+Run with `pnpm tauri dev` from a terminal. Everything below needs Windows: the
+clipboard writer, the focus restore and `SendInput` cannot run in the Linux
+container. What the unit tests pin down (exact bytes of `CF_UNICODETEXT`,
+`CF_DIBV5`, `CF_HDROP`, the Ctrl+V key plan, the focus wait and the self-write
+guard) does not need to be rechecked; what needs checking is how real apps react.
+
+### What is written
+- Text: `CF_UNICODETEXT` only, with CRLF line endings. The history keeps text
+  with LF only (ingest folds CRLF), so the original endings are not known; CRLF
+  is what classic Windows apps expect, and editors that prefer LF accept it.
+- Images: the registered `PNG` format (the stored lossless PNG, as it is) and
+  `CF_DIBV5` (32 bit, bottom up, BGRA bitfields, straight alpha, sRGB), in one
+  clipboard session. Windows adds `CF_DIB` and `CF_BITMAP` on request.
+- Files: `CF_HDROP` (wide paths) plus `Preferred DropEffect` = copy. Paths that no
+  longer exist are left out; if none is left the copy fails with "none of the
+  files exist any more" and the bar stays open.
+- `ExcludeClipboardContentFromMonitorProcessing` is not set: Windows clipboard
+  history (Win+V) and other clipboard managers still see what Clipdump copies.
+
+### The plan's check: paste into other apps
+For each target, copy the item with `Ctrl+Enter`, switch to the target and press
+`Ctrl+V`. Use a text with several lines and non ASCII characters, a screenshot
+(Win+Shift+S, ideally with a semi transparent region such as a rounded window
+corner) and two files copied in Explorer.
+
+| Target | Text | Screenshot | Files |
+|---|---|---|---|
+| Notepad | [ ] lines are separate, no boxes | n/a | n/a |
+| Chrome (a Gmail or Docs compose box) | [ ] | [ ] pastes as an image | n/a |
+| VS Code | [ ] | n/a | n/a |
+| Paint | n/a | [ ] pastes, colors right, not upside down | n/a |
+| Explorer | n/a | n/a | [ ] copies (the originals stay), a name clash asks as usual |
+| Word | [ ] | [ ] transparent areas stay transparent or turn white, never black | [ ] |
+| Slack or Teams | [ ] | [ ] | [ ] attaches both files |
+
+- [ ] Pasting files into Explorer with `Ctrl+V` copies, never moves.
+- [ ] Copying a file list where one file was deleted since: the others paste, the
+      deleted one is skipped, no error toast (the "missing" badge shows in the list).
+- [ ] An item whose files are all gone: the bar stays open and the footer says
+      "Could not copy: none of the files exist any more".
+- [ ] Paste the screenshot into Paint and Word and compare it with the original:
+      no color shift (red and blue not swapped), not flipped, not shifted.
+- [ ] A text with an embedded tab and trailing spaces keeps them.
+
+### Self-write echo: no duplicate, the item moves to the top
+The copy changes the clipboard, so the watcher sees an update. It must not create
+a new history entry.
+- [ ] Copy an old text item with `Ctrl+Enter`, reopen the bar: the item is first,
+      there is no second copy of it, and the item count did not change.
+- [ ] Same for a screenshot (large ones included) and for a file item.
+- [ ] A file item copied while one of its files is missing: no second, shorter
+      file item appears.
+- [ ] The terminal shows no new `ingested ...` line for these copies. A line
+      appearing for an image copy means the 150 ms window was missed (see the
+      budget below); note how long the copy took.
+- [ ] Copy the same text again in Notepad right after (more than half a second
+      later): that is a real copy and moves the item to the top as usual.
+- [ ] The use count is one per copy: copy an item three times, then compare its
+      ranking against an item copied once (it ranks higher by a small margin, not
+      by a large one).
+
+### Image budget: Ctrl+Enter to clipboard set under 150 ms (4K screenshot, cache miss)
+A cache miss means the PNG is read from disk, decrypted and decoded. To force it,
+restart Clipdump (the cache is empty) and copy a 4K screenshot from the history.
+- [ ] Measure from the key press to the moment `Ctrl+V` pastes it (or time the
+      `copy_item` call in DevTools: `performance.now()` around
+      `__TAURI_INTERNALS__.invoke("copy_item", { id, paste: false })`).
+      Budget: under 150 ms. Note the number and the screenshot size.
+- [ ] A second copy of the same screenshot (cache hit) should be clearly faster:
+      only the PNG decode and the pixel conversion remain.
+- If it is over budget, the time is the PNG decode plus building `CF_DIBV5`
+  (about 33 MB for 4K). Rendering is eager on purpose; the options are delayed
+  rendering (`WM_RENDERFORMAT`) or caching the decoded pixels. Neither is done
+  because they cannot be tested without Windows.
+
+### Paste on Enter (setting `autoPasteOnEnter`, default off)
+Settings, General, "Paste on Enter". In memory until Phase 12 (a restart turns it
+off again).
+- [ ] Off: `Enter` and `Ctrl+Enter` only copy and hide the bar.
+- [ ] On: open Notepad, press the hotkey, search, select an item, press `Enter`:
+      the bar hides and the item appears in Notepad without touching `Ctrl+V`.
+- [ ] On: clicking a result row does the same as `Enter`.
+- [ ] On: `Ctrl+Enter` and `Ctrl+1` to `Ctrl+9` still only copy, they never paste.
+- [ ] On: the text appears once, not twice. Hold `Shift` while pressing `Enter`:
+      the held modifiers are released before `Ctrl+V`, so it is a plain paste, not
+      `Ctrl+Shift+V` ("paste as plain text" in some apps).
+- [ ] A failed paste (see the elevated window below) shows "copied, but auto-paste
+      failed: ..." in the footer the next time the bar is opened (it is kept
+      until then), and the item really is on the clipboard.
+
+### Auto-paste into elevated (administrator) windows
+Windows blocks synthetic keystrokes into a window with a higher integrity level
+than the sending process (UIPI). Clipdump started normally cannot paste into an
+elevated window, for example an admin PowerShell or Task Manager.
+- [ ] With "Paste on Enter" on, press `Enter` while an elevated PowerShell was
+      focused before the bar opened: the item is copied, nothing is pasted, and
+      the footer says "copied, but auto-paste failed: SendInput injected 0 of 4
+      key events; the window may be running as administrator ...". Press `Ctrl+V`
+      in that window: the item pastes (plain copy always works).
+- [ ] Start Clipdump as administrator: the same `Enter` now pastes into the
+      elevated window.
+
+### Focus restore edge cases (Paste on Enter on)
+- [ ] The previous window was closed while the bar was open (open the bar over
+      Notepad, close Notepad from the taskbar, press `Enter`): the item is copied,
+      the footer later says "the previous window no longer exists", nothing is
+      typed anywhere else.
+- [ ] The previous window is minimized after the bar opens (Win+D while the bar is
+      open is blocked by focus; use the taskbar to minimize it): it is restored and
+      receives the paste, or the footer says it could not be brought to the front.
+- [ ] The previous window is on another virtual desktop (open the bar over a
+      window, then use the mouse on the taskbar's task view button to move to a
+      different desktop and click the bar's item, with the bar still open): the
+      paste either brings that window back (switching desktops) and pastes, or
+      fails with a message. It must never paste into a window of the desktop you
+      are looking at.
+- [ ] No previous window (bar opened from the tray with nothing focused, or
+      with the desktop focused): `Enter` just copies, no error.
+- [ ] Alt key: hold `Alt` while pressing `Enter`. The target window must not open
+      its menu bar (File, Edit, ...) and must paste once; if the menu opens, note
+      the app.
+- [ ] Hold the Windows key while pressing `Enter`: the Start menu must not open.
+- [ ] The bar's own window is never the target: open the bar twice in a row
+      (hotkey, hotkey) and press `Enter`; the text must not be pasted into the
+      search box.
+- [ ] The bar hides before the paste lands (no flash of the bar in the target
+      window) and the focus returns to the same window within about 100 ms.
+
+### Not covered here
+- Rich text and HTML are not written (non goal for v1), so pasting text into Word
+  gives plain text in the destination style.
+- Delayed rendering and the owner window's `WM_RENDERFORMAT` handling are not
+  implemented (eager rendering only).
