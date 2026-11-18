@@ -334,6 +334,27 @@ async function keys(browser, url) {
   await settle();
   check("the Paused badge shows in the search bar", (await page.getByText("Paused", { exact: true }).count()) === 1);
 
+  // bar:shown focuses and selects the query, bar:hidden resets the view
+  await reset();
+  await page.keyboard.type("abc");
+  await page.locator("body").click({ position: { x: 2, y: 2 } }); // focus leaves the input
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  const sel2 = await page.evaluate(() => {
+    const i = document.querySelector("input[cmdk-input]");
+    return { focused: document.activeElement === i, from: i.selectionStart, to: i.selectionEnd };
+  });
+  check("bar:shown focuses the input and selects its text", sel2.focused && sel2.from === 0 && sel2.to === 3, JSON.stringify(sel2));
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Control+,");
+  await settle();
+  await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
+  await settle();
+  check(
+    "bar:hidden returns to the plain search view for the next open",
+    (await page.locator("h2", { hasText: "Settings" }).count()) === 0 && (await page.locator('aside[aria-label="Preview"]').count()) === 0,
+  );
+
   // history:changed
   await reset();
   await page.evaluate(() => window.__clipMock.capture("a brand new clipboard entry"));
