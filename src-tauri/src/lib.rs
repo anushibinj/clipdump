@@ -1,5 +1,6 @@
 mod platform;
 mod state;
+mod tray;
 mod window;
 
 use state::AppState;
@@ -65,6 +66,7 @@ pub fn run() {
                     eprintln!("clipdump: could not register hotkey: {e}");
                 }
             }
+            tray::build(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())
