@@ -5,6 +5,9 @@
 #[cfg(windows)]
 mod windows;
 
+// Byte layouts of the clipboard formats the app writes (Phase 11), pure.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod clipfmt;
 // Pure capture decisions and the self-write guard: no OS calls, tested everywhere.
 // On non-Windows builds only the tests (and the stub) use them, hence the allow.
 #[cfg_attr(not(windows), allow(dead_code))]
