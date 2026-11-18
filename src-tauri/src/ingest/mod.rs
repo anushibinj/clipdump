@@ -8,6 +8,7 @@
 //! Everything that is slow (image decode, PNG and WebP encode, file stat calls)
 //! happens on the worker threads, never on the capture thread.
 
+pub mod files;
 pub mod image;
 pub mod text;
 
@@ -37,8 +38,7 @@ pub struct IngestedItem {
     pub thumb: Option<Vec<u8>>,
     /// Copied paths (file items only).
     pub files: Option<Vec<FileRef>>,
-    /// Pixel size of the image, or of the first image file's thumbnail source;
-    /// 0 when not applicable.
+    /// Pixel size of the image; 0 for text and file items.
     pub width: u32,
     pub height: u32,
     /// Text: UTF-8 bytes. Image: PNG bytes. Files: sum of file sizes.
