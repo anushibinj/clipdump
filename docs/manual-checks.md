@@ -799,3 +799,158 @@ the real app on Linux, the mock UI) are listed in the Phase 12 hand-off, not her
       `history.db`, `blobs`, `thumbs` and `key.bin`. Click it twice: two windows
       or one reused, no error. Delete the folder first (app closed), start the
       app and click Open: the folder is created and opens.
+
+## Phase 13: polish (Windows only)
+
+Everything below needs Windows. What was checked in the container (unit tests, the
+Xvfb run of the real app, the mock UI audit) is listed in the Phase 13 hand-off, not
+here. Nothing in this phase touches the hotkey, typing or copy path; if any of them
+feels slower than before, note it.
+
+### Tray icon when paused
+- [ ] The tray shows the indigo clipboard icon while capturing and the dimmed grey
+      one with an amber pause badge while paused. Hover: "Clipdump" and "Clipdump
+      (paused)".
+- [ ] Switch it with the tray's "Pause capture" and with Settings, Capture, "Pause
+      capture": icon, tooltip and check mark always change together, in both
+      directions, also when the bar is open.
+- [ ] Click the tray item and flip the Settings switch in quick alternation for ten
+      seconds: the app never hangs, and the final tray state matches the Settings
+      switch.
+- [ ] At 100%, 150% and 200% display scaling: the icons are sharp (not blurred or
+      cut). Both variants are legible on a light and on a dark taskbar (Settings,
+      Personalization, Colors, "Choose your mode" for the taskbar). The paused one
+      must be told apart from the normal one at a glance on both.
+- [ ] Restart while paused: the tray starts as "capturing" (a pause never survives a
+      restart).
+
+### Multiple monitors and DPI
+Needs two monitors. Test with the primary at 100% and the secondary at 150% or 200%,
+and again with them swapped.
+- [ ] Press the hotkey with the mouse on each monitor in turn: the bar opens on the
+      monitor under the cursor, horizontally centered in what the taskbar leaves,
+      about 20% down.
+- [ ] The bar is 720 x 460 DIP on each: it looks the same physical size relative to
+      its text on both, and nothing is cut off at its right or bottom edge.
+- [ ] Taskbar at the bottom, then left, top and right (Settings, Personalization,
+      Taskbar, behavior, alignment, or drag it): the bar never overlaps the taskbar.
+      On a small laptop screen (1366 x 768 at 150%) the bar is pushed up so its
+      bottom edge stays above the taskbar.
+- [ ] Put a monitor to the left of and above the primary (negative coordinates in
+      Settings, System, Display): the bar still opens centered on it.
+- [ ] Hide the bar on one monitor, move the mouse to the other, press the hotkey: it
+      appears on the other one at that one's scale, with no flash on the first.
+- [ ] Unplug the secondary monitor while the bar is hidden and press the hotkey: it
+      opens on the remaining monitor. Plug it back and repeat.
+- [ ] Mouse in the dead gap between two monitors that do not touch (offset
+      layouts): the bar opens on the primary monitor.
+- [ ] Drag a window to the monitor with the other scaling, close it, open the bar
+      there: the text is not blurry and the layout is not stretched (this is the
+      Windows per-monitor DPI quirk: the size is set in physical pixels right after
+      the move, see `window.rs`). If the bar is one pixel off in width or height on
+      one monitor, note which; it does not matter for the layout.
+- [ ] Pinned bar mode: the bar appears where the hotkey or startup put it and stays;
+      it does not follow the mouse to another monitor until the hotkey hides and shows
+      it again.
+
+### Very long text
+- [ ] Copy a 5 MB text (for example a log, or `"a" * 5_000_000` pasted into Notepad)
+      and a 5 MB text with no spaces. The bar still opens at once, typing stays
+      smooth, and the row shows one line.
+- [ ] Select it and press Tab: the preview shows the start of the text and says it is
+      cut ("truncated", with the total characters). Scrolling in it is smooth.
+- [ ] Ctrl+Enter pastes the WHOLE text into Notepad (the preview cut does not touch
+      the copy).
+- [ ] Copy a folder with thousands of files and open its preview: the list is cut
+      with a count, and long paths are shortened with an ellipsis.
+- [ ] Task Manager: Clipdump's WebView2 process does not grow by hundreds of MB while
+      you do the above.
+
+### Shutdown, logoff, restart
+The terminal (`pnpm tauri dev`) prints `clipdump: shutdown Completed in N ms` when the
+shutdown ran; N should be a few milliseconds to a few hundred.
+- [ ] Tray, Quit right after copying something: start the app again, the item is in
+      the list. Also after changing a setting just before quitting.
+- [ ] Copy a text, then at once sign out of Windows (Start, user, Sign out). Sign in,
+      open the bar: the text is in the history. Repeat with Restart and with Shut
+      down (then start the PC). This is the `WM_ENDSESSION` path: tao receives it in its
+      hidden top level window, raises the exit event, and the same shutdown runs.
+- [ ] Copy five different things quickly and restart the PC at once with
+      `shutdown /r /t 0`: all five are there afterwards.
+- [ ] Shut down while a screenshot is still being recognized (OCR): after the restart
+      the screenshot is in the list and is recognized again (OCR was stopped, the item
+      stayed pending).
+- [ ] The shutdown never makes Windows show "this app is preventing shut down" (it
+      must finish well inside five seconds). If it does, note the `shutdown ... in N ms`
+      line of the log (run from a terminal, not the tray).
+- [ ] Kill it hard (Task Manager, End task, or `taskkill /f /im clipdump.exe`) right after
+      a copy: the history opens normally next time (at most the last 50 ms of copies
+      may be missing), and nothing is reported as damaged.
+
+### A damaged history
+Close Clipdump first. The data folder is `%LOCALAPPDATA%\clipdump`.
+- [ ] Replace `history.db` with any other file (for example a copy of a .jpg renamed):
+      start the app. It starts normally; the tray menu has "History was recovered (click
+      for details)" at the top; opening the bar shows a red message at the bottom saying
+      the database was damaged, the file name `history.corrupt-<number>.db`, and the
+      folder. The folder really contains that file, plus `blobs.corrupt-<number>` and
+      `thumbs.corrupt-<number>` if there were screenshots, and a fresh `history.db`.
+- [ ] Esc dismisses the message without hiding the bar; the next Esc hides it. Open the
+      bar again: the message stays gone until the next start.
+- [ ] Copy something: it is captured into the new history and survives a restart.
+- [ ] Truncate `history.db` to half its size (a hex editor, or `fsutil file seteof
+      history.db 20000`): same result, nothing is deleted, the old file is only renamed.
+- [ ] Damage one byte in the middle of the file with a hex editor (a page header):
+      same result.
+- [ ] Copy `history.db`, `history.db-wal` and `history.db-shm` from a running app
+      (while it runs) and restart from the copy: it opens normally (a crash image is not
+      damage).
+- [ ] The notice never contains clipboard text, only the file names and the folder.
+- [ ] Make the data folder read only (Properties, Read-only does not apply to folders;
+      use `icacls "%LOCALAPPDATA%\clipdump" /deny %USERNAME%:(W)`) and start: the app
+      does not move anything and does not claim the history is damaged (undo with `icacls
+      ... /remove:d %USERNAME%`).
+
+### key.bin failures (DPAPI)
+These are the cases the container cannot reproduce (it has no DPAPI).
+- [ ] With some history, close the app and replace `key.bin` with a few random bytes
+      (or a `key.bin` copied from another PC or another Windows account): start. DPAPI
+      refuses it; the app moves `history.db` (with `-wal`, `-shm`), `blobs`, `thumbs` AND
+      `key.bin` to `...corrupt-<number>...`, makes a new key and an empty history, and the
+      bar says the key could not be read and names the files. The old `key.bin` is NOT
+      overwritten: `key.corrupt-<number>.bin` has the old bytes.
+- [ ] Delete only `key.bin` while a history exists: start. A new key is made, no row of
+      the old history decrypts, so the old history is moved aside
+      (`history.corrupt-<number>.db`) and the bar says it could not be decrypted with this
+      computer's key. The key is not renamed (it is the new, good one).
+- [ ] Profile reset case: log in as another Windows user and copy that user's
+      `%LOCALAPPDATA%\clipdump` over yours: the DPAPI blob of the other user cannot be
+      unprotected, same as the first bullet.
+- [ ] Restoring the files from `...corrupt-...` back (close the app, rename them back
+      to `history.db` and `key.bin`, remove the new ones) gives the old history again when
+      the key is the right one for this user.
+
+### Accessibility (screen reader, contrast)
+- [ ] Narrator (Win+Ctrl+Enter): open the bar. It reads the search field ("Search
+      clipboard history", edit); typing announces "N results" (or "No results") politely,
+      without interrupting; Down arrow reads each row (text, size, time), not "unknown".
+- [ ] Settings (Ctrl+,): Narrator announces "Settings, dialog"; Tab reads every control with
+      its name and state (switches say on or off, number fields their unit); Esc closes it.
+- [ ] The red recovery message is read out when it appears (it is an alert).
+- [ ] Icon-only buttons read as "Dismiss", "Back to search", "Stop ignoring <app>".
+- [ ] Windows high contrast mode (Settings, Accessibility, Contrast themes, "Aquatic" and
+      "Night sky"): the bar stays usable: text readable, the selected row visible, focus
+      visible in Settings, nothing invisible. (WebView2 maps the system colors; note anything
+      that disappears, the unthemed light/dark palette is the baseline.)
+- [ ] Settings, Accessibility, Visual effects, Animation effects off: the bar and the switches
+      do not animate (WebView2 reports prefers-reduced-motion).
+- [ ] Display scaling 200% and text size 150%: nothing overlaps, the footer message wraps.
+- [ ] Keyboard only: Tab through Settings shows a visible ring on every stop, in light and
+      dark; the hotkey recorder, switches, number fields, Add and the ignore list are all
+      reachable.
+
+### App icon
+- [ ] After installing (Phase 15) or running the built exe: the icon in Explorer (small,
+      medium, large, extra large icon views), in the Alt+Tab list, in Task Manager and on the
+      desktop shortcut is the indigo clipboard, crisp at each size, with transparent corners.
+- [ ] The tray icon is the 32 px indigo variant and still reads on both taskbar modes.
