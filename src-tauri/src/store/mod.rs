@@ -61,6 +61,7 @@ use crate::persist::blobs::hash_hex;
 use crate::persist::crypto::{Crypto, OVERHEAD};
 use crate::persist::db::MetaRow;
 use crate::persist::{NewItem, Persist, WriteOp};
+use crate::search::{self, PathChecker, ResultDto, SearchRequest};
 use crate::settings::Settings;
 use retention::Limits;
 
@@ -455,6 +456,18 @@ impl Store {
         }
         self.notify();
         Inserted::New(id)
+    }
+
+    /// Search the history (Phase 8). The read lock is held only while ranking
+    /// (a scan of the in-memory text, no disk, no decryption); the result rows,
+    /// including the file existence checks, are built after it is released, so a
+    /// slow disk can never block an ingest worker.
+    pub fn search(&self, req: &SearchRequest<'_>, paths: &dyn PathChecker) -> Vec<ResultDto> {
+        let ranked = {
+            let items = self.items.read();
+            search::rank(items.iter_newest_first(), req)
+        };
+        search::render(&ranked, req, paths)
     }
 
     /// A snapshot of one item.
