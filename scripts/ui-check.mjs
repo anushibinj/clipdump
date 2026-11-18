@@ -609,7 +609,7 @@ async function shots(browser, url) {
     await page.addStyleTag({ content: "html{background:#9aa3b5 !important}" });
     const input = page.locator("input[cmdk-input]");
     // Dark gets a few frames only, to keep docs/screenshots small.
-    const darkSet = ["02-text-search", "06-preview-image", "07-files-missing", "12-settings"];
+    const darkSet = ["02-text-search", "06-preview-image", "07-files-missing", "12-settings", "13-settings-bottom"];
     const shot = async (name) => {
       if (scheme === "dark" && !darkSet.includes(name)) return;
       await page.waitForTimeout(300);
@@ -649,8 +649,16 @@ async function shots(browser, url) {
     await page.evaluate(() => (window.__clipMock.control.copyError = "clipboard writing is not supported on this platform"));
     await page.keyboard.press("Control+Enter");
     await shot("11-copy-error");
+    // The copy error above must not sit in the settings footer.
+    await page.getByRole("button", { name: "Dismiss" }).click();
     await page.keyboard.press("Control+,");
     await shot("12-settings");
+    // A chord another app owns: the refusal shows under the hotkey row.
+    await page.getByRole("button", { name: "Change" }).click();
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("KeyL");
+    await page.keyboard.up("Meta");
+    await shot("13-settings-hotkey-error");
     await page.locator('[data-slot="scroll-area-viewport"]').evaluate((e) => (e.scrollTop = 99999));
     await shot("13-settings-bottom");
     if (problems.length) console.log("console problems:", problems.slice(0, 3));
