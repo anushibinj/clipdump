@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use crate::ocr::OcrWorker;
 use crate::platform;
 use crate::platform::self_write::mono_ms;
 use crate::search::{FsPathChecker, PathChecker, ResultDto, SearchRequest, TypeFilter};
@@ -28,11 +29,13 @@ use crate::state::AppState;
 use crate::store::Store;
 use crate::window;
 
+pub mod config;
 pub mod copy;
 pub mod preview;
 #[cfg(test)]
 mod tests;
 
+pub use config::{SettingsDto, SettingsEnv, StatsDto, stats_of};
 pub use copy::{CopyEnv, copy_item_with};
 pub use preview::{PreviewDto, preview_item};
 
@@ -153,4 +156,57 @@ pub fn toggle_pin(app: AppHandle, id: u64) -> Result<bool, String> {
 #[tauri::command(async)]
 pub fn clear_history(app: AppHandle) -> Result<usize, String> {
     Ok(clear_unpinned(store(&app)?.as_ref()))
+}
+
+// ---------------------------------------------------------------------------
+// get_settings, set_settings, get_stats, hide_bar
+// ---------------------------------------------------------------------------
+
+/// Run `f` with the settings environment of the running app.
+fn with_settings_env<T>(
+    app: &AppHandle,
+    f: impl FnOnce(&SettingsEnv<'_>) -> Result<T, String>,
+) -> Result<T, String> {
+    let store = store(app)?;
+    let state = app.state::<AppState>();
+    let ocr = app.try_state::<OcrWorker>();
+    let env = SettingsEnv {
+        settings: &state.settings,
+        pinned_bar: &state.pinned_bar,
+        paused: &state.paused,
+        store: &store,
+        ocr: ocr.as_ref().map(|w| w.queue()),
+    };
+    f(&env)
+}
+
+#[tauri::command(async)]
+pub fn get_settings(app: AppHandle) -> Result<SettingsDto, String> {
+    with_settings_env(&app, |env| Ok(env.current()))
+}
+
+/// Validate and apply the settings now (in memory; Phase 12 saves them to disk).
+/// Returns the settings as stored, which can differ from the input (a tidied
+/// ignore list).
+#[tauri::command(async)]
+pub fn set_settings(app: AppHandle, settings: SettingsDto) -> Result<SettingsDto, String> {
+    with_settings_env(&app, |env| env.apply(settings))
+}
+
+#[tauri::command(async)]
+pub fn get_stats(app: AppHandle) -> Result<StatsDto, String> {
+    let store = store(&app)?;
+    let state = app.state::<AppState>();
+    let ocr = app.try_state::<OcrWorker>();
+    Ok(stats_of(
+        &store,
+        &state.settings,
+        ocr.as_ref().map(|w| w.queue()),
+    ))
+}
+
+/// Hide the search bar (Esc). Idempotent.
+#[tauri::command(async)]
+pub fn hide_bar(app: AppHandle) {
+    window::hide(&app);
 }

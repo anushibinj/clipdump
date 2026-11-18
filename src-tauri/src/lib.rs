@@ -78,7 +78,11 @@ pub fn run() {
             commands::copy_item,
             commands::delete_item,
             commands::toggle_pin,
-            commands::clear_history
+            commands::clear_history,
+            commands::get_settings,
+            commands::set_settings,
+            commands::get_stats,
+            commands::hide_bar
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {

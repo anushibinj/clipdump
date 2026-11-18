@@ -2,14 +2,17 @@
 //! over a temp directory (no Tauri runtime).
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 use super::*;
 use crate::commands::preview::{
     PREVIEW_FILES_MAX, PREVIEW_TEXT_MAX_BYTES, file_name, truncate_utf8,
 };
+use crate::ingest::{OcrJob, OcrQueue};
 use crate::model::Payload;
 use crate::model::{ClipKind, OcrStatus};
+use crate::ocr::{OCR_UNAVAILABLE_HINT, OcrQueueHandle};
 use crate::platform::self_write::SelfWriteGuard;
 use crate::platform::{ClipboardWriter, Paster};
 use crate::search::PathChecker;
@@ -592,4 +595,210 @@ fn clear_history_keeps_pinned_items() {
     assert!(fx.store.get(b).is_none());
     assert_eq!(fx.db_ids(), vec![a as i64, img as i64]);
     assert_eq!(clear_unpinned(&fx.store), 0, "nothing left to clear");
+}
+
+// -- settings and stats ------------------------------------------------------
+
+struct SettingsFx {
+    fx: Fx,
+    pinned: AtomicBool,
+    paused: AtomicBool,
+    ocr: OcrQueueHandle,
+}
+
+impl SettingsFx {
+    fn new() -> Self {
+        let fx = Fx::new();
+        let ocr = OcrQueueHandle::new(Arc::clone(&fx.settings));
+        Self {
+            fx,
+            pinned: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            ocr,
+        }
+    }
+
+    fn env(&self) -> SettingsEnv<'_> {
+        SettingsEnv {
+            settings: &self.fx.settings,
+            pinned_bar: &self.pinned,
+            paused: &self.paused,
+            store: &self.fx.store,
+            ocr: Some(&self.ocr),
+        }
+    }
+}
+
+#[test]
+fn get_settings_returns_the_defaults_with_the_runtime_flags() {
+    let sfx = SettingsFx::new();
+    let dto = sfx.env().current();
+    assert_eq!(dto.max_items, 1_000);
+    assert_eq!(dto.max_age_days, 30);
+    assert!(dto.ocr_enabled);
+    assert!(!dto.pinned_bar && !dto.paused);
+    let v = serde_json::to_value(&dto).unwrap();
+    for key in [
+        "maxTextBytes",
+        "maxImageBytes",
+        "ignoredApps",
+        "maxItems",
+        "maxAgeDays",
+        "diskCapBytes",
+        "ramCacheBytes",
+        "ocrEnabled",
+        "pinnedBar",
+        "paused",
+    ] {
+        assert!(v.get(key).is_some(), "{key}");
+    }
+}
+
+#[test]
+fn set_settings_applies_values_flags_and_retention_at_once() {
+    let sfx = SettingsFx::new();
+    for i in 0..5 {
+        sfx.fx.text(&format!("item {i}"));
+        sfx.fx.advance(10);
+    }
+    let pinned = sfx.fx.text("pinned one");
+    toggle_pin_of(&sfx.fx.store, pinned).unwrap();
+
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.max_items = 2;
+    dto.pinned_bar = true;
+    dto.paused = true;
+    dto.max_text_bytes = 4096;
+    let stored = env.apply(dto.clone()).unwrap();
+    assert_eq!(stored, dto);
+    assert_eq!(env.current(), dto, "get_settings reads it back");
+
+    let s = sfx.fx.settings.read().unwrap();
+    assert_eq!((s.max_items, s.max_text_bytes), (2, 4096));
+    drop(s);
+    assert!(sfx.pinned.load(Ordering::Relaxed));
+    assert!(sfx.paused.load(Ordering::Relaxed));
+    // Two unpinned kept (the newest) plus the pinned one.
+    assert_eq!(sfx.fx.store.len(), 3);
+    assert!(sfx.fx.store.get(pinned).is_some());
+}
+
+#[test]
+fn set_settings_shrinks_the_ram_cache_and_stops_ocr() {
+    let sfx = SettingsFx::new();
+    let id = sfx.fx.image(1, 4000);
+    sfx.fx.flush();
+    sfx.fx.store.get_blob(id).unwrap();
+    assert_eq!(sfx.fx.store.cache_bytes(), 4000);
+    sfx.ocr.enqueue(OcrJob {
+        item_id: id as i64,
+        hash: 1,
+        width: 640,
+        height: 480,
+    });
+    assert_eq!(sfx.ocr.backlog(), 1);
+
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.ram_cache_bytes = 0;
+    dto.ocr_enabled = false;
+    env.apply(dto).unwrap();
+    assert_eq!(sfx.fx.store.cache_bytes(), 0, "budget 0 empties the cache");
+    assert_eq!(sfx.ocr.backlog(), 0, "waiting OCR jobs are dropped");
+}
+
+#[test]
+fn set_settings_refuses_limits_that_would_stop_capture() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let before = env.current();
+    let mut bad = before.clone();
+    bad.max_text_bytes = 0;
+    assert!(env.apply(bad).is_err());
+    let mut bad = before.clone();
+    bad.max_image_bytes = 10;
+    assert!(env.apply(bad).is_err());
+    assert_eq!(env.current(), before, "a refused change applies nothing");
+}
+
+#[test]
+fn the_ignore_list_is_trimmed_and_deduplicated() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.ignored_apps = vec![
+        " KeePass.exe ".into(),
+        "keepass.EXE".into(),
+        "".into(),
+        "   ".into(),
+        "1password.exe".into(),
+    ];
+    let stored = env.apply(dto).unwrap();
+    assert_eq!(stored.ignored_apps, vec!["KeePass.exe", "1password.exe"]);
+    assert_eq!(
+        sfx.fx.settings.read().unwrap().ignored_apps,
+        vec!["KeePass.exe", "1password.exe"]
+    );
+
+    let mut too_long = env.current();
+    too_long.ignored_apps = vec!["x".repeat(300)];
+    assert!(env.apply(too_long).is_err());
+    let mut too_many = env.current();
+    too_many.ignored_apps = (0..501).map(|i| format!("app{i}.exe")).collect();
+    assert!(env.apply(too_many).is_err());
+}
+
+#[test]
+fn settings_json_must_be_complete_and_camel_case() {
+    let sfx = SettingsFx::new();
+    let mut v = serde_json::to_value(sfx.env().current()).unwrap();
+    assert!(serde_json::from_value::<SettingsDto>(v.clone()).is_ok());
+    v.as_object_mut().unwrap().remove("maxItems");
+    assert!(serde_json::from_value::<SettingsDto>(v).is_err());
+}
+
+#[test]
+fn stats_count_items_cache_ocr_and_name_the_key_protector() {
+    let sfx = SettingsFx::new();
+    let fx = &sfx.fx;
+    fx.text("a");
+    let img = fx.image(1, 3000);
+    let img2 = fx.image(2, 100);
+    let pinned = fx.text("b");
+    toggle_pin_of(&fx.store, pinned).unwrap();
+    fx.store.set_ocr_text(img2, None, OcrStatus::Unavailable);
+    fx.flush();
+    fx.store.get_blob(img).unwrap();
+
+    let st = stats_of(&fx.store, &fx.settings, Some(&sfx.ocr));
+    assert_eq!(st.items, 4);
+    assert_eq!(st.pinned, 1);
+    assert!(st.disk_bytes > 3000);
+    assert_eq!(st.cache_bytes, 3000);
+    assert_eq!(st.cache_budget_bytes, 64 * 1024 * 1024);
+    assert_eq!(st.ocr_pending, 1);
+    assert_eq!(st.ocr_unavailable, 1);
+    assert_eq!(st.ocr_backlog, 0);
+    assert_eq!(st.ocr_engine, "unknown", "no worker has looked yet");
+    assert_eq!(st.ocr_hint, OCR_UNAVAILABLE_HINT);
+    assert_eq!(st.key_protector, fx.store.persist().key_protector_name());
+    assert!(!st.key_protector.is_empty());
+
+    let none = stats_of(&fx.store, &fx.settings, None);
+    assert_eq!(none.ocr_engine, "unavailable");
+    let v = serde_json::to_value(&st).unwrap();
+    for key in [
+        "diskBytes",
+        "cacheBytes",
+        "cacheBudgetBytes",
+        "ocrPending",
+        "ocrUnavailable",
+        "ocrBacklog",
+        "ocrEngine",
+        "ocrHint",
+        "keyProtector",
+    ] {
+        assert!(v.get(key).is_some(), "{key}");
+    }
 }
