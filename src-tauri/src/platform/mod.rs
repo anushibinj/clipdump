@@ -240,6 +240,20 @@ pub fn lower_current_thread_priority_idle() -> Result<(), String> {
     }
 }
 
+/// Ask the OS to terminate this process late at logoff or shutdown, so the
+/// graceful shutdown has time (`shutdown.rs`). Windows only
+/// (`SetProcessShutdownParameters`); elsewhere a no-op.
+pub fn prefer_late_shutdown() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::session::prefer_late_shutdown()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
 /// Builds this platform's OCR engine; the OCR worker calls it on its own thread.
 /// Windows: `Windows.Media.Ocr`. Elsewhere: an engine that is never available.
 pub fn ocr_engine_factory() -> crate::ocr::EngineFactory {
