@@ -166,6 +166,13 @@ impl Store {
     /// disk. Runs at startup, every 15 minutes, and when settings change.
     /// Returns how many items were evicted.
     pub fn run_retention(&self) -> usize {
+        let t = crate::perf::start();
+        let n = self.run_retention_pass();
+        crate::perf::finish(t, crate::perf::Event::Retention, n as u64);
+        n
+    }
+
+    fn run_retention_pass(&self) -> usize {
         let limits = self.limits();
         let mut n = self.evict_older_than(limits.max_age_days);
         let by_limits = {

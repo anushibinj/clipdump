@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::hash::hash_path_bufs;
 use crate::model::Payload;
+use crate::perf::{self, Event};
 use crate::platform::clipfmt::path_is_listable;
 use crate::platform::self_write::SelfWriteGuard;
 use crate::platform::{ClipboardWriter, Paster};
@@ -94,12 +95,15 @@ pub fn copy_item_with<W: ClipboardWriter, P: Paster>(
     paste: bool,
     hide: impl FnOnce(),
 ) -> Result<(), String> {
+    let t_copy = perf::start();
     let item = env.store.get(id).ok_or("item not found")?;
+    let t_payload = perf::start();
     let payload = env
         .store
         .payload(id)
         .map_err(|_| "could not load the item".to_owned())
         .and_then(|p| keep_existing(p, env.paths))?;
+    perf::finish(t_payload, Event::CopyPayload, item.byte_size);
 
     let content_hash = written_hash(&payload, item.hash);
     let note = || {
@@ -108,6 +112,8 @@ pub fn copy_item_with<W: ClipboardWriter, P: Paster>(
     };
     W::set(&payload, &note).map_err(|e| e.to_string())?;
     note();
+    // The "Ctrl+Enter to clipboard set" figure: command start to the write done.
+    perf::finish(t_copy, Event::copy(item.kind), item.byte_size);
 
     env.store.mark_used(id);
     hide();

@@ -176,6 +176,7 @@ pub fn show(app: &AppHandle) {
     let _ = w.show();
     focus(&w);
     let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
+    crate::perf::hotkey_elapsed(crate::perf::Event::HotkeyToShown);
 }
 
 /// Pinned-bar mode at startup: show the bar where it belongs without taking the
@@ -208,6 +209,7 @@ pub fn toggle(app: &AppHandle) {
             crate::platform::remember_foreground(app, &w);
             focus(&w);
             let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
+            crate::perf::hotkey_elapsed(crate::perf::Event::HotkeyToShown);
         }
         (true, false) => hide(app),
         (false, _) => show(app),

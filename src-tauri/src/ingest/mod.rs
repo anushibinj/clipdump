@@ -150,7 +150,19 @@ fn handle(msg: IngestMsg, sink: &dyn ItemSink) {
                         describe(&item),
                         started.elapsed().as_millis()
                     );
+                    let (kind, size) = (item.kind, item.byte_size);
                     sink.submit(item);
+                    // Capture dequeued to the item being in the store, which is
+                    // what the "clipboard event to item visible" budget counts
+                    // (minus the watcher's own read). `started` exists for the
+                    // log line above, so this adds a flag check and nothing else.
+                    if crate::perf::enabled() {
+                        crate::perf::record(
+                            crate::perf::Event::ingest(kind),
+                            started.elapsed(),
+                            size,
+                        );
+                    }
                 }
                 Ok(None) => {}
                 // Errors never include clipboard bytes.

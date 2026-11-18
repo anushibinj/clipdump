@@ -19,6 +19,8 @@ mod ocr;
 pub mod model;
 // Opened by `start_ingest`; some queries are used only by later phases.
 mod pause;
+// `--perf` timing log, its summary table and the process memory reader (Phase 14).
+mod perf;
 #[allow(dead_code)]
 mod persist;
 mod platform;
@@ -47,6 +49,14 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `clipdump --perf-summary <perf.log>` prints the p50 and p95 table and exits;
+    // no window, no history. `--perf` (or CLIPDUMP_PERF=1) turns the timing log on.
+    // Both are one scan of the arguments at startup, nothing afterwards.
+    if let Some(path) = perf::summary_arg(std::env::args()) {
+        std::process::exit(perf::summary::run_cli(path.as_deref()));
+    }
+    perf::init_from_process();
+
     let builder = tauri::Builder::default();
 
     // Single instance must be the first plugin registered. A second launch
@@ -64,6 +74,9 @@ pub fn run() {
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(|app, _shortcut, event| {
                 if event.state() == ShortcutState::Pressed {
+                    // First thing: the stamp the `--perf` hotkey to paint figure
+                    // starts from. One relaxed load when perf is off.
+                    perf::mark_hotkey();
                     window::toggle(app);
                 }
             })
@@ -93,7 +106,8 @@ pub fn run() {
             commands::set_settings,
             commands::get_stats,
             commands::hide_bar,
-            commands::open_data_folder
+            commands::open_data_folder,
+            commands::perf_ack
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {
@@ -121,6 +135,8 @@ pub fn run() {
             // %LOCALAPPDATA%\clipdump (Section 3): history, and "Open data folder".
             if let Ok(d) = app.path().local_data_dir() {
                 let _ = state.data_dir.set(d.join("clipdump"));
+                // Before the history is opened, so the startup load is logged.
+                perf::start_logger(&d.join("clipdump"));
             }
             if let Err(e) = platform::prefer_late_shutdown() {
                 eprintln!("clipdump: shutdown level not set: {e}");
@@ -154,7 +170,11 @@ pub fn run() {
             // Tray Quit, `app.exit`, and Windows logoff, shutdown and restart
             // (tao turns `WM_ENDSESSION` into this event): flush and stop
             // everything in order (see `shutdown.rs`).
-            tauri::RunEvent::Exit => shutdown::run(app),
+            tauri::RunEvent::Exit => {
+                shutdown::run(app);
+                // After the history is safe: flush the perf log, write its summary.
+                perf::on_exit();
+            }
             _ => {}
         });
 }
@@ -276,6 +296,7 @@ fn start_ingest(
     // Opening runs the integrity check (orphan rows and blob files). A history
     // that cannot be used (damaged database, unreadable key, a key that is not
     // its own) is moved aside and a fresh one started (`persist::recovery`).
+    let opened_at = std::time::Instant::now();
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -301,6 +322,18 @@ fn start_ingest(
         announce_recovery(app, &recovery);
     }
     let persist = Arc::clone(store.persist());
+    if perf::enabled() {
+        perf::record(
+            perf::Event::StartupLoad,
+            store.load_time(),
+            store.len() as u64,
+        );
+        perf::record(
+            perf::Event::StartupReady,
+            opened_at.elapsed(),
+            store.len() as u64,
+        );
+    }
     eprintln!(
         "clipdump: loaded {} items in {} ms",
         store.len(),

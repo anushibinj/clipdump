@@ -547,7 +547,13 @@ fn process_job(
     if shared.closed() {
         return;
     }
+    let t = crate::perf::start();
     let result = recognize_png(engine, &png);
+    crate::perf::finish(
+        t,
+        crate::perf::Event::Ocr,
+        u64::from(job.width) * u64::from(job.height),
+    );
     drop(png);
     match result {
         Ok(text) => {
