@@ -14,6 +14,10 @@ mod platform;
 // Minimal runtime settings; Phase 12 persists them.
 mod settings;
 mod state;
+// In-memory store, retention and blob cache. Search (Phase 8) and the IPC
+// commands (Phase 9) are its other callers; until then part of its API is unused.
+#[allow(dead_code)]
+mod store;
 mod tray;
 mod window;
 
