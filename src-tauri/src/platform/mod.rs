@@ -185,6 +185,21 @@ pub fn foreground_window() -> Option<isize> {
     }
 }
 
+/// Lower the calling thread to below normal priority, so background work
+/// (ingest, later OCR) never competes with typing or the hotkey. Windows only
+/// (`SetThreadPriority`); elsewhere a no-op, because those platforms have no
+/// clipboard backend yet.
+pub fn lower_current_thread_priority() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::priority::set_current_below_normal()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
 /// Raw native handle of our own window, to avoid recording ourselves as the
 /// "previous" window when the bar is already focused.
 fn own_handle(w: &WebviewWindow) -> Option<isize> {
