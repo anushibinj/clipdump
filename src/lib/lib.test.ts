@@ -137,3 +137,11 @@ describe("isDark", () => {
     expect(isDark("light", true)).toBe(false);
   });
 });
+
+describe("gigabyte fields", () => {
+  it("round trips the default disk cap", async () => {
+    const { bytesToGb, gbToBytes } = await import("./bytes");
+    expect(bytesToGb(2 * 1024 ** 3)).toBe(2);
+    expect(gbToBytes(0.5)).toBe(512 * 1024 * 1024);
+  });
+});

@@ -31,3 +31,14 @@ export function bytesToMb(bytes: number): number {
 export function mbToBytes(mb: number): number {
   return Math.round(mb * MIB);
 }
+
+export const GIB = 1024 * MIB;
+
+/** Bytes to gigabytes for a settings field, at most two decimals. */
+export function bytesToGb(bytes: number): number {
+  return Math.round((bytes / GIB) * 100) / 100;
+}
+
+export function gbToBytes(gb: number): number {
+  return Math.round(gb * GIB);
+}
