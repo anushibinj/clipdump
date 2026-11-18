@@ -133,7 +133,7 @@ impl HistoryChanged {
     pub fn for_app(app: tauri::AppHandle) -> io::Result<Self> {
         use tauri::Emitter;
         Self::new(move || {
-            if let Err(e) = app.emit("history:changed", ()) {
+            if let Err(e) = app.emit(crate::events::HISTORY_CHANGED, ()) {
                 eprintln!("clipdump: could not emit history:changed: {e}");
             }
         })

@@ -1,4 +1,6 @@
 mod autostart;
+// Event names shared with the frontend (`src/lib/ipc.ts`).
+mod events;
 // Canonical content hashes (text, image pixels, file lists), used by ingest and
 // the capture self-write guard.
 mod hash;

@@ -4,11 +4,9 @@
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
-pub const LABEL: &str = "main";
+use crate::events;
 
-/// Event names the frontend listens to.
-pub const EVENT_SHOWN: &str = "bar:shown";
-pub const EVENT_HIDDEN: &str = "bar:hidden";
+pub const LABEL: &str = "main";
 
 /// Logical bar width. Must match `width` of window `main` in tauri.conf.json.
 const BAR_WIDTH_LOGICAL: f64 = 720.0;
@@ -95,7 +93,7 @@ pub fn show(app: &AppHandle) {
     position_on_cursor_monitor(app, &w);
     let _ = w.show();
     focus(&w);
-    let _ = w.emit_to(LABEL, EVENT_SHOWN, ());
+    let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
 }
 
 pub fn hide(app: &AppHandle) {
@@ -105,7 +103,7 @@ pub fn hide(app: &AppHandle) {
         return;
     }
     let _ = w.hide();
-    let _ = w.emit_to(LABEL, EVENT_HIDDEN, ());
+    let _ = w.emit_to(LABEL, events::BAR_HIDDEN, ());
 }
 
 pub fn toggle(app: &AppHandle) {
@@ -116,7 +114,7 @@ pub fn toggle(app: &AppHandle) {
         // Pinned-bar mode: hotkey only focuses the always-visible bar.
         (true, true) => {
             focus(&w);
-            let _ = w.emit_to(LABEL, EVENT_SHOWN, ());
+            let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
         }
         (true, false) => hide(app),
         (false, _) => show(app),

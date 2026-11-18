@@ -9,11 +9,9 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+use crate::events;
 use crate::state::AppState;
 use crate::window;
-
-/// Frontend event asking the bar to open its settings view (Phase 10).
-pub const EVENT_OPEN_SETTINGS: &str = "settings:open";
 
 const ID_SHOW: &str = "show";
 const ID_PAUSE: &str = "pause";
@@ -82,7 +80,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         }
         ID_SETTINGS => {
             window::show(app);
-            let _ = app.emit_to(window::LABEL, EVENT_OPEN_SETTINGS, ());
+            let _ = app.emit_to(window::LABEL, events::SETTINGS_OPEN, ());
         }
         ID_QUIT => app.exit(0),
         _ => {}
