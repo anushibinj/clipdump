@@ -802,3 +802,75 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
         assert!(v.get(key).is_some(), "{key}");
     }
 }
+
+// -- capabilities --------------------------------------------------------------
+
+/// The names in `build.rs` `COMMANDS`, the `generate_handler!` list in `lib.rs`
+/// and the `allow-...` permissions of the capability must be the same set: a
+/// command missing from the capability is refused at runtime, and one missing
+/// from `build.rs` is allowed to everyone.
+#[test]
+fn build_rs_handler_and_capability_list_the_same_commands() {
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v
+    }
+    let build = include_str!("../../build.rs");
+    let list = build
+        .split("COMMANDS: &[&str] = &[")
+        .nth(1)
+        .and_then(|s| s.split("];").next())
+        .unwrap();
+    let from_build = sorted(
+        list.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect(),
+    );
+
+    let lib = include_str!("../lib.rs");
+    let handler = lib
+        .split("generate_handler![")
+        .nth(1)
+        .and_then(|s| s.split(']').next())
+        .unwrap();
+    let from_lib = sorted(
+        handler
+            .split(',')
+            .map(|c| c.trim().trim_start_matches("commands::").to_owned())
+            .filter(|c| !c.is_empty())
+            .collect(),
+    );
+
+    let cap: serde_json::Value =
+        serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
+    let from_cap = sorted(
+        cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str()?.strip_prefix("allow-"))
+            .map(|p| p.replace('-', "_"))
+            .collect(),
+    );
+
+    assert_eq!(from_build.len(), 10);
+    assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
+    assert_eq!(
+        from_build, from_cap,
+        "build.rs vs capabilities/default.json"
+    );
+    // Only event listening and the app commands: no plugin permission.
+    let others: Vec<_> = cap["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p.as_str())
+        .filter(|p| !p.starts_with("allow-"))
+        .collect();
+    assert_eq!(
+        others,
+        ["core:event:allow-listen", "core:event:allow-unlisten"]
+    );
+}

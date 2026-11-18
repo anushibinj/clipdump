@@ -1,10 +1,20 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: listen to backend events only. Hotkey, tray, autostart and single-instance are driven from Rust and need no frontend permission.",
+  "description": "Main window: listen to backend events and call the app's own commands. Hotkey, tray, autostart and single-instance are driven from Rust and need no frontend permission. No plugin permission is granted.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
-    "core:event:allow-unlisten"
+    "core:event:allow-unlisten",
+    "allow-search",
+    "allow-get-preview",
+    "allow-copy-item",
+    "allow-delete-item",
+    "allow-toggle-pin",
+    "allow-clear-history",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-get-stats",
+    "allow-hide-bar"
   ]
 }
