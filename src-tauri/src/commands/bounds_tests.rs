@@ -415,8 +415,8 @@ fn interpolated(args: &str) -> Vec<String> {
     let mut l = lit;
     while let Some(o) = l.find('{') {
         let after = &l[o + 1..];
-        if after.starts_with('{') {
-            l = &after[1..];
+        if let Some(escaped) = after.strip_prefix('{') {
+            l = escaped;
             continue;
         }
         let end = after.find('}').unwrap_or(after.len());

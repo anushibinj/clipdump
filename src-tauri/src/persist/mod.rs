@@ -961,4 +961,158 @@ pub(crate) mod tests {
         drop(p);
         check("(after reopen)");
     }
+
+    // -- crash resilience (Phase 13) --------------------------------------------
+
+    /// Copy a data directory file by file, the way it is on disk right now: a
+    /// stand in for the state a killed process leaves behind (WAL not
+    /// checkpointed, writer thread gone without a word).
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for e in fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            let target = to.join(e.file_name());
+            if e.path().is_dir() {
+                copy_tree(&e.path(), &target);
+            } else {
+                fs::copy(e.path(), &target).unwrap();
+            }
+        }
+    }
+
+    /// `PRAGMA integrity_check` of the database file in `dir`.
+    fn integrity_check(dir: &Path) -> String {
+        let conn = Connection::open(dir.join(db::DB_FILE)).unwrap();
+        conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Fill `p` with 40 texts and 10 images, flush, and return the ids.
+    fn fill_and_flush(p: &Persist) -> Vec<i64> {
+        for id in 1..=40 {
+            p.submit(insert_op(text_item(id, &format!("text number {id}"))))
+                .unwrap();
+        }
+        for id in 41..=50 {
+            p.submit(insert_op(image_item(id))).unwrap();
+        }
+        p.submit(WriteOp::SetPinned {
+            id: 3,
+            pinned: true,
+        })
+        .unwrap();
+        p.flush().unwrap();
+        (1..=50).collect()
+    }
+
+    #[test]
+    fn a_killed_process_after_flush_loses_nothing_and_corrupts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = open(dir.path());
+        let flushed = fill_and_flush(&p);
+        // Ops that are still queued or in the next batch when the "crash" hits:
+        // they may or may not be on disk, but must never damage what is.
+        for id in 51..=60 {
+            p.submit(insert_op(text_item(id, &format!("late {id}"))))
+                .unwrap();
+        }
+        let crash = tempfile::tempdir().unwrap();
+        assert!(
+            dir.path().join("history.db-wal").metadata().unwrap().len() > 0,
+            "the snapshot must contain an un-checkpointed WAL"
+        );
+        copy_tree(dir.path(), crash.path());
+
+        assert_eq!(integrity_check(crash.path()), "ok", "no corruption");
+        let q = open(crash.path());
+        let got = ids(&q);
+        for id in &flushed {
+            assert!(got.contains(id), "flushed item {id} was lost");
+        }
+        assert!(
+            got.iter().all(|id| (1..=60).contains(id)),
+            "no foreign rows: {got:?}"
+        );
+        for id in 1..=40 {
+            assert_eq!(
+                q.load_text(id).unwrap().as_deref(),
+                Some(format!("text number {id}").as_str())
+            );
+        }
+        // Every image row has its blob and thumbnail (the startup repair would
+        // have dropped it otherwise; nothing may have been dropped).
+        assert!(q.integrity_report().rows_dropped.is_empty());
+        for id in 41..=50 {
+            let it = image_item(id);
+            assert_eq!(
+                q.read_blob(it.blob_hash.as_ref().unwrap()).unwrap().len(),
+                8
+            );
+            assert_eq!(q.read_thumb(&it.hash).unwrap(), b"RIFFthumb");
+        }
+        assert!(
+            q.load_all_meta(0)
+                .unwrap()
+                .iter()
+                .any(|m| m.id == 3 && m.pinned)
+        );
+        drop(p);
+    }
+
+    #[test]
+    fn dropping_the_handles_without_a_shutdown_after_flush_keeps_the_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = open(dir.path());
+        let flushed = fill_and_flush(&p);
+        // Leak the handle: no Drop, no Shutdown op, no checkpoint, the writer
+        // thread just stays where it is, like a process that died.
+        std::mem::forget(p);
+        let q = open(dir.path());
+        assert_eq!(ids(&q), flushed);
+        assert_eq!(integrity_check(dir.path()), "ok");
+    }
+
+    #[test]
+    fn a_torn_wal_tail_is_survived() {
+        // A crash in the middle of appending to the WAL leaves a partial frame at
+        // its end. SQLite ignores it: everything before it is still there.
+        let dir = tempfile::tempdir().unwrap();
+        let p = open(dir.path());
+        let flushed = fill_and_flush(&p);
+        let crash = tempfile::tempdir().unwrap();
+        copy_tree(dir.path(), crash.path());
+        let wal = crash.path().join("history.db-wal");
+        let len = fs::metadata(&wal).unwrap().len();
+        // Append half a frame of garbage.
+        let mut f = fs::OpenOptions::new().append(true).open(&wal).unwrap();
+        std::io::Write::write_all(&mut f, &[0xAB; 2_000]).unwrap();
+        drop(f);
+        assert!(fs::metadata(&wal).unwrap().len() > len);
+        let q = open(crash.path());
+        assert_eq!(ids(&q), flushed);
+        assert_eq!(integrity_check(crash.path()), "ok");
+        drop(p);
+    }
+
+    #[test]
+    fn shutdown_then_reopen_is_complete_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = open(dir.path());
+        let flushed = fill_and_flush(&p);
+        p.submit(insert_op(text_item(99, "last one"))).unwrap();
+        // No flush: shutdown itself must commit what is queued.
+        p.shutdown().unwrap();
+        p.shutdown().unwrap();
+        assert!(p.submit(insert_op(text_item(100, "too late"))).is_err());
+        drop(p);
+        let q = open(dir.path());
+        let mut want = flushed;
+        want.push(99);
+        assert_eq!(ids(&q), want);
+        assert_eq!(
+            fs::metadata(dir.path().join("history.db-wal")).map_or(0, |m| m.len()),
+            0,
+            "the WAL was folded into the database"
+        );
+    }
 }
