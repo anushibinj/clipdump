@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS = {
   diskCapBytes: 2 * 1024 ** 3,
   ramCacheBytes: 64 * 1024 * 1024,
   ocrEnabled: true,
+  autoPasteOnEnter: false,
   pinnedBar: false,
   paused: false,
 };
@@ -50,7 +51,7 @@ const control = {
   latencyMs: 0,
   /** Extra delay per exact query string for `search`, to force out of order responses in tests. */
   delayByQuery: {} as Record<string, number>,
-  /** `copy_item` rejects with this message when set (the real one rejects on Windows until Phase 11). */
+  /** `copy_item` rejects with this message when set (the real one does on Linux, where there is no clipboard backend). */
   copyError: null as string | null,
   /** `get_stats` reports an OCR engine without a language. */
   ocrUnavailable: false,

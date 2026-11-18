@@ -258,10 +258,9 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
             <SwitchRow
               id="auto-paste"
               label="Paste on Enter"
-              hint="Enter copies and pastes into the window you came from."
-              checked={false}
-              disabled
-              onChange={() => {}}
+              hint="Enter copies and pastes into the window you came from. Ctrl+Enter only copies."
+              checked={settings.autoPasteOnEnter}
+              onChange={(v) => void save({ autoPasteOnEnter: v })}
             />
             <SwitchRow
               id="pinned-bar"

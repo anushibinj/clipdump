@@ -169,13 +169,42 @@ async function keys(browser, url) {
   const copy = await lastCall("copy_item");
   check("Ctrl+Enter copies the selected item without paste", copy?.args.id === want && copy?.args.paste === false, JSON.stringify(copy));
 
-  // Enter copies too (auto paste is off until Phase 12)
+  // Enter copies too; it pastes only when "Paste on Enter" is on (default off)
   await reset();
   const w2 = await selectedId();
   await page.keyboard.press("Enter");
   await settle();
   const c2 = await lastCall("copy_item");
-  check("Enter copies the selected item (paste only when the setting is on)", c2?.args.id === w2 && c2?.args.paste === false, JSON.stringify(c2));
+  check("Enter copies the selected item without paste while the setting is off", c2?.args.id === w2 && c2?.args.paste === false, JSON.stringify(c2));
+
+  // turn "Paste on Enter" on through the settings screen
+  await page.keyboard.press("Control+,");
+  await settle();
+  await page.locator("#auto-paste").click();
+  await settle();
+  check("the Paste on Enter switch is enabled and saves autoPasteOnEnter", (await lastCall("set_settings"))?.args.settings.autoPasteOnEnter === true);
+  await page.keyboard.press("Escape");
+  await settle();
+  await page.locator("input[cmdk-input]").focus();
+  const w3 = await selectedId();
+  await page.keyboard.press("Enter");
+  await settle();
+  const c3 = await lastCall("copy_item");
+  check("Enter copies and pastes once the setting is on", c3?.args.id === w3 && c3?.args.paste === true, JSON.stringify(c3));
+  await page.keyboard.press("Control+Enter");
+  await settle();
+  const c4 = await lastCall("copy_item");
+  check("Ctrl+Enter still only copies with the setting on", c4?.args.id === w3 && c4?.args.paste === false, JSON.stringify(c4));
+  await page.keyboard.press("Control+2");
+  await settle();
+  check("Ctrl+2 still only copies with the setting on", (await lastCall("copy_item"))?.args.paste === false);
+  // the setting is read again when the bar is shown: after a reset of the backend it is off again
+  await reset();
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  await page.keyboard.press("Enter");
+  await settle();
+  check("Enter does not paste again after the setting was reset", (await lastCall("copy_item"))?.args.paste === false);
 
   // Ctrl+1 and Ctrl+3
   await reset();
@@ -195,13 +224,21 @@ async function keys(browser, url) {
 
   // copy failure shows a message and the bar keeps working
   await reset();
-  await page.evaluate(() => (window.__clipMock.control.copyError = "copying to the clipboard is not implemented yet (todo Phase 11)"));
+  await page.evaluate(() => (window.__clipMock.control.copyError = "clipboard writing is not supported on this platform"));
   await page.keyboard.press("Control+Enter");
   await settle();
   const alert = page.locator('footer [role="alert"]');
-  check("a failed copy shows an inline error", (await alert.count()) === 1 && /not implemented/.test(await alert.innerText()));
+  check("a failed copy shows an inline error", (await alert.count()) === 1 && /not supported/.test(await alert.innerText()));
   await page.keyboard.press("ArrowDown");
   check("the bar still works after a failed copy", (await page.locator('[role="option"][aria-selected="true"]').count()) === 1);
+
+  // a failed auto-paste: the item is copied, the bar is gone, the message waits for the next open
+  await reset();
+  await page.evaluate(() => (window.__clipMock.control.copyError = "copied, but auto-paste failed: SendInput injected 0 of 4 key events"));
+  await page.keyboard.press("Control+Enter");
+  await page.waitForTimeout(5600);
+  check("a failed paste message is not lost while the bar is hidden", (await alert.count()) === 1 && /^copied, but auto-paste failed/.test(await alert.innerText()));
+  await page.evaluate(() => window.__clipMock.emit?.("bar:shown"));
   await page.evaluate(() => (window.__clipMock.control.copyError = null));
 
   // pin toggling
@@ -329,7 +366,7 @@ async function keys(browser, url) {
   await page.locator("#max-text").blur();
   await settle();
   check("an invalid number falls back to the stored value", (await page.locator("#max-text").inputValue()) === "5");
-  check("disabled controls stay disabled", (await page.locator("#autostart").isDisabled()) && (await page.locator("#auto-paste").isDisabled()));
+  check("controls without a backend stay disabled, Paste on Enter does not", (await page.locator("#autostart").isDisabled()) && !(await page.locator("#auto-paste").isDisabled()));
   await page.getByRole('radio', { name: 'Dark' }).click();
   check("choosing Dark theme adds the dark class", await page.evaluate(() => document.documentElement.classList.contains("dark")));
   await page.getByRole('radio', { name: 'System' }).click();

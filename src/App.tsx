@@ -38,14 +38,6 @@ import { applyTheme, readThemePref, writeThemePref, type ThemePref } from "@/lib
 export const CONFIRM_WINDOW_MS = 3000;
 /** How long a footer message stays. */
 const NOTICE_MS = 5000;
-/**
- * Whether plain Enter also pastes into the window the bar came from. The
- * setting arrives with Phase 12 (SettingsDto has no field for it yet); until
- * then Enter behaves like Ctrl+Enter: it copies and hides the bar. That is
- * the least surprising choice: Enter in a launcher style bar should do
- * something useful, and a copy is harmless and what the user was heading for.
- */
-const AUTO_PASTE_ON_ENTER = false;
 
 function App() {
   const s = useSearch();
@@ -61,6 +53,7 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
+  const stickyNotice = useRef(false);
   const confirmTimer = useRef<number | undefined>(undefined);
 
   // ---- latest values for the stable callbacks below -------------------------
@@ -70,14 +63,18 @@ function App() {
 
   // ---- footer messages ----------------------------------------------------
 
-  const showNotice = useCallback((kind: NoticeState["kind"], message: string) => {
+  // `sticky`: for a message raised while the bar is being hidden (nobody can read it yet).
+  // It waits for the next `bar:shown` and only then starts its 5 seconds.
+  const showNotice = useCallback((kind: NoticeState["kind"], message: string, sticky = false) => {
     window.clearTimeout(noticeTimer.current);
     setNotice({ kind, message });
-    noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+    stickyNotice.current = sticky;
+    if (!sticky) noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
 
   const dismissNotice = useCallback(() => {
     window.clearTimeout(noticeTimer.current);
+    stickyNotice.current = false;
     setNotice(null);
   }, []);
 
@@ -112,11 +109,21 @@ function App() {
 
   // ---- actions ------------------------------------------------------------
 
+  // Whether plain Enter (and a click on a row) also pastes into the window the bar came
+  // from: the "Paste on Enter" setting, off until the user turns it on. Ctrl+Enter and
+  // Ctrl+1..9 never paste. Read through `latest` so the callbacks below stay stable.
+  const pasteOnEnter = () => latest.current.settings?.autoPasteOnEnter ?? false;
+
   const copy = useCallback(
     (id: number, paste: boolean) => {
-      // The backend hides the bar on success. Until Phase 11 it rejects on Windows:
-      // show that as a footer message, the bar stays usable.
-      copyItem(id, paste).catch((e: unknown) => showNotice("error", `Could not copy: ${errorMessage(e)}`));
+      // The backend hides the bar on success; on failure the bar stays open and the reason
+      // is a footer message. "copied, but auto-paste failed: ..." means the item IS on the
+      // clipboard (the bar is hidden by then), so it is kept until the bar is shown again.
+      copyItem(id, paste).catch((e: unknown) => {
+        const message = errorMessage(e);
+        if (message.startsWith("copied, but")) showNotice("error", message, true);
+        else showNotice("error", `Could not copy: ${message}`);
+      });
     },
     [showNotice],
   );
@@ -125,7 +132,7 @@ function App() {
   const onActivate = useCallback(
     (id: number) => {
       latest.current.select(id);
-      copy(id, AUTO_PASTE_ON_ENTER);
+      copy(id, pasteOnEnter());
     },
     [copy],
   );
@@ -142,7 +149,7 @@ function App() {
           if (selected) copy(selected.id, false);
           break;
         case "enter":
-          if (selected) copy(selected.id, AUTO_PASTE_ON_ENTER);
+          if (selected) copy(selected.id, pasteOnEnter());
           break;
         case "copyNth": {
           const r = c.results[a.n - 1];
@@ -222,6 +229,11 @@ function App() {
             input.select();
           }
           latest.current.refresh({ resetSelection: true });
+          if (stickyNotice.current) {
+            stickyNotice.current = false;
+            window.clearTimeout(noticeTimer.current);
+            noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+          }
           loadSettings(); // the tray can pause capture while the bar is hidden
           loadStats();
         }),
