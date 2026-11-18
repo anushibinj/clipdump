@@ -21,6 +21,13 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# XChaCha20-Poly1305 for data at rest. `zeroize` wipes the cipher key schedule on drop.
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
+zeroize = "1"
+crossbeam-channel = "0.5"
+anyhow = "1"
+# `bundled` compiles SQLite in, so there is no system dependency on Windows.
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -37,4 +44,12 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+# Windows only: foreground tracking (Phase 2) and DPAPI key protection (Phase 3).
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
