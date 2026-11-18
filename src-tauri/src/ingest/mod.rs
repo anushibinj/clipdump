@@ -10,7 +10,6 @@
 pub mod changed;
 pub mod files;
 pub mod image;
-pub mod sink;
 pub mod text;
 
 use std::io;
@@ -26,7 +25,7 @@ use crate::model::{ClipKind, FileRef, OcrStatus};
 use crate::platform::{Captured, CapturedEvent, IngestMsg};
 
 /// A fully processed clipboard item, everything the store needs to build its
-/// in-memory `ClipItem` (Phase 6) and the persist `NewItem`. Plain owned data
+/// in-memory `ClipItem` and the persist `NewItem`. Plain owned data
 /// so it can cross threads; large payloads are moved, never copied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IngestedItem {
@@ -60,8 +59,8 @@ pub struct IngestedItem {
     pub ocr_status: OcrStatus,
 }
 
-/// Destination of finished items. Phase 6's store implements it; until then
-/// `sink::PlaceholderPersistSink` does. Called from ingest worker threads, so
+/// Destination of finished items. The store (`store::Store`) implements it.
+/// Called from ingest worker threads, so
 /// implementations must be cheap and thread safe.
 pub trait ItemSink: Send + Sync {
     /// A new or repeated item. If `item.hash` is already known the sink moves

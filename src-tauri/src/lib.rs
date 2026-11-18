@@ -4,10 +4,10 @@ mod autostart;
 mod hash;
 // Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
-// Persistence value types; the full ClipItem arrives in Phase 6.
+// Persistence value types and the in-memory ClipItem.
 #[allow(dead_code)]
 mod model;
-// Wired into the app by Phase 6 (store). Until then nothing calls it.
+// Opened by `start_ingest`; some queries are used only by later phases.
 #[allow(dead_code)]
 mod persist;
 mod platform;
@@ -123,17 +123,17 @@ fn start_capture(app: &tauri::App) {
     }
 }
 
-/// Open the history database and start the ingest workers.
+/// Open the history, load it into the store and start the ingest workers and
+/// the retention timer.
 ///
-/// PLACEHOLDER wiring: the sink writes straight to `Persist`. Phase 6 replaces
-/// `PlaceholderPersistSink` with the in-memory store (which owns the same
-/// `Persist`) and plugs the Phase 7 OCR queue in place of `NoopOcrQueue`.
+/// `NoopOcrQueue` stands in until Phase 7 plugs the OCR worker in.
 fn start_ingest(
     app: &tauri::App,
     rx: crossbeam_channel::Receiver<platform::IngestMsg>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
-    use ingest::{NoopOcrQueue, changed::HistoryChanged, sink::PlaceholderPersistSink};
+    use ingest::{NoopOcrQueue, changed::HistoryChanged};
+    use std::sync::Arc;
 
     // %LOCALAPPDATA%\clipdump (Section 3).
     let dir = app
@@ -141,15 +141,36 @@ fn start_ingest(
         .local_data_dir()
         .context("no local data directory")?
         .join("clipdump");
-    let persist = std::sync::Arc::new(persist::Persist::open(&dir).context("open history")?);
+    // Opening runs the integrity check (orphan rows and blob files).
+    let persist = Arc::new(persist::Persist::open(&dir).context("open history")?);
     let changed = HistoryChanged::for_app(app.handle().clone())?;
-    let sink = PlaceholderPersistSink::new(
-        std::sync::Arc::clone(&persist),
-        std::sync::Arc::new(NoopOcrQueue),
-        Some(changed),
-    )?;
-    ingest::IngestPool::start(rx, std::sync::Arc::new(sink))?;
-    // Keep the database open for the life of the app. Phase 13 flushes it on quit.
+    let settings = Arc::clone(&app.state::<AppState>().settings);
+    let store = Arc::new(
+        store::Store::open(
+            Arc::clone(&persist),
+            settings,
+            Arc::new(NoopOcrQueue),
+            Some(changed),
+            store::system_clock(),
+        )
+        .context("load history")?,
+    );
+    eprintln!(
+        "clipdump: loaded {} items in {} ms",
+        store.len(),
+        store.load_time().as_millis()
+    );
+    ingest::IngestPool::start(rx, store.clone())?;
+    // Age and disk checks every 15 minutes; stops when the app state is dropped.
+    match store::retention::RetentionTimer::start(&store) {
+        Ok(timer) => {
+            app.manage(timer);
+        }
+        Err(e) => eprintln!("clipdump: retention timer not started: {e}"),
+    }
+    // Kept for the life of the app: Phase 8 (search) and Phase 9 (commands) read
+    // it, Phase 13 flushes the database on quit.
+    app.manage(store);
     app.manage(persist);
     Ok(())
 }
