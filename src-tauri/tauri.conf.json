@@ -62,6 +62,7 @@
         "compression": "lzma",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "installer/hooks.nsh",
         "customLanguageFiles": {
           "English": "installer/English.nsh"
         }
