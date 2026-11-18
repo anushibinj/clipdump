@@ -209,6 +209,21 @@ fn start_capture(app: &tauri::App) {
     }
 }
 
+/// The history was moved aside: log it, keep the sentence for the bar (it pulls it
+/// with `get_stats`, so it is not lost if the webview is not ready yet), emit the
+/// event for a webview that is, and add a line to the tray menu.
+fn announce_recovery(app: &tauri::App, recovery: &persist::recovery::Recovery) {
+    let message = recovery.message();
+    eprintln!("clipdump: {message}");
+    *app.state::<AppState>()
+        .recovery
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(message);
+    tray::show_recovery(app.handle());
+    use tauri::Emitter;
+    let _ = app.emit_to(window::LABEL, events::HISTORY_RECOVERED, ());
+}
+
 /// Open the history, load it into the store and start the ingest workers, the
 /// OCR worker and the retention timer.
 fn start_ingest(
@@ -225,23 +240,38 @@ fn start_ingest(
         .local_data_dir()
         .context("no local data directory")?
         .join("clipdump");
-    // Opening runs the integrity check (orphan rows and blob files).
-    let persist = Arc::new(persist::Persist::open(&dir).context("open history")?);
-    let changed = HistoryChanged::for_app(app.handle().clone())?;
     let settings = Arc::clone(&app.state::<AppState>().settings);
     // The queue exists before the store (the store hands new images to it); the
     // worker is started below, once the store is loaded.
     let ocr_queue = ocr::OcrQueueHandle::new(Arc::clone(&settings));
-    let store = Arc::new(
-        store::Store::open(
-            Arc::clone(&persist),
-            settings,
-            Arc::new(ocr_queue.clone()),
-            Some(changed),
-            store::system_clock(),
-        )
-        .context("load history")?,
-    );
+    // Opening runs the integrity check (orphan rows and blob files). A history
+    // that cannot be used (damaged database, unreadable key, a key that is not
+    // its own) is moved aside and a fresh one started (`persist::recovery`).
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (store, recovery) = persist::recovery::open_history(
+        &dir,
+        platform::default_key_protector().as_ref(),
+        now_secs,
+        |persist| {
+            Ok(Arc::new(
+                store::Store::open(
+                    persist,
+                    Arc::clone(&settings),
+                    Arc::new(ocr_queue.clone()),
+                    Some(HistoryChanged::for_app(app.handle().clone())?),
+                    store::system_clock(),
+                )
+                .context("load history")?,
+            ))
+        },
+    )
+    .context("open history")?;
+    if let Some(recovery) = recovery {
+        announce_recovery(app, &recovery);
+    }
+    let persist = Arc::clone(store.persist());
     eprintln!(
         "clipdump: loaded {} items in {} ms",
         store.len(),

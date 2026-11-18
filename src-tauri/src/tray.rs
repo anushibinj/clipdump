@@ -21,6 +21,10 @@ const ID_SHOW: &str = "show";
 const ID_PAUSE: &str = "pause";
 const ID_SETTINGS: &str = "settings";
 const ID_QUIT: &str = "quit";
+const ID_RECOVERED: &str = "recovered";
+
+/// The tray menu, kept so a line can be added after startup (`show_recovery`).
+struct TrayMenu(Menu<Wry>);
 
 /// The real tray as the pause indicator's target (`pause.rs` decides what to show):
 /// the "Pause capture" check item, the icon (both images are decoded once at
@@ -89,6 +93,7 @@ pub fn build(app: &App) -> tauri::Result<()> {
         ],
     )?;
 
+    app.manage(TrayMenu(menu.clone()));
     let normal = decode_icon(TRAY_NORMAL_PNG)?;
     let paused_icon = decode_icon(TRAY_PAUSED_PNG)?;
     let look = TrayLook::of(paused);
@@ -128,9 +133,37 @@ pub fn build(app: &App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Add the line "History was recovered" at the top of the tray menu: the history was
+/// damaged at startup and moved aside. Clicking it shows the bar, whose footer
+/// carries the full explanation (what happened, the folder, the new file names).
+/// A native notification was weighed and left out: it needs the notification
+/// plugin, its own capability, and a registered app identity (a toast from a
+/// dev build is attributed to another program), which is more than a one off
+/// message about the history is worth. The menu line plus the bar message do
+/// the job without any of that.
+pub fn show_recovery(app: &AppHandle) {
+    let Some(menu) = app.try_state::<TrayMenu>() else {
+        return;
+    };
+    let added = MenuItem::with_id(
+        app,
+        ID_RECOVERED,
+        "History was recovered (click for details)",
+        true,
+        None::<&str>,
+    )
+    .and_then(|item| {
+        menu.0.insert(&item, 0)?;
+        menu.0.insert(&PredefinedMenuItem::separator(app)?, 1)
+    });
+    if let Err(e) = added {
+        eprintln!("clipdump: could not add the recovery line to the tray menu: {e}");
+    }
+}
+
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
-        ID_SHOW => window::show(app),
+        ID_SHOW | ID_RECOVERED => window::show(app),
         ID_PAUSE => {
             // The CheckMenuItem flips its own check mark on click; `toggle`
             // flips the flag the capture watcher reads and sets the check mark

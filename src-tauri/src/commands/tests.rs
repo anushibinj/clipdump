@@ -1105,9 +1105,12 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
         "ocrHint",
         "keyProtector",
         "hotkeyError",
+        "recovery",
     ] {
         assert!(v.get(key).is_some(), "{key}");
     }
+    // The command fills `recovery` from the app state; `stats_of` leaves it empty.
+    assert_eq!(st.recovery, None);
 }
 
 // -- Phase 12: persistence, hotkey, login item, pause, retention ---------------

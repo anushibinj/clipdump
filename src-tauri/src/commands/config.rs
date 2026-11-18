@@ -223,6 +223,11 @@ pub struct StatsDto {
     /// Set when the configured hotkey could not be registered (another app owns
     /// it): the text to show next to the hotkey. `null` when it works.
     pub hotkey_error: Option<String>,
+    /// Set for the whole run when the history had to be moved aside at startup
+    /// (damaged database, unreadable key): the sentence to show, with the folder
+    /// and the new file names. `null` when the history opened normally. The UI
+    /// shows it until the user dismisses it.
+    pub recovery: Option<String>,
 }
 
 fn engine_name(s: EngineState) -> &'static str {
@@ -259,5 +264,7 @@ pub fn stats_of(
         ocr_hint: OCR_UNAVAILABLE_HINT,
         key_protector: store.persist().key_protector_name(),
         hotkey_error,
+        // Filled in by the command, which owns the app state.
+        recovery: None,
     }
 }

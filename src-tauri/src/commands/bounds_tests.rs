@@ -356,9 +356,13 @@ const SAFE_SHAPES: &[&str] = &[
 ];
 
 /// Values that look like content by name but are not, with the file they are in:
-/// `name` is the hex hash that names a blob file, or the name of a key in the
-/// hotkey module.
-const SAFE_IN_FILE: &[(&str, &str)] = &[("persist/blobs.rs", "name"), ("hotkey.rs", "name")];
+/// `name` is the hex hash that names a blob file, the name of a key in the
+/// hotkey module, or (`stage.name()`) the label of a shutdown stage.
+const SAFE_IN_FILE: &[(&str, &str)] = &[
+    ("persist/blobs.rs", "name"),
+    ("hotkey.rs", "name"),
+    ("shutdown.rs", "stage.name()"),
+];
 
 /// Folders whose `path.display()` is the app's own data folder (history, blobs,
 /// settings), never a path the user copied.

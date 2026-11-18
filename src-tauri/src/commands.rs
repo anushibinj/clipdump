@@ -223,12 +223,18 @@ pub fn get_stats(app: AppHandle) -> Result<StatsDto, String> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    Ok(stats_of(
+    let mut stats = stats_of(
         &store,
         &state.settings,
         ocr.as_ref().map(|w| w.queue()),
         hotkey_error,
-    ))
+    );
+    stats.recovery = state
+        .recovery
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    Ok(stats)
 }
 
 /// Hide the search bar (Esc). Idempotent.

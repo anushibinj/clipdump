@@ -31,6 +31,9 @@ pub struct AppState {
     /// Why the configured hotkey is not active (another app owns it), shown in
     /// the settings view. `None` when it is registered.
     pub hotkey_error: Mutex<Option<String>>,
+    /// Set when the history had to be moved aside at startup: what happened and
+    /// where the old files are. Shown by the bar until dismissed (`StatsDto`).
+    pub recovery: Mutex<Option<String>>,
     /// The history folder (`%LOCALAPPDATA%\clipdump`), for "Open data folder".
     pub data_dir: OnceLock<PathBuf>,
     /// Records the app's own clipboard writes so the watcher can ignore the echo.
