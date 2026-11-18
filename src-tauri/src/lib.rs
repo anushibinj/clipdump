@@ -8,13 +8,16 @@ mod ingest;
 // and `apply_settings` are used by Phases 9 and 12.
 #[allow(dead_code)]
 mod ocr;
-// Persistence value types and the in-memory ClipItem.
-#[allow(dead_code)]
-mod model;
+// Persistence value types and the in-memory ClipItem. `pub` so the search
+// benchmark (`benches/search_bench.rs`) can build items.
+pub mod model;
 // Opened by `start_ingest`; some queries are used only by later phases.
 #[allow(dead_code)]
 mod persist;
 mod platform;
+// Fuzzy search over the store (Phase 8). `pub` for the benchmark; the IPC command
+// (Phase 9) is its other caller.
+pub mod search;
 // Minimal runtime settings; Phase 12 persists them.
 mod settings;
 mod state;
