@@ -355,7 +355,7 @@ fn pool_to_store_end_to_end_with_dedup_and_restart() {
         ClipKind::Files,
         "the bump moved the file item up"
     );
-    assert_eq!(top[0].use_count, 1);
+    assert_eq!(top[0].use_count, 0, "an echo does not count a use");
     assert_eq!(fx.ocr.0.lock().unwrap().len(), 1, "no new OCR job");
 }
 
@@ -559,8 +559,28 @@ fn bump_by_hash_moves_the_item_and_ignores_unknown_hashes() {
     ItemSink::bump(&*fx.store, hash);
     ItemSink::bump(&*fx.store, 12345);
     assert_eq!(fx.ids()[0], a);
-    assert_eq!(fx.store.get(a).unwrap().use_count, 1);
+    assert_eq!(
+        fx.store.get(a).unwrap().use_count,
+        0,
+        "an echo moves the item but does not count a second use"
+    );
     assert_eq!(fx.store.len(), 2);
+    // The move is persisted like any other use.
+    let fx = fx.reopen();
+    assert_eq!(fx.ids()[0], a);
+}
+
+#[test]
+fn copy_then_echo_counts_one_use() {
+    let fx = Fx::new();
+    let a = fx.text("a");
+    let _b = fx.text("b");
+    let hash = fx.store.get(a).unwrap().hash;
+    assert!(fx.store.mark_used(a)); // copy_item
+    ItemSink::bump(&*fx.store, hash); // the suppressed echo of that write
+    assert_eq!(fx.ids()[0], a);
+    assert_eq!(fx.store.get(a).unwrap().use_count, 1);
+    assert_eq!(fx.store.len(), 2, "no duplicate item");
 }
 
 #[test]

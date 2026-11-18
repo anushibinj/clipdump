@@ -192,6 +192,16 @@ impl Items {
 
     /// Move an item to the top and count a use. False if the id is unknown.
     fn bump(&mut self, id: u64, at: i64) -> bool {
+        self.move_to_top(id, at, true)
+    }
+
+    /// Move an item to the top without counting a use (the echo of the app's
+    /// own clipboard write: `copy_item` already counted that use).
+    fn touch(&mut self, id: u64, at: i64) -> bool {
+        self.move_to_top(id, at, false)
+    }
+
+    fn move_to_top(&mut self, id: u64, at: i64, count_use: bool) -> bool {
         let Some(old_seq) = self.seq_of.get(&id).copied() else {
             return false;
         };
@@ -201,7 +211,9 @@ impl Items {
         let new_seq = self.take_seq();
         let it = Arc::make_mut(&mut item);
         it.last_used_at = at;
-        it.use_count = it.use_count.saturating_add(1);
+        if count_use {
+            it.use_count = it.use_count.saturating_add(1);
+        }
         self.seq_of.insert(id, new_seq);
         self.by_seq.insert(new_seq, item);
         true
@@ -554,14 +566,16 @@ impl Store {
     }
 
     /// The app wrote this hash to the clipboard itself (self-write echo): move
-    /// that item to the top. Unknown hashes are ignored.
+    /// that item to the top. Unknown hashes are ignored. The use is not counted
+    /// again: `copy_item` called `mark_used` for the same copy, and counting
+    /// both would weigh every copy twice in the ranking.
     fn bump_hash(&self, hash: u128) {
         let mut items = self.items.write();
         let Some(id) = items.id_for_hash(hash) else {
             return;
         };
         let at = items.stamp(self.now());
-        items.bump(id, at);
+        items.touch(id, at);
         self.queue(WriteOp::UpdateUsed { id: id as i64, at });
         drop(items);
         self.notify();
