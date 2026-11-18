@@ -310,6 +310,52 @@ pub fn set_ocr(
     Ok(stmt.execute(params![id, ocr_enc, status.code()])? > 0)
 }
 
+/// An item removed by a delete query. The caller removes the files that belong
+/// to it after the transaction commits: the blob named `blob_hash` (if any) and
+/// the thumbnail named after `hash`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Removed {
+    pub id: i64,
+    pub hash: [u8; 16],
+    pub blob_hash: Option<String>,
+}
+
+fn collect_removed(stmt: &mut rusqlite::Statement<'_>, args: impl rusqlite::Params) -> Result<Vec<Removed>> {
+    let rows = stmt.query_map(args, |r| {
+        Ok(Removed {
+            id: r.get(0)?,
+            hash: hash_from(r.get(1)?)?,
+            blob_hash: r.get(2)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// Delete one item (pinned or not: an explicit delete always wins). Returns
+/// the removed row, `None` if the id does not exist.
+pub fn delete_item(conn: &Connection, id: i64) -> Result<Option<Removed>> {
+    let mut stmt =
+        conn.prepare_cached("DELETE FROM items WHERE id = ?1 RETURNING id, hash, blob_hash")?;
+    Ok(collect_removed(&mut stmt, [id])?.pop())
+}
+
+/// Delete every unpinned item ("clear history"). Pinned items are kept.
+pub fn delete_unpinned(conn: &Connection) -> Result<Vec<Removed>> {
+    let mut stmt = conn
+        .prepare_cached("DELETE FROM items WHERE pinned = 0 RETURNING id, hash, blob_hash")?;
+    collect_removed(&mut stmt, [])
+}
+
+/// Delete unpinned items created before `cutoff` (unix ms). Age is measured
+/// from `created_at` (the indexed column), so copying an old item again does
+/// not extend its life; pinning does.
+pub fn delete_older_than(conn: &Connection, cutoff: i64) -> Result<Vec<Removed>> {
+    let mut stmt = conn.prepare_cached(
+        "DELETE FROM items WHERE pinned = 0 AND created_at < ?1 RETURNING id, hash, blob_hash",
+    )?;
+    collect_removed(&mut stmt, [cutoff])
+}
+
 // QUERIES-MARKER
 
 #[cfg(test)]
@@ -549,5 +595,69 @@ pub(crate) mod tests {
         let m = meta_of(&conn, 1);
         assert_eq!((m.ocr_enc, m.ocr_status), (None, OcrStatus::Failed));
         assert!(!set_ocr(&conn, 99, None, OcrStatus::Unavailable).unwrap());
+    }
+
+    fn ids(conn: &Connection) -> Vec<i64> {
+        let mut v: Vec<i64> = load_all_meta(conn, 0).unwrap().iter().map(|m| m.id).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn delete_item_returns_files_to_clean_up() {
+        let conn = memory();
+        let mut img = sample(1);
+        img.blob_hash = Some("aa11".into());
+        insert_item(&conn, &img).unwrap();
+        insert_item(&conn, &sample(2)).unwrap();
+        let gone = delete_item(&conn, 1).unwrap().unwrap();
+        assert_eq!(gone.id, 1);
+        assert_eq!(gone.hash, img.hash);
+        assert_eq!(gone.blob_hash.as_deref(), Some("aa11"));
+        assert_eq!(ids(&conn), vec![2]);
+        assert_eq!(delete_item(&conn, 1).unwrap(), None, "already gone");
+    }
+
+    #[test]
+    fn delete_item_removes_pinned_too() {
+        let conn = memory();
+        insert_item(&conn, &sample(1)).unwrap();
+        set_pinned(&conn, 1, true).unwrap();
+        assert!(delete_item(&conn, 1).unwrap().is_some());
+        assert!(ids(&conn).is_empty());
+    }
+
+    #[test]
+    fn delete_unpinned_keeps_pinned() {
+        let conn = memory();
+        for id in 1..=4 {
+            let mut r = sample(id);
+            r.blob_hash = Some(format!("b{id}"));
+            insert_item(&conn, &r).unwrap();
+        }
+        set_pinned(&conn, 2, true).unwrap();
+        let mut removed = delete_unpinned(&conn).unwrap();
+        removed.sort_by_key(|r| r.id);
+        assert_eq!(removed.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 3, 4]);
+        assert_eq!(removed[0].blob_hash.as_deref(), Some("b1"));
+        assert_eq!(ids(&conn), vec![2]);
+        assert!(delete_unpinned(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_older_than_uses_created_at_and_spares_pinned() {
+        let conn = memory();
+        // created_at = 1000 + id
+        for id in 1..=5 {
+            insert_item(&conn, &sample(id)).unwrap();
+        }
+        set_pinned(&conn, 1, true).unwrap();
+        // Re-using an old item must not save it.
+        update_used(&conn, 2, 1_000_000).unwrap();
+        // Cutoff 1004: ids 1..=3 are older; 1 is pinned. 4 is exactly 1004 (kept).
+        let mut removed = delete_older_than(&conn, 1_004).unwrap();
+        removed.sort_by_key(|r| r.id);
+        assert_eq!(removed.iter().map(|r| r.id).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(ids(&conn), vec![1, 4, 5]);
     }
 }
