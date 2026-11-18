@@ -184,8 +184,9 @@ export const ResultItem = memo(function ResultItem({
       data-id={r.id}
       data-kind={r.kind}
       className={cn(
-        "mx-1 flex cursor-default items-center gap-3 rounded-lg px-2.5 text-sm transition-colors",
-        "scroll-my-1 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground",
+        "group/row mx-1 flex cursor-default items-center gap-3 rounded-lg px-2.5 text-sm transition-colors",
+        // Clipboard text is shown literally: no ligatures (Geist turns -> into an arrow).
+        "scroll-my-1 [font-variant-ligatures:none] data-[selected=true]:bg-foreground/[0.07] dark:data-[selected=true]:bg-foreground/[0.1]",
         tall ? "min-h-[52px] py-1.5" : "min-h-10 py-1.5",
       )}
       // A pointer that only sits still while the list scrolls must not steal the selection.
@@ -204,13 +205,16 @@ export const ResultItem = memo(function ResultItem({
             {r.lineCount} lines
           </Badge>
         )}
-        {r.kind === "files" && r.fileCount > 1 && r.missingFiles === 0 && (
+        {r.kind === "files" && r.fileCount > 1 && r.missingFiles === 0 && (r.matchIndices.length > 0 || r.snippet !== null) && (
           <Badge variant="secondary" className="h-4 px-1.5 text-[10px] font-medium tabular-nums">
             {r.fileCount} files
           </Badge>
         )}
         {r.missingFiles > 0 && (
-          <Badge variant="destructive" className="h-4 px-1.5 text-[10px] font-medium">
+          <Badge
+            variant="outline"
+            className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
+          >
             {missingLabel(r)}
           </Badge>
         )}
@@ -224,7 +228,9 @@ export const ResultItem = memo(function ResultItem({
           {r.pinned && <Pin className="size-3.5 fill-current text-muted-foreground" aria-hidden />}
         </span>
         <span className="hidden w-[46px] justify-end @min-[460px]:flex">
-          {index < 9 && <Kbd>Ctrl {index + 1}</Kbd>}
+          {index < 9 && (
+            <Kbd className="group-data-[selected=true]/row:bg-foreground/10">Ctrl {index + 1}</Kbd>
+          )}
         </span>
       </div>
     </div>

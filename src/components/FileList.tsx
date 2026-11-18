@@ -37,7 +37,10 @@ export function FileList({ files, totalFiles, truncated, totalSize }: FileListPr
                 <div className="truncate text-xs text-muted-foreground">{parentOf(f.path, f.name)}</div>
               </div>
               {!f.exists ? (
-                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] font-medium">
+                <Badge
+                  variant="outline"
+                  className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
+                >
                   missing
                 </Badge>
               ) : (

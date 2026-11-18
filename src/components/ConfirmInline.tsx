@@ -36,7 +36,7 @@ export function ConfirmInline({ count, windowMs }: ConfirmInlineProps) {
       <span className="ml-auto text-muted-foreground">Esc cancels</span>
       <span
         aria-hidden
-        className="absolute -bottom-2 left-0 h-0.5 rounded-full bg-destructive/70 ease-linear"
+        className="absolute -bottom-1.5 left-0 h-0.5 rounded-full bg-destructive/70 ease-linear"
         style={{
           width: drained ? "0%" : "100%",
           transition: `width ${windowMs}ms linear`,

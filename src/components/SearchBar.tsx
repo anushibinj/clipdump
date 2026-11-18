@@ -36,7 +36,7 @@ export const SearchBar = memo(function SearchBar({
       aria-label="Search clipboard history"
       aria-activedescendant={activeDescendant}
       autoFocus
-      wrapperClassName="h-12 gap-2.5 px-4 transition-shadow has-[input:focus-visible]:shadow-[inset_0_-2px_0_0_var(--ring)]"
+      wrapperClassName="h-12 gap-2.5 px-4 transition-shadow has-[input:focus-visible]:border-ring has-[input:focus-visible]:shadow-[inset_0_-1px_0_0_var(--ring)]"
       className="h-11 text-[15px]"
       endAdornment={
         <div className="flex shrink-0 items-center gap-1.5">
