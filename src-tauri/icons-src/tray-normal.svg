@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Tray icon, normal state: indigo rounded square, white clipboard. -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#4f46e5"/>
+  <rect x="7.5" y="6.5" width="17" height="21" rx="2.5" fill="#fafafa"/>
+  <rect x="11.5" y="4" width="9" height="5.5" rx="2" fill="#27272a"/>
+  <rect x="10.5" y="13.5" width="11" height="2.2" rx="1.1" fill="#6366f1"/>
+  <rect x="10.5" y="18" width="11" height="2.2" rx="1.1" fill="#6366f1"/>
+  <rect x="10.5" y="22.5" width="7" height="2.2" rx="1.1" fill="#6366f1"/>
+</svg>
