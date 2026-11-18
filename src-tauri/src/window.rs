@@ -10,6 +10,9 @@ pub const LABEL: &str = "main";
 pub const EVENT_SHOWN: &str = "bar:shown";
 pub const EVENT_HIDDEN: &str = "bar:hidden";
 
+/// Logical bar width. Must match `width` of window `main` in tauri.conf.json.
+const BAR_WIDTH_LOGICAL: f64 = 720.0;
+
 /// Vertical anchor: top edge of the bar sits this percent down the monitor.
 const TOP_PERCENT: i32 = 20;
 
@@ -55,16 +58,10 @@ fn position_on_cursor_monitor(app: &AppHandle, w: &WebviewWindow) {
         .or_else(|| w.primary_monitor().ok().flatten());
     let Some(m) = monitor else { return };
 
-    // Bar width is read from the window (logical = physical / its current
-    // scale) so config stays the single source of truth, then rescaled for the
-    // target monitor, which may have a different DPI than the one the window
-    // last sat on.
-    let Ok(size) = w.outer_size() else { return };
-    let Ok(cur_scale) = w.scale_factor() else {
-        return;
-    };
-    let logical_w = size.width as f64 / cur_scale;
-    let bar_w = physical_len(logical_w, m.scale_factor());
+    // Physical width on the TARGET monitor's scale, not the scale the window
+    // last sat on. The window's own size is not queried: a hidden window can
+    // report a bogus size (observed as 10x10 under GTK), and constants are free.
+    let bar_w = physical_len(BAR_WIDTH_LOGICAL, m.scale_factor());
 
     let rect = PhysRect {
         x: m.position().x,
