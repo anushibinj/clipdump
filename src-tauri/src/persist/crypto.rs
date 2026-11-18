@@ -136,3 +136,124 @@ fn write_atomic_synced(path: &Path, data: &[u8]) -> Result<()> {
     fs::rename(&tmp, path).with_context(|| format!("cannot rename onto {}", path.display()))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::insecure::InsecureKeyProtector;
+
+    fn crypto(byte: u8) -> Crypto {
+        Crypto::from_key(&[byte; KEY_LEN])
+    }
+
+    /// Reversible but obviously non-identity protector, to prove `key.bin`
+    /// holds what the protector returned and not the raw key.
+    struct XorProtector;
+    impl KeyProtector for XorProtector {
+        fn name(&self) -> &'static str {
+            "xor-test"
+        }
+        fn protect(&self, plain: &[u8]) -> Result<Vec<u8>> {
+            Ok(plain.iter().map(|b| b ^ 0x5a).collect())
+        }
+        fn unprotect(&self, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+            Ok(Zeroizing::new(blob.iter().map(|b| b ^ 0x5a).collect()))
+        }
+    }
+
+    #[test]
+    fn round_trip_various_sizes() {
+        let c = crypto(1);
+        for len in [0usize, 1, 15, 16, 17, 1000, 1 << 20] {
+            let plain: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
+            let enc = c.encrypt(&plain).unwrap();
+            assert_eq!(enc.len(), plain.len() + OVERHEAD);
+            assert_eq!(c.decrypt(&enc).unwrap(), plain, "len {len}");
+        }
+    }
+
+    #[test]
+    fn ciphertext_hides_plaintext_and_nonce_is_fresh() {
+        let c = crypto(2);
+        let plain = b"ZXQ-distinctive-marker-ZXQ".repeat(4);
+        let a = c.encrypt(&plain).unwrap();
+        let b = c.encrypt(&plain).unwrap();
+        assert_ne!(a, b, "same plaintext must give different envelopes");
+        assert_ne!(a[..NONCE_LEN], b[..NONCE_LEN], "nonce must be random per message");
+        assert!(!a.windows(10).any(|w| w == &plain[..10]));
+    }
+
+    #[test]
+    fn tamper_in_any_region_is_detected() {
+        let c = crypto(3);
+        let enc = c.encrypt(b"hello clipboard").unwrap();
+        // First nonce byte, a ciphertext byte, the last tag byte.
+        for idx in [0, NONCE_LEN, NONCE_LEN + 3, enc.len() - 1] {
+            let mut bad = enc.clone();
+            bad[idx] ^= 0x01;
+            assert!(c.decrypt(&bad).is_err(), "flip at {idx} must fail");
+        }
+        // Truncation and extension also fail.
+        assert!(c.decrypt(&enc[..enc.len() - 1]).is_err());
+        let mut longer = enc.clone();
+        longer.push(0);
+        assert!(c.decrypt(&longer).is_err());
+        // The untouched envelope still works.
+        assert_eq!(c.decrypt(&enc).unwrap(), b"hello clipboard");
+    }
+
+    #[test]
+    fn wrong_key_fails() {
+        let enc = crypto(4).encrypt(b"secret").unwrap();
+        assert!(crypto(5).decrypt(&enc).is_err());
+    }
+
+    #[test]
+    fn short_input_fails_cleanly() {
+        let c = crypto(6);
+        assert!(c.decrypt(&[]).is_err());
+        assert!(c.decrypt(&[0u8; NONCE_LEN]).is_err());
+        assert!(c.decrypt(&[0u8; OVERHEAD - 1]).is_err());
+        // Exactly the minimum length parses but cannot authenticate.
+        assert!(c.decrypt(&[0u8; OVERHEAD]).is_err());
+    }
+
+    #[test]
+    fn key_file_is_created_once_and_reloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Crypto::load_or_create(dir.path(), &InsecureKeyProtector).unwrap();
+        assert!(dir.path().join(KEY_FILE).exists());
+        let enc = first.encrypt(b"persist me").unwrap();
+        drop(first);
+        let second = Crypto::load_or_create(dir.path(), &InsecureKeyProtector).unwrap();
+        assert_eq!(second.decrypt(&enc).unwrap(), b"persist me");
+    }
+
+    #[test]
+    fn key_file_goes_through_the_protector() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = Crypto::load_or_create(dir.path(), &XorProtector).unwrap();
+        let blob = fs::read(dir.path().join(KEY_FILE)).unwrap();
+        assert_eq!(blob.len(), KEY_LEN);
+        // Undoing the protector must give the key that actually encrypts.
+        let raw: Vec<u8> = blob.iter().map(|b| b ^ 0x5a).collect();
+        let key: [u8; KEY_LEN] = raw.try_into().unwrap();
+        let enc = c.encrypt(b"x").unwrap();
+        assert_eq!(Crypto::from_key(&key).decrypt(&enc).unwrap(), b"x");
+        // And the stored bytes are not the raw key.
+        assert_ne!(blob, key);
+    }
+
+    #[test]
+    fn unreadable_key_file_is_an_error_not_a_new_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(KEY_FILE);
+        // Not a stub blob: unprotect fails.
+        fs::write(&path, b"garbage").unwrap();
+        assert!(Crypto::load_or_create(dir.path(), &InsecureKeyProtector).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"garbage", "must not be overwritten");
+        // Valid envelope but wrong key length.
+        fs::write(&path, InsecureKeyProtector.protect(&[1u8; 7]).unwrap()).unwrap();
+        assert!(Crypto::load_or_create(dir.path(), &InsecureKeyProtector).is_err());
+    }
+}
