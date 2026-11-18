@@ -142,7 +142,11 @@ mod tests {
 
     #[test]
     fn garbage_is_rejected() {
-        assert!(DpapiProtector.unprotect(b"definitely not a dpapi blob").is_err());
+        assert!(
+            DpapiProtector
+                .unprotect(b"definitely not a dpapi blob")
+                .is_err()
+        );
         assert!(DpapiProtector.unprotect(b"").is_err());
     }
 }

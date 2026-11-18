@@ -75,7 +75,10 @@ pub fn run(conn: &Connection, blobs: &Blobs) -> Result<IntegrityReport> {
     }
 
     // 3. Delete everything else on disk.
-    for (kind, keep) in [(FileKind::Blob, &keep_blobs), (FileKind::Thumb, &keep_thumbs)] {
+    for (kind, keep) in [
+        (FileKind::Blob, &keep_blobs),
+        (FileKind::Thumb, &keep_thumbs),
+    ] {
         for found in blobs.scan(kind) {
             let counter = if found.is_temp {
                 &mut report.stale_temp_removed
@@ -103,7 +106,9 @@ mod tests {
     use std::path::Path;
 
     fn blob_path(dir: &Path, name: &str) -> std::path::PathBuf {
-        dir.join("blobs").join(&name[..2]).join(format!("{name}.bin"))
+        dir.join("blobs")
+            .join(&name[..2])
+            .join(format!("{name}.bin"))
     }
 
     fn thumb_path(dir: &Path, hash: &[u8; 16]) -> std::path::PathBuf {
@@ -114,7 +119,12 @@ mod tests {
     /// Open, add items, shut down cleanly so the next open starts from disk.
     fn seeded(dir: &Path) -> Vec<crate::persist::NewItem> {
         let p = open(dir);
-        let items = vec![text_item(1, "plain text"), image_item(2), image_item(3), image_item(4)];
+        let items = vec![
+            text_item(1, "plain text"),
+            image_item(2),
+            image_item(3),
+            image_item(4),
+        ];
         for it in &items {
             p.submit(insert_op(it.clone())).unwrap();
         }
@@ -127,7 +137,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seeded(dir.path());
         let p = open(dir.path());
-        assert!(p.integrity_report().is_clean(), "{:?}", p.integrity_report());
+        assert!(
+            p.integrity_report().is_clean(),
+            "{:?}",
+            p.integrity_report()
+        );
         assert_eq!(p.load_all_meta(0).unwrap().len(), 4);
     }
 
@@ -137,7 +151,11 @@ mod tests {
         let items = seeded(dir.path());
         // Item 2: blob deleted. Item 3: blob truncated by a crash. Item 4 is fine.
         fs::remove_file(blob_path(dir.path(), items[1].blob_hash.as_ref().unwrap())).unwrap();
-        fs::write(blob_path(dir.path(), items[2].blob_hash.as_ref().unwrap()), b"x").unwrap();
+        fs::write(
+            blob_path(dir.path(), items[2].blob_hash.as_ref().unwrap()),
+            b"x",
+        )
+        .unwrap();
         let p = open(dir.path());
         let r = p.integrity_report();
         let mut dropped = r.rows_dropped.clone();
@@ -162,7 +180,11 @@ mod tests {
         let items = seeded(dir.path());
         {
             let p = open(dir.path());
-            p.submit(WriteOp::SetPinned { id: 2, pinned: true }).unwrap();
+            p.submit(WriteOp::SetPinned {
+                id: 2,
+                pinned: true,
+            })
+            .unwrap();
             p.shutdown().unwrap();
         }
         fs::remove_file(blob_path(dir.path(), items[1].blob_hash.as_ref().unwrap())).unwrap();

@@ -137,8 +137,7 @@ impl Blobs {
     /// Read and decrypt a file. Fails if it is missing, modified or truncated.
     pub fn read(&self, kind: FileKind, name: &str) -> Result<Vec<u8>> {
         let path = self.path(kind, name)?;
-        let data =
-            fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        let data = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
         self.crypto
             .decrypt(&data)
             .with_context(|| format!("cannot decrypt {}", path.display()))
@@ -181,7 +180,11 @@ impl Blobs {
                     continue;
                 };
                 if file_name.ends_with(".tmp") {
-                    out.push(Found { path: path.clone(), name: String::new(), is_temp: true });
+                    out.push(Found {
+                        path: path.clone(),
+                        name: String::new(),
+                        is_temp: true,
+                    });
                 } else if let Some(stem) = file_name.strip_suffix(".bin") {
                     out.push(Found {
                         name: stem.to_string(),
@@ -213,8 +216,18 @@ mod tests {
         let data = vec![42u8; 100_000];
         b.write(FileKind::Blob, NAME, &data).unwrap();
         b.write(FileKind::Thumb, NAME, b"thumb").unwrap();
-        assert!(dir.path().join("blobs/ab").join(format!("{NAME}.bin")).is_file());
-        assert!(dir.path().join("thumbs/ab").join(format!("{NAME}.bin")).is_file());
+        assert!(
+            dir.path()
+                .join("blobs/ab")
+                .join(format!("{NAME}.bin"))
+                .is_file()
+        );
+        assert!(
+            dir.path()
+                .join("thumbs/ab")
+                .join(format!("{NAME}.bin"))
+                .is_file()
+        );
         assert_eq!(b.read(FileKind::Blob, NAME).unwrap(), data);
         assert_eq!(b.read(FileKind::Thumb, NAME).unwrap(), b"thumb");
     }
@@ -296,8 +309,11 @@ mod tests {
         assert_eq!(found.len(), 3);
         let temps: Vec<_> = found.iter().filter(|f| f.is_temp).collect();
         assert_eq!(temps.len(), 1);
-        let mut names: Vec<_> =
-            found.iter().filter(|f| !f.is_temp).map(|f| f.name.as_str()).collect();
+        let mut names: Vec<_> = found
+            .iter()
+            .filter(|f| !f.is_temp)
+            .map(|f| f.name.as_str())
+            .collect();
         names.sort();
         assert_eq!(names, vec![NAME, "cd99"]);
         assert!(b.scan(FileKind::Thumb).is_empty(), "no thumbs dir yet");

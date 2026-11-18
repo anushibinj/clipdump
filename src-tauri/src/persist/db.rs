@@ -263,7 +263,8 @@ pub fn load_all_meta(conn: &Connection, small_text_limit: usize) -> Result<Vec<M
             source_app: r.get(17)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// The encrypted full text of one item (`None` for a missing item or an item
@@ -320,7 +321,10 @@ pub struct Removed {
     pub blob_hash: Option<String>,
 }
 
-fn collect_removed(stmt: &mut rusqlite::Statement<'_>, args: impl rusqlite::Params) -> Result<Vec<Removed>> {
+fn collect_removed(
+    stmt: &mut rusqlite::Statement<'_>,
+    args: impl rusqlite::Params,
+) -> Result<Vec<Removed>> {
     let rows = stmt.query_map(args, |r| {
         Ok(Removed {
             id: r.get(0)?,
@@ -328,7 +332,8 @@ fn collect_removed(stmt: &mut rusqlite::Statement<'_>, args: impl rusqlite::Para
             blob_hash: r.get(2)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Delete one item (pinned or not: an explicit delete always wins). Returns
@@ -341,8 +346,8 @@ pub fn delete_item(conn: &Connection, id: i64) -> Result<Option<Removed>> {
 
 /// Delete every unpinned item ("clear history"). Pinned items are kept.
 pub fn delete_unpinned(conn: &Connection) -> Result<Vec<Removed>> {
-    let mut stmt = conn
-        .prepare_cached("DELETE FROM items WHERE pinned = 0 RETURNING id, hash, blob_hash")?;
+    let mut stmt =
+        conn.prepare_cached("DELETE FROM items WHERE pinned = 0 RETURNING id, hash, blob_hash")?;
     collect_removed(&mut stmt, [])
 }
 
@@ -377,9 +382,9 @@ pub fn list_refs(conn: &Connection) -> Result<Vec<RefRow>> {
             blob_hash: r.get(3)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
-
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -419,19 +424,26 @@ pub(crate) mod tests {
     }
 
     fn user_version(conn: &Connection) -> i64 {
-        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap()
     }
 
     #[test]
     fn open_applies_pragmas_and_schema() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_writer(&dir.path().join(DB_FILE)).unwrap();
-        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
         // synchronous: 1 = NORMAL, temp_store: 2 = MEMORY
-        let sync: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
+        let sync: i64 = conn
+            .query_row("PRAGMA synchronous", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(sync, 1);
-        let temp: i64 = conn.query_row("PRAGMA temp_store", [], |r| r.get(0)).unwrap();
+        let temp: i64 = conn
+            .query_row("PRAGMA temp_store", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(temp, 2);
         assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
         let idx: i64 = conn
@@ -467,7 +479,9 @@ pub(crate) mod tests {
         let v2 = "ALTER TABLE items ADD COLUMN note TEXT;";
         migrate_with(&mut conn, &[SCHEMA_V1, v2]).unwrap();
         assert_eq!(user_version(&conn), 2);
-        let n: i64 = conn.query_row("SELECT count(*) FROM items", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM items", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
         // Running again is a no-op (the ALTER would fail if repeated).
         migrate_with(&mut conn, &[SCHEMA_V1, v2]).unwrap();
@@ -527,7 +541,10 @@ pub(crate) mod tests {
         assert_eq!(m.use_count, 7);
         assert_eq!(m.ocr_enc, Some(vec![4, 4]));
         assert_eq!(m.ocr_status, OcrStatus::Done);
-        assert_eq!(m.blob_hash.as_deref(), Some("abcdef0123456789abcdef0123456789"));
+        assert_eq!(
+            m.blob_hash.as_deref(),
+            Some("abcdef0123456789abcdef0123456789")
+        );
         assert!(!m.has_text && m.text_enc.is_none());
         let t = meta.iter().find(|m| m.id == 1).unwrap();
         assert!(t.has_text);
@@ -571,7 +588,11 @@ pub(crate) mod tests {
     }
 
     fn meta_of(conn: &Connection, id: i64) -> MetaRow {
-        load_all_meta(conn, 1 << 20).unwrap().into_iter().find(|m| m.id == id).unwrap()
+        load_all_meta(conn, 1 << 20)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == id)
+            .unwrap()
     }
 
     #[test]
@@ -612,7 +633,10 @@ pub(crate) mod tests {
         assert_eq!(meta_of(&conn, 1).ocr_status, OcrStatus::Pending);
         assert!(set_ocr(&conn, 1, Some(&[8, 8, 8]), OcrStatus::Done).unwrap());
         let m = meta_of(&conn, 1);
-        assert_eq!((m.ocr_enc, m.ocr_status), (Some(vec![8, 8, 8]), OcrStatus::Done));
+        assert_eq!(
+            (m.ocr_enc, m.ocr_status),
+            (Some(vec![8, 8, 8]), OcrStatus::Done)
+        );
         // A failure clears the text and records why there is none.
         assert!(set_ocr(&conn, 1, None, OcrStatus::Failed).unwrap());
         let m = meta_of(&conn, 1);
@@ -621,7 +645,11 @@ pub(crate) mod tests {
     }
 
     fn ids(conn: &Connection) -> Vec<i64> {
-        let mut v: Vec<i64> = load_all_meta(conn, 0).unwrap().iter().map(|m| m.id).collect();
+        let mut v: Vec<i64> = load_all_meta(conn, 0)
+            .unwrap()
+            .iter()
+            .map(|m| m.id)
+            .collect();
         v.sort();
         v
     }
@@ -661,7 +689,10 @@ pub(crate) mod tests {
         set_pinned(&conn, 2, true).unwrap();
         let mut removed = delete_unpinned(&conn).unwrap();
         removed.sort_by_key(|r| r.id);
-        assert_eq!(removed.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 3, 4]);
+        assert_eq!(
+            removed.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
         assert_eq!(removed[0].blob_hash.as_deref(), Some("b1"));
         assert_eq!(ids(&conn), vec![2]);
         assert!(delete_unpinned(&conn).unwrap().is_empty());

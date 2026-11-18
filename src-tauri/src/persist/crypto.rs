@@ -14,8 +14,8 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use chacha20poly1305::aead::{AeadInOut, Generate, Key, KeyInit, Nonce, Tag};
 use chacha20poly1305::XChaCha20Poly1305;
+use chacha20poly1305::aead::{AeadInOut, Generate, Key, KeyInit, Nonce, Tag};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::platform::KeyProtector;
@@ -59,16 +59,17 @@ impl Crypto {
                 let key = protector
                     .unprotect(&blob)
                     .with_context(|| format!("cannot unprotect {}", path.display()))?;
-                let key: Zeroizing<[u8; KEY_LEN]> = Zeroizing::new(
-                    key.as_slice()
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("{} holds a key of the wrong size", KEY_FILE))?,
-                );
+                let key: Zeroizing<[u8; KEY_LEN]> =
+                    Zeroizing::new(key.as_slice().try_into().map_err(|_| {
+                        anyhow::anyhow!("{} holds a key of the wrong size", KEY_FILE)
+                    })?);
                 Ok(Self::from_key(&key))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let key = random_key();
-                let blob = protector.protect(&key[..]).context("cannot protect new data key")?;
+                let blob = protector
+                    .protect(&key[..])
+                    .context("cannot protect new data key")?;
                 write_atomic_synced(&path, &blob)?;
                 Ok(Self::from_key(&key))
             }
@@ -128,8 +129,8 @@ fn random_key() -> Zeroizing<[u8; KEY_LEN]> {
 fn write_atomic_synced(path: &Path, data: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
-        let mut f = fs::File::create(&tmp)
-            .with_context(|| format!("cannot create {}", tmp.display()))?;
+        let mut f =
+            fs::File::create(&tmp).with_context(|| format!("cannot create {}", tmp.display()))?;
         f.write_all(data)?;
         f.sync_all()?;
     }
@@ -179,7 +180,11 @@ mod tests {
         let a = c.encrypt(&plain).unwrap();
         let b = c.encrypt(&plain).unwrap();
         assert_ne!(a, b, "same plaintext must give different envelopes");
-        assert_ne!(a[..NONCE_LEN], b[..NONCE_LEN], "nonce must be random per message");
+        assert_ne!(
+            a[..NONCE_LEN],
+            b[..NONCE_LEN],
+            "nonce must be random per message"
+        );
         assert!(!a.windows(10).any(|w| w == &plain[..10]));
     }
 
@@ -251,7 +256,11 @@ mod tests {
         // Not a stub blob: unprotect fails.
         fs::write(&path, b"garbage").unwrap();
         assert!(Crypto::load_or_create(dir.path(), &InsecureKeyProtector).is_err());
-        assert_eq!(fs::read(&path).unwrap(), b"garbage", "must not be overwritten");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"garbage",
+            "must not be overwritten"
+        );
         // Valid envelope but wrong key length.
         fs::write(&path, InsecureKeyProtector.protect(&[1u8; 7]).unwrap()).unwrap();
         assert!(Crypto::load_or_create(dir.path(), &InsecureKeyProtector).is_err());

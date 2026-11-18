@@ -91,14 +91,24 @@ pub enum WriteOp {
         blob: Option<Vec<u8>>,
         thumb: Option<Vec<u8>>,
     },
-    UpdateUsed { id: i64, at: i64 },
-    SetPinned { id: i64, pinned: bool },
+    UpdateUsed {
+        id: i64,
+        at: i64,
+    },
+    SetPinned {
+        id: i64,
+        pinned: bool,
+    },
     /// Delete one item (pinned or not) and its files.
-    Delete { id: i64 },
+    Delete {
+        id: i64,
+    },
     /// "Clear history": every unpinned item and its files.
     DeleteUnpinned,
     /// Retention: unpinned items created before `cutoff` (unix ms).
-    DeleteOlderThan { cutoff: i64 },
+    DeleteOlderThan {
+        cutoff: i64,
+    },
     /// OCR result. `None` text with a failed or unavailable status clears it.
     SetOcr {
         id: i64,
@@ -239,7 +249,11 @@ impl Persist {
         if let Some(handle) = self.writer.lock().unwrap().take() {
             let _ = handle.join();
         }
-        if ok { Ok(()) } else { bail!("persist shutdown was not clean, see the log") }
+        if ok {
+            Ok(())
+        } else {
+            bail!("persist shutdown was not clean, see the log")
+        }
     }
 
     /// Snapshot of the writer counters.
@@ -266,10 +280,8 @@ impl Persist {
     /// Decrypted full text of an item, if it has any.
     pub fn load_text(&self, id: i64) -> Result<Option<String>> {
         let enc = db::load_text(&self.reader.lock().unwrap(), id)?;
-        enc.map(|e| {
-            String::from_utf8(self.crypto.decrypt(&e)?).context("stored text is not UTF-8")
-        })
-        .transpose()
+        enc.map(|e| String::from_utf8(self.crypto.decrypt(&e)?).context("stored text is not UTF-8"))
+            .transpose()
     }
 
     /// Largest committed item id (0 when empty). Seeds the store's id counter.
@@ -432,7 +444,9 @@ impl Writer {
                 }),
                 WriteOp::DeleteOlderThan { cutoff } => db::delete_older_than(&tx, cutoff)
                     .map(|v| v.iter().for_each(|r| doom(&mut doomed, r))),
-                WriteOp::SetOcr { id, text, status } => set_ocr(&tx, &self.crypto, id, text, status),
+                WriteOp::SetOcr { id, text, status } => {
+                    set_ocr(&tx, &self.crypto, id, text, status)
+                }
                 // `Batch::push` keeps control ops out of `ops`.
                 WriteOp::Flush(_) | WriteOp::Shutdown(_) => Ok(()),
             };
@@ -595,7 +609,11 @@ pub(crate) mod tests {
         let p = open(dir.path());
         let mut it = text_item(1, "hello world");
         it.ocr = Some("ocr words".into());
-        it.files = Some(vec![FileRef { path: "C:\\a.txt".into(), size: 3, is_dir: false }]);
+        it.files = Some(vec![FileRef {
+            path: "C:\\a.txt".into(),
+            size: 3,
+            is_dir: false,
+        }]);
         p.submit(insert_op(it)).unwrap();
         p.flush().unwrap();
         let meta = p.load_all_meta(1 << 20).unwrap();
@@ -603,8 +621,14 @@ pub(crate) mod tests {
         let m = &meta[0];
         let c = p.crypto();
         assert_eq!(c.decrypt(&m.preview_enc).unwrap(), b"hello world");
-        assert_eq!(c.decrypt(m.text_enc.as_ref().unwrap()).unwrap(), b"hello world");
-        assert_eq!(c.decrypt(m.ocr_enc.as_ref().unwrap()).unwrap(), b"ocr words");
+        assert_eq!(
+            c.decrypt(m.text_enc.as_ref().unwrap()).unwrap(),
+            b"hello world"
+        );
+        assert_eq!(
+            c.decrypt(m.ocr_enc.as_ref().unwrap()).unwrap(),
+            b"ocr words"
+        );
         let files: Vec<FileRef> =
             serde_json::from_slice(&c.decrypt(m.files_enc.as_ref().unwrap()).unwrap()).unwrap();
         assert_eq!(files[0].path, "C:\\a.txt");
@@ -622,7 +646,10 @@ pub(crate) mod tests {
         let hash = it.hash;
         p.submit(insert_op(it)).unwrap();
         p.flush().unwrap();
-        assert_eq!(p.read_blob(&name).unwrap(), vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4]);
+        assert_eq!(
+            p.read_blob(&name).unwrap(),
+            vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4]
+        );
         assert_eq!(p.read_thumb(&hash).unwrap(), b"RIFFthumb");
         p.submit(WriteOp::Delete { id: 7 }).unwrap();
         p.flush().unwrap();
@@ -636,20 +663,33 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = open(dir.path());
         for id in 1..=4 {
-            p.submit(insert_op(text_item(id, &format!("item {id}")))).unwrap();
+            p.submit(insert_op(text_item(id, &format!("item {id}"))))
+                .unwrap();
         }
-        p.submit(WriteOp::SetPinned { id: 1, pinned: true }).unwrap();
+        p.submit(WriteOp::SetPinned {
+            id: 1,
+            pinned: true,
+        })
+        .unwrap();
         p.submit(WriteOp::UpdateUsed { id: 2, at: 99_999 }).unwrap();
-        p.submit(WriteOp::SetOcr { id: 3, text: Some("scan".into()), status: OcrStatus::Done })
-            .unwrap();
+        p.submit(WriteOp::SetOcr {
+            id: 3,
+            text: Some("scan".into()),
+            status: OcrStatus::Done,
+        })
+        .unwrap();
         // created_at = 1000 + id: removes 2 (unpinned, older than 1003), keeps 1 (pinned).
-        p.submit(WriteOp::DeleteOlderThan { cutoff: 1_003 }).unwrap();
+        p.submit(WriteOp::DeleteOlderThan { cutoff: 1_003 })
+            .unwrap();
         p.flush().unwrap();
         assert_eq!(ids(&p), vec![1, 3, 4]);
         let meta = p.load_all_meta(0).unwrap();
         let m3 = meta.iter().find(|m| m.id == 3).unwrap();
         assert_eq!(m3.ocr_status, OcrStatus::Done);
-        assert_eq!(p.crypto().decrypt(m3.ocr_enc.as_ref().unwrap()).unwrap(), b"scan");
+        assert_eq!(
+            p.crypto().decrypt(m3.ocr_enc.as_ref().unwrap()).unwrap(),
+            b"scan"
+        );
         assert!(meta.iter().find(|m| m.id == 1).unwrap().pinned);
         // Clear history keeps the pinned item.
         p.submit(WriteOp::DeleteUnpinned).unwrap();
@@ -685,7 +725,10 @@ pub(crate) mod tests {
         assert_eq!(s.ops, n as u64);
         assert_eq!(s.errors, 0);
         // The cap guarantees at least ceil(200 / 32) transactions...
-        assert!(s.batches >= (n as u64).div_ceil(MAX_BATCH_OPS as u64), "{s:?}");
+        assert!(
+            s.batches >= (n as u64).div_ceil(MAX_BATCH_OPS as u64),
+            "{s:?}"
+        );
         // ...and batching means far fewer than one per op.
         assert!(s.batches <= n as u64 / 2, "{s:?}");
         assert_eq!(ids(&p).len(), n as usize);
@@ -699,7 +742,10 @@ pub(crate) mod tests {
             p.submit(insert_op(text_item(id, "x"))).unwrap();
         }
         p.flush().unwrap();
-        assert!(p.stats().batches >= 2, "64 ops cannot fit in one batch of {MAX_BATCH_OPS}");
+        assert!(
+            p.stats().batches >= 2,
+            "64 ops cannot fit in one batch of {MAX_BATCH_OPS}"
+        );
     }
 
     #[test]
@@ -727,7 +773,10 @@ pub(crate) mod tests {
         // No flush: shutdown alone must drain and commit.
         p.shutdown().unwrap();
         assert_eq!(ids(&p).len(), 100);
-        assert!(p.submit(insert_op(text_item(101, "late"))).is_err(), "closed after shutdown");
+        assert!(
+            p.submit(insert_op(text_item(101, "late"))).is_err(),
+            "closed after shutdown"
+        );
         assert!(p.shutdown().is_ok(), "idempotent");
     }
 
@@ -822,7 +871,9 @@ pub(crate) mod tests {
         conn.execute("INSERT INTO t VALUES (?1)", [MARKER]).unwrap();
         drop(conn);
         assert!(
-            all_files(control.path()).iter().any(|(_, b)| contains(b, MARKER.as_bytes())),
+            all_files(control.path())
+                .iter()
+                .any(|(_, b)| contains(b, MARKER.as_bytes())),
             "control must be detectable"
         );
 
@@ -858,15 +909,34 @@ pub(crate) mod tests {
 
         // Sanity: the data is really there and decrypts to the marker.
         assert!(p.load_text(1).unwrap().unwrap().contains(MARKER));
-        assert!(contains(&p.read_blob(&blob_name).unwrap(), MARKER.as_bytes()));
-        assert!(contains(&p.read_thumb(&img_hash).unwrap(), MARKER.as_bytes()));
+        assert!(contains(
+            &p.read_blob(&blob_name).unwrap(),
+            MARKER.as_bytes()
+        ));
+        assert!(contains(
+            &p.read_thumb(&img_hash).unwrap(),
+            MARKER.as_bytes()
+        ));
 
         let check = |when: &str| {
             let files = all_files(dir.path());
             // history.db, blob and thumb files must all be among the scanned files.
-            assert!(files.iter().any(|(p, _)| p.ends_with("history.db")), "{when}");
-            assert!(files.iter().any(|(p, _)| p.starts_with(dir.path().join("blobs"))), "{when}");
-            assert!(files.iter().any(|(p, _)| p.starts_with(dir.path().join("thumbs"))), "{when}");
+            assert!(
+                files.iter().any(|(p, _)| p.ends_with("history.db")),
+                "{when}"
+            );
+            assert!(
+                files
+                    .iter()
+                    .any(|(p, _)| p.starts_with(dir.path().join("blobs"))),
+                "{when}"
+            );
+            assert!(
+                files
+                    .iter()
+                    .any(|(p, _)| p.starts_with(dir.path().join("thumbs"))),
+                "{when}"
+            );
             for (path, bytes) in files {
                 assert!(
                     !contains(&bytes, MARKER.as_bytes()),
