@@ -76,7 +76,15 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* The window is transparent: only the card paints a background. */
+  html,
+  body,
+  #root {
+    @apply bg-transparent;
+  }
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply font-sans text-foreground antialiased;
+    margin: 0;
+    overflow: hidden;
   }
 }
