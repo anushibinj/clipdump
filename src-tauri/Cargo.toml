@@ -30,6 +30,7 @@ anyhow = "1"
 rusqlite = { version = "0.43", features = ["bundled"] }
 # xxh3-128 is the content hash for dedup and the self-write guard.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "webp"] }
 
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
