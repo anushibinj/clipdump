@@ -3,6 +3,7 @@ mod state;
 mod window;
 
 use state::AppState;
+use tauri::Manager;
 #[cfg(desktop)]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -33,6 +34,20 @@ pub fn run() {
 
     builder
         .manage(AppState::default())
+        .on_window_event(|win, event| {
+            if win.label() != window::LABEL {
+                return;
+            }
+            match event {
+                // Click outside / alt-tab: hide, unless pinned-bar mode is on.
+                tauri::WindowEvent::Focused(false) => {
+                    if !state::pinned_bar(win.app_handle()) {
+                        window::hide(win.app_handle());
+                    }
+                }
+                _ => {}
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             {
