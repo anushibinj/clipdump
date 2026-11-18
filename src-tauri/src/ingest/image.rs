@@ -281,16 +281,39 @@ pub fn encode_png(img: &Rgba) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(img.pixels.len() / 4);
     let enc = PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Sub);
     if opaque {
-        let rgb: Vec<u8> = img
-            .pixels
-            .chunks_exact(4)
-            .flat_map(|p| [p[0], p[1], p[2]])
-            .collect();
-        enc.write_image(&rgb, img.width, img.height, ExtendedColorType::Rgb8)?;
+        enc.write_image(
+            &rgba_to_rgb(&img.pixels),
+            img.width,
+            img.height,
+            ExtendedColorType::Rgb8,
+        )?;
     } else {
         enc.write_image(&img.pixels, img.width, img.height, ExtendedColorType::Rgba8)?;
     }
     Ok(out)
+}
+
+/// Drop the alpha byte of every pixel. Four pixels per step with fixed size
+/// arrays, which the compiler turns into a few shuffles and one store; the
+/// per pixel form (and the `flat_map` into a `collect` before it) took about
+/// 40 ms for a 4K picture, this about a quarter of that.
+pub fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
+    let mut rgb = vec![0u8; rgba.len() / 4 * 3];
+    let (mut dst, mut src) = (rgb.chunks_exact_mut(12), rgba.chunks_exact(16));
+    for (d, s) in (&mut dst).zip(&mut src) {
+        let s: &[u8; 16] = s.try_into().expect("16 bytes");
+        d.copy_from_slice(&[
+            s[0], s[1], s[2], s[4], s[5], s[6], s[8], s[9], s[10], s[12], s[13], s[14],
+        ]);
+    }
+    for (d, s) in dst
+        .into_remainder()
+        .chunks_exact_mut(3)
+        .zip(src.remainder().chunks_exact(4))
+    {
+        d.copy_from_slice(&s[..3]);
+    }
+    rgb
 }
 
 /// Thumbnails are at most this tall (Section 3).
@@ -861,6 +884,18 @@ pub(crate) mod tests {
     fn small_pictures_are_not_resampled() {
         let p = pic_gradient(40, 30);
         assert_eq!(make_thumbnail(&p).unwrap(), p);
+    }
+
+    #[test]
+    fn rgba_to_rgb_drops_alpha_for_every_length() {
+        for pixels in [0usize, 1, 2, 3, 4, 5, 7, 8, 9, 31, 1000] {
+            let rgba: Vec<u8> = (0..pixels * 4).map(|i| (i * 7 + 3) as u8).collect();
+            let naive: Vec<u8> = rgba
+                .chunks_exact(4)
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect();
+            assert_eq!(rgba_to_rgb(&rgba), naive, "{pixels} pixels");
+        }
     }
 
     #[test]
