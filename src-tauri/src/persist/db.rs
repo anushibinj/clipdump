@@ -356,7 +356,30 @@ pub fn delete_older_than(conn: &Connection, cutoff: i64) -> Result<Vec<Removed>>
     collect_removed(&mut stmt, [cutoff])
 }
 
-// QUERIES-MARKER
+/// The few columns the startup integrity check needs, without loading any
+/// encrypted payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefRow {
+    pub id: i64,
+    pub hash: [u8; 16],
+    pub kind: ClipKind,
+    pub blob_hash: Option<String>,
+}
+
+/// Every item's id, hash, kind and blob name.
+pub fn list_refs(conn: &Connection) -> Result<Vec<RefRow>> {
+    let mut stmt = conn.prepare_cached("SELECT id, hash, kind, blob_hash FROM items")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(RefRow {
+            id: r.get(0)?,
+            hash: hash_from(r.get(1)?)?,
+            kind: ClipKind::from_code(r.get(2)?).ok_or_else(|| bad_code(2, "kind"))?,
+            blob_hash: r.get(3)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -28,6 +28,7 @@
 pub mod blobs;
 pub mod crypto;
 pub mod db;
+pub mod integrity;
 
 use std::fs;
 use std::path::Path;
@@ -45,6 +46,7 @@ use crate::platform::KeyProtector;
 use blobs::{Blobs, FileKind, hash_hex};
 use crypto::Crypto;
 use db::{ItemRow, MetaRow, Removed};
+use integrity::IntegrityReport;
 
 /// How long the writer waits for more ops after the first one before it
 /// commits. Speed trade: a longer window means fewer commits (cheaper), a
@@ -136,6 +138,8 @@ pub struct Persist {
     blobs: Arc<Blobs>,
     stats: Arc<StatsInner>,
     closed: AtomicBool,
+    integrity: IntegrityReport,
+    protector_name: &'static str,
 }
 
 impl Persist {
@@ -153,6 +157,11 @@ impl Persist {
         let blobs = Arc::new(Blobs::new(dir, crypto.clone()));
         let db_path = dir.join(db::DB_FILE);
         let writer_conn = db::open_writer(&db_path)?;
+        // Before the writer thread exists, so nothing races with the cleanup.
+        let integrity = integrity::run(&writer_conn, &blobs)?;
+        if !integrity.is_clean() {
+            eprintln!("clipdump: persist: startup repair: {integrity:?}");
+        }
         // The writer connection creates the file, so the reader can open it.
         let reader = db::open_reader(&db_path)?;
 
@@ -176,7 +185,20 @@ impl Persist {
             blobs,
             stats,
             closed: AtomicBool::new(false),
+            integrity,
+            protector_name: protector.name(),
         })
+    }
+
+    /// What the startup integrity check had to repair.
+    pub fn integrity_report(&self) -> &IntegrityReport {
+        &self.integrity
+    }
+
+    /// Which key protector guards `key.bin` (for example `"dpapi"`). The
+    /// settings screen can warn when this is the insecure stub.
+    pub fn key_protector_name(&self) -> &'static str {
+        self.protector_name
     }
 
     /// Queue a write. Never blocks and never does I/O. Fails only after
@@ -509,7 +531,7 @@ fn set_ocr(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::platform::insecure::InsecureKeyProtector;
 
