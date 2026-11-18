@@ -1,15 +1,16 @@
 //! Runtime settings.
 //!
-//! Phase 4 only needs the capture related values, so this is a minimal struct
-//! with the plan's defaults. Phase 12 adds the rest of the fields and persists
-//! it to `settings.json` (every field already has a serde default so older files
-//! keep loading).
+//! The capture values (Phase 4) and the store's retention and cache values
+//! (Phase 6) with the plan's defaults. Phase 12 adds the rest of the fields and
+//! persists it to `settings.json` (every field already has a serde default so
+//! older files keep loading).
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::ClipKind;
 
 const MIB: usize = 1024 * 1024;
+const GIB: u64 = 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -22,6 +23,18 @@ pub struct Settings {
     /// Executable names (for example `keepass.exe`) whose copies are never
     /// captured. Compared case insensitively.
     pub ignored_apps: Vec<String>,
+    /// Most unpinned items kept (oldest evicted first). 0 means no limit.
+    /// Default 1,000.
+    pub max_items: usize,
+    /// Unpinned items older than this many days (by `created_at`) are evicted.
+    /// 0 means no limit. Default 30.
+    pub max_age_days: u32,
+    /// Safety cap on the payload bytes the history keeps on disk. Over it, the
+    /// oldest unpinned items are evicted. 0 means no limit. Default 2 GiB.
+    pub disk_cap_bytes: u64,
+    /// Byte budget of the RAM cache for full images and large texts. Default
+    /// 64 MiB. 0 turns the cache off (everything loads from disk).
+    pub ram_cache_bytes: usize,
 }
 
 impl Default for Settings {
@@ -30,6 +43,10 @@ impl Default for Settings {
             max_text_bytes: 5 * MIB,
             max_image_bytes: 50 * MIB,
             ignored_apps: Vec::new(),
+            max_items: 1_000,
+            max_age_days: 30,
+            disk_cap_bytes: 2 * GIB,
+            ram_cache_bytes: 64 * MIB,
         }
     }
 }
@@ -57,6 +74,10 @@ mod tests {
         assert_eq!(s.max_text_bytes, 5 * 1024 * 1024);
         assert_eq!(s.max_image_bytes, 50 * 1024 * 1024);
         assert!(s.ignored_apps.is_empty());
+        assert_eq!(s.max_items, 1_000);
+        assert_eq!(s.max_age_days, 30);
+        assert_eq!(s.disk_cap_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(s.ram_cache_bytes, 64 * 1024 * 1024);
     }
 
     #[test]
@@ -91,5 +112,6 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"max_text_bytes": 7}"#).unwrap();
         assert_eq!(s.max_text_bytes, 7);
         assert_eq!(s.max_image_bytes, 50 * 1024 * 1024);
+        assert_eq!(s.max_items, 1_000, "retention fields default too");
     }
 }
