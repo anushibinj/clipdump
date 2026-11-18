@@ -4,7 +4,8 @@ mod autostart;
 mod hash;
 // Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
-// OCR worker and queue (Phase 7). Wired in `start_ingest`.
+// OCR worker and queue (Phase 7). Wired in `start_ingest`; the stats accessors
+// and `apply_settings` are used by Phases 9 and 12.
 #[allow(dead_code)]
 mod ocr;
 // Persistence value types and the in-memory ClipItem.
@@ -126,16 +127,14 @@ fn start_capture(app: &tauri::App) {
     }
 }
 
-/// Open the history, load it into the store and start the ingest workers and
-/// the retention timer.
-///
-/// `NoopOcrQueue` stands in until Phase 7 plugs the OCR worker in.
+/// Open the history, load it into the store and start the ingest workers, the
+/// OCR worker and the retention timer.
 fn start_ingest(
     app: &tauri::App,
     rx: crossbeam_channel::Receiver<platform::IngestMsg>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
-    use ingest::{NoopOcrQueue, changed::HistoryChanged};
+    use ingest::changed::HistoryChanged;
     use std::sync::Arc;
 
     // %LOCALAPPDATA%\clipdump (Section 3).
@@ -148,11 +147,14 @@ fn start_ingest(
     let persist = Arc::new(persist::Persist::open(&dir).context("open history")?);
     let changed = HistoryChanged::for_app(app.handle().clone())?;
     let settings = Arc::clone(&app.state::<AppState>().settings);
+    // The queue exists before the store (the store hands new images to it); the
+    // worker is started below, once the store is loaded.
+    let ocr_queue = ocr::OcrQueueHandle::new(Arc::clone(&settings));
     let store = Arc::new(
         store::Store::open(
             Arc::clone(&persist),
             settings,
-            Arc::new(NoopOcrQueue),
+            Arc::new(ocr_queue.clone()),
             Some(changed),
             store::system_clock(),
         )
@@ -164,6 +166,21 @@ fn start_ingest(
         store.load_time().as_millis()
     );
     ingest::IngestPool::start(rx, store.clone())?;
+    // OCR runs on its own idle priority thread. On start it re-queues the images
+    // whose OCR never finished. Failing to start only turns image search off.
+    match ocr::OcrWorker::start(
+        ocr_queue,
+        Arc::downgrade(&store),
+        platform::ocr_engine_factory(),
+        ocr::OcrConfig::default(),
+    ) {
+        // Kept in managed state: dropping it stops the thread. Phase 12 calls
+        // `apply_settings` on it when `ocr_enabled` changes.
+        Ok(worker) => {
+            app.manage(worker);
+        }
+        Err(e) => eprintln!("clipdump: OCR worker not started: {e}"),
+    }
     // Age and disk checks every 15 minutes; stops when the app state is dropped.
     match store::retention::RetentionTimer::start(&store) {
         Ok(timer) => {

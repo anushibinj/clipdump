@@ -71,7 +71,7 @@ pub trait ItemSink: Send + Sync {
     fn bump(&self, hash: u128);
 }
 
-/// Work for the OCR worker (Phase 7 implements the queue). Deliberately carries
+/// Work for the OCR worker (`ocr::OcrWorker`). Deliberately carries
 /// no pixels: queued jobs must not pin 4K bitmaps in RAM, the worker reloads the
 /// PNG blob by `hash`. Speed trade: one extra PNG decode on a background thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,17 +83,10 @@ pub struct OcrJob {
     pub height: u32,
 }
 
-/// Hook for Phase 7. Sinks call it after a new image item is stored.
+/// The store calls it after a new image item is stored (`ocr::OcrQueueHandle`
+/// is the real queue). Must be cheap and never block.
 pub trait OcrQueue: Send + Sync {
     fn enqueue(&self, job: OcrJob);
-}
-
-/// OCR hook until Phase 7: accepts and drops the job.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoopOcrQueue;
-
-impl OcrQueue for NoopOcrQueue {
-    fn enqueue(&self, _job: OcrJob) {}
 }
 
 /// Shared handle type used by the pool and the sinks.
