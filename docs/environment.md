@@ -97,6 +97,15 @@ rustup show        # default host should be x86_64-pc-windows-msvc
    webkit2gtk-4.1 stack is installed. `pnpm tauri dev` needs a display (use `xvfb-run` if a smoke
    test is wanted); the Linux build is not a product target and is not used to judge Windows
    behavior.
+   Smoke test of the real app (Phase 13): the debug build has two environment variables,
+   `CLIPDUMP_SMOKE_INSERT_TEXT` (insert one text item through the store) and
+   `CLIPDUMP_SMOKE_QUIT_MS` (call `app.exit(0)`, the call the tray's Quit makes, after that many
+   milliseconds). With `XDG_DATA_HOME` and `XDG_CONFIG_HOME` pointed at a temp folder:
+   `CLIPDUMP_SMOKE_INSERT_TEXT=x CLIPDUMP_SMOKE_QUIT_MS=0 xvfb-run -a target/debug/clipdump`
+   must exit 0 with `shutdown Completed`, and the next launch must log `loaded 1 items`. A garbage
+   `clipdump/history.db` in the data folder must be moved to `history.corrupt-<ts>.db` and the
+   recovery notice must show in the bar (run Vite on port 1420, start openbox, press the hotkey
+   with `xdotool key ctrl+shift+space`, screenshot with ImageMagick's `import -window root`).
 7. **Per phase hand-off**: at the end of each phase that has a runtime "Check:" step, list the steps
    that were verified here (compile, unit tests, cross-check) separately from those the user must run
    on Windows. Do not claim a Windows runtime check as passed from this container.

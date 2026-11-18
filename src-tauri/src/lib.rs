@@ -141,6 +141,8 @@ pub fn run() {
             if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
                 window::show_pinned(app.handle());
             }
+            #[cfg(debug_assertions)]
+            smoke_hooks(app);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -155,6 +157,33 @@ pub fn run() {
             tauri::RunEvent::Exit => shutdown::run(app),
             _ => {}
         });
+}
+
+/// Debug builds only: two environment variables for the smoke test of the real app
+/// on a machine without a clipboard (Linux under Xvfb), see docs/environment.md.
+/// `CLIPDUMP_SMOKE_INSERT_TEXT` inserts one text item through the store, as a
+/// capture would; `CLIPDUMP_SMOKE_QUIT_MS` quits through `app.exit(0)` (the call the
+/// tray's Quit makes) after that many milliseconds. Together they show that an item
+/// that has only just arrived is still on disk after a quit. Not compiled into a
+/// release build.
+#[cfg(debug_assertions)]
+fn smoke_hooks(app: &tauri::App) {
+    if let Ok(text) = std::env::var("CLIPDUMP_SMOKE_INSERT_TEXT")
+        && let Some(store) = app.try_state::<std::sync::Arc<store::Store>>()
+        && let Some(item) = ingest::text::build(&text, None, store.now_ms())
+    {
+        store.insert(item);
+    }
+    if let Some(ms) = std::env::var("CLIPDUMP_SMOKE_QUIT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        let handle = app.handle().clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            handle.exit(0);
+        });
+    }
 }
 
 /// Load `settings.json` into `AppState` (memory) and start the background
