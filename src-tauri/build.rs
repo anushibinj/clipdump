@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "get_stats",
     "hide_bar",
     "open_data_folder",
+    "perf_ack",
 ];
 
 fn main() {

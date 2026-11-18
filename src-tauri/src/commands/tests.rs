@@ -1106,6 +1106,7 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
         "keyProtector",
         "hotkeyError",
         "recovery",
+        "perf",
     ] {
         assert!(v.get(key).is_some(), "{key}");
     }
@@ -1411,7 +1412,7 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
             .collect(),
     );
 
-    assert_eq!(from_build.len(), 11);
+    assert_eq!(from_build.len(), 12);
     assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
     assert_eq!(
         from_build, from_cap,

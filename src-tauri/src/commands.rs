@@ -24,6 +24,7 @@ use tauri::{AppHandle, Manager};
 use crate::autostart::SystemAutostart;
 use crate::hotkey::PluginRegistrar;
 use crate::ocr::OcrWorker;
+use crate::perf::{self, AckKind, Event};
 use crate::platform;
 use crate::platform::self_write::mono_ms;
 use crate::search::{FsPathChecker, PathChecker, ResultDto, SearchRequest, TypeFilter};
@@ -69,7 +70,10 @@ pub fn search_items(
     if let Some(limit) = limit {
         req.limit = limit;
     }
-    store.search(&req, paths)
+    let t = perf::start();
+    let found = store.search(&req, paths);
+    perf::finish(t, Event::SearchCore, found.len() as u64);
+    found
 }
 
 #[tauri::command(async)]
@@ -79,15 +83,18 @@ pub fn search(
     filter: Option<TypeFilter>,
     limit: Option<usize>,
 ) -> Result<Vec<ResultDto>, String> {
+    let t = perf::start();
     let store = store(&app)?;
     let state = app.state::<AppState>();
-    Ok(search_items(
+    let found = search_items(
         &store,
         state.paths.as_ref(),
         &query,
         filter.unwrap_or_default(),
         limit,
-    ))
+    );
+    perf::finish(t, Event::SearchIpc, found.len() as u64);
+    Ok(found)
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +241,16 @@ pub fn get_stats(app: AppHandle) -> Result<StatsDto, String> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    stats.perf = perf::webview_acks();
     Ok(stats)
+}
+
+/// A timing the webview measured or a paint it saw, for the `--perf` log. Does
+/// nothing (and the webview does not even call it) unless the app runs with
+/// `--perf`. `ms` is only read for `searchRtt`.
+#[tauri::command(async)]
+pub fn perf_ack(kind: AckKind, ms: Option<f64>) {
+    perf::ack(kind, ms);
 }
 
 /// Hide the search bar (Esc). Idempotent.

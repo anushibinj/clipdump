@@ -228,6 +228,9 @@ pub struct StatsDto {
     /// and the new file names. `null` when the history opened normally. The UI
     /// shows it until the user dismisses it.
     pub recovery: Option<String>,
+    /// The app runs with `--perf`: the webview should send `perf_ack` timings.
+    /// Filled in by the command like `recovery`; false everywhere else.
+    pub perf: bool,
 }
 
 fn engine_name(s: EngineState) -> &'static str {
@@ -266,5 +269,6 @@ pub fn stats_of(
         hotkey_error,
         // Filled in by the command, which owns the app state.
         recovery: None,
+        perf: false,
     }
 }

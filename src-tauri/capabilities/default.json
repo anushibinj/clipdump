@@ -16,6 +16,7 @@
     "allow-set-settings",
     "allow-get-stats",
     "allow-hide-bar",
-    "allow-open-data-folder"
+    "allow-open-data-folder",
+    "allow-perf-ack"
   ]
 }
