@@ -1,4 +1,7 @@
 mod autostart;
+// Canonical content hashes; first real consumer is the Phase 5 ingest pipeline.
+#[allow(dead_code)]
+mod hash;
 // Persistence value types; the full ClipItem arrives in Phase 6.
 #[allow(dead_code)]
 mod model;
