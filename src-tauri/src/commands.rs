@@ -21,6 +21,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use crate::autostart::SystemAutostart;
+use crate::hotkey::PluginRegistrar;
 use crate::ocr::OcrWorker;
 use crate::platform;
 use crate::platform::self_write::mono_ms;
@@ -31,6 +33,7 @@ use crate::window;
 
 pub mod config;
 pub mod copy;
+pub mod folder;
 pub mod preview;
 #[cfg(test)]
 mod tests;
@@ -118,7 +121,14 @@ pub fn copy_item(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
         own_window: platform::own_window_handle(&app),
         clock: mono_ms,
     };
-    copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || window::hide(&app))
+    // Pinned-bar mode: the bar is a permanent strip, a copy does not hide it
+    // (Esc does). With Paste on Enter the paste still moves the focus back to
+    // the window the hotkey was pressed over.
+    copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || {
+        if !crate::state::pinned_bar(&app) {
+            window::hide(&app);
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -171,12 +181,18 @@ fn with_settings_env<T>(
     let store = store(app)?;
     let state = app.state::<AppState>();
     let ocr = app.try_state::<OcrWorker>();
+    let registrar = PluginRegistrar(app);
+    let autostart = SystemAutostart(app);
     let env = SettingsEnv {
         settings: &state.settings,
         pinned_bar: &state.pinned_bar,
-        paused: &state.paused,
+        pause: &state.pause,
         store: &store,
         ocr: ocr.as_ref().map(|w| w.queue()),
+        registrar: &registrar,
+        autostart: &autostart,
+        saver: state.saver.get(),
+        hotkey_error: &state.hotkey_error,
     };
     f(&env)
 }
@@ -186,9 +202,10 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsDto, String> {
     with_settings_env(&app, |env| Ok(env.current()))
 }
 
-/// Validate and apply the settings now (in memory; Phase 12 saves them to disk).
+/// Validate and apply the settings now, and save them in the background.
 /// Returns the settings as stored, which can differ from the input (a tidied
-/// ignore list).
+/// ignore list, a canonical hotkey). A hotkey another app owns, or a login item
+/// the OS refuses, returns a plain error and applies nothing.
 #[tauri::command(async)]
 pub fn set_settings(app: AppHandle, settings: SettingsDto) -> Result<SettingsDto, String> {
     with_settings_env(&app, |env| env.apply(settings))
@@ -199,10 +216,16 @@ pub fn get_stats(app: AppHandle) -> Result<StatsDto, String> {
     let store = store(&app)?;
     let state = app.state::<AppState>();
     let ocr = app.try_state::<OcrWorker>();
+    let hotkey_error = state
+        .hotkey_error
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     Ok(stats_of(
         &store,
         &state.settings,
         ocr.as_ref().map(|w| w.queue()),
+        hotkey_error,
     ))
 }
 
@@ -210,4 +233,16 @@ pub fn get_stats(app: AppHandle) -> Result<StatsDto, String> {
 #[tauri::command(async)]
 pub fn hide_bar(app: AppHandle) {
     window::hide(&app);
+}
+
+/// Open the history folder in the file manager. The path is the fixed data
+/// directory recorded at startup, never something the webview sends.
+#[tauri::command(async)]
+pub fn open_data_folder(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let dir = state
+        .data_dir
+        .get()
+        .ok_or_else(|| "the data folder is not known".to_owned())?;
+    folder::open_dir(folder::file_manager(), dir)
 }

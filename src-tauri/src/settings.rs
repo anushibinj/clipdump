@@ -19,7 +19,6 @@
 pub mod file;
 pub mod saver;
 
-
 use serde::{Deserialize, Serialize};
 
 use crate::model::ClipKind;
@@ -111,6 +110,49 @@ impl Settings {
             ClipKind::Image => size > self.max_image_bytes,
             ClipKind::Files => false,
         }
+    }
+}
+
+/// What `setup` gets from [`startup`].
+pub struct Startup {
+    pub settings: Settings,
+    /// Write the settings back (first run, repaired file, login item synced).
+    pub needs_save: bool,
+}
+
+/// Load `dir/settings.json` (tolerantly, see `file`), log what was repaired and
+/// bring the login setting in line with the OS (see `autostart::reconcile`).
+/// `had_old_marker`: the pre settings.json build's marker file existed, so an
+/// earlier build already did the first run.
+pub fn startup(
+    dir: &std::path::Path,
+    os: &dyn crate::autostart::Autostart,
+    had_old_marker: bool,
+) -> Startup {
+    let loaded = file::load(dir);
+    match &loaded.source {
+        file::Source::Missing => eprintln!("clipdump: no settings file yet, using the defaults"),
+        file::Source::Corrupt { moved_to } => eprintln!(
+            "clipdump: settings.json was corrupt, moved to {}",
+            moved_to
+                .as_ref()
+                .map_or("(could not move it)".to_owned(), |p| p
+                    .display()
+                    .to_string())
+        ),
+        file::Source::Unreadable => eprintln!("clipdump: settings.json is unreadable"),
+        file::Source::Loaded => {}
+    }
+    for issue in &loaded.issues {
+        eprintln!("clipdump: settings: {issue}");
+    }
+    let first_run = loaded.source == file::Source::Missing && !had_old_marker;
+    let mut needs_save = loaded.needs_rewrite();
+    let mut settings = loaded.settings;
+    needs_save |= crate::autostart::reconcile(os, &mut settings, first_run);
+    Startup {
+        settings,
+        needs_save,
     }
 }
 
@@ -317,5 +359,82 @@ mod tests {
             tidy_ignored_apps(&many, false).unwrap().len(),
             MAX_IGNORED_APPS
         );
+    }
+
+    // -- startup ---------------------------------------------------------------
+
+    struct FakeOs(Option<bool>, std::cell::RefCell<Vec<bool>>);
+
+    impl crate::autostart::Autostart for FakeOs {
+        fn set(&self, enabled: bool) -> Result<(), String> {
+            self.1.borrow_mut().push(enabled);
+            Ok(())
+        }
+        fn current(&self) -> Option<bool> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn a_first_launch_uses_the_defaults_enables_the_login_item_and_wants_a_file() {
+        let t = tempfile::tempdir().unwrap();
+        let os = FakeOs(Some(false), Default::default());
+        let st = startup(t.path(), &os, false);
+        assert_eq!(st.settings, Settings::default());
+        assert!(st.needs_save, "settings.json is created on first launch");
+        assert_eq!(*os.1.borrow(), vec![true]);
+    }
+
+    #[test]
+    fn a_saved_file_is_used_and_not_rewritten() {
+        let t = tempfile::tempdir().unwrap();
+        let s = Settings {
+            max_items: 12,
+            start_at_login: false,
+            ..Settings::default()
+        };
+        file::write_atomic(t.path(), &s).unwrap();
+        let os = FakeOs(Some(false), Default::default());
+        let st = startup(t.path(), &os, false);
+        assert_eq!(st.settings, s);
+        assert!(!st.needs_save);
+        assert!(os.1.borrow().is_empty(), "the login item is not touched");
+    }
+
+    #[test]
+    fn a_login_item_removed_in_task_manager_updates_the_setting() {
+        let t = tempfile::tempdir().unwrap();
+        file::write_atomic(t.path(), &Settings::default()).unwrap();
+        let os = FakeOs(Some(false), Default::default());
+        let st = startup(t.path(), &os, false);
+        assert!(!st.settings.start_at_login);
+        assert!(st.needs_save);
+    }
+
+    #[test]
+    fn an_old_marker_means_it_is_not_a_first_run() {
+        let t = tempfile::tempdir().unwrap();
+        // The user turned autostart off under the old build: the OS says off.
+        let os = FakeOs(Some(false), Default::default());
+        let st = startup(t.path(), &os, true);
+        assert!(!st.settings.start_at_login, "taken from the OS");
+        assert!(os.1.borrow().is_empty(), "not re-enabled");
+        assert!(st.needs_save);
+    }
+
+    #[test]
+    fn a_corrupt_file_still_starts_with_the_defaults() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join(file::FILE_NAME), b"{{{").unwrap();
+        let os = FakeOs(Some(true), Default::default());
+        let st = startup(t.path(), &os, false);
+        assert_eq!(st.settings, Settings::default());
+        assert!(st.needs_save);
+        assert!(std::fs::read_dir(t.path()).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("settings.corrupt-")
+        }));
     }
 }

@@ -1,28 +1,27 @@
 //! `get_settings`, `set_settings` and `get_stats`.
 //!
-//! `set_settings` applies in memory at once (the store's retention and cache
-//! budget, the OCR queue, the pinned-bar and pause flags). Writing
-//! `settings.json` is Phase 12; until then a restart returns to the defaults.
+//! `set_settings` validates, then applies in memory at once (the store's
+//! retention and cache budget, the OCR queue, the pinned-bar flag, the pause
+//! flag and its tray check, the global hotkey and the login item) and asks the
+//! background saver to write `settings.json`. Nothing here touches the disk
+//! itself, so the command returns as soon as the OS side effects are done.
 
-use std::collections::HashSet;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::autostart::Autostart;
+use crate::hotkey::{Hotkey, Registrar, rebind};
 use crate::ocr::{EngineState, OCR_UNAVAILABLE_HINT, OcrQueueHandle};
-use crate::settings::Settings;
+use crate::pause::Pause;
+use crate::settings::saver::SettingsSaver;
+use crate::settings::{MIN_CAPTURE_LIMIT_BYTES, Settings, tidy_ignored_apps};
 use crate::store::Store;
 
-/// Smallest accepted capture size limit. A zero would silently stop capturing.
-pub const MIN_CAPTURE_LIMIT_BYTES: usize = 1024;
-/// Most entries of the ignored app list, and the longest entry.
-pub const MAX_IGNORED_APPS: usize = 500;
-pub const MAX_APP_NAME_CHARS: usize = 260;
-
 /// The settings as the webview sees and sends them (camelCase). It is the
-/// `Settings` struct plus the two runtime flags that live in `AppState`.
-/// Every field is required when sending: the UI always sends the whole object.
+/// persisted `Settings` plus the runtime pause flag. Every field is required
+/// when sending: the UI always sends the whole object.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
@@ -40,14 +39,18 @@ pub struct SettingsDto {
     pub ocr_enabled: bool,
     /// Enter copies and pastes into the window the bar came from.
     pub auto_paste_on_enter: bool,
-    /// Keep the bar visible and do not hide it on blur.
+    /// Keep the bar visible and do not hide it on blur or after a copy.
     pub pinned_bar: bool,
-    /// Capture paused (the tray toggle sets the same flag).
+    /// Capture paused (the tray toggle sets the same flag). Not saved to disk.
     pub paused: bool,
+    /// The global hotkey, canonical chord text such as `Ctrl+Shift+Space`.
+    pub hotkey: String,
+    /// Start the app when the user logs in.
+    pub start_at_login: bool,
 }
 
 impl SettingsDto {
-    pub fn from_parts(s: &Settings, pinned_bar: bool, paused: bool) -> Self {
+    pub fn from_parts(s: &Settings, paused: bool) -> Self {
         Self {
             max_text_bytes: s.max_text_bytes,
             max_image_bytes: s.max_image_bytes,
@@ -58,38 +61,27 @@ impl SettingsDto {
             ram_cache_bytes: s.ram_cache_bytes,
             ocr_enabled: s.ocr_enabled,
             auto_paste_on_enter: s.auto_paste_on_enter,
-            pinned_bar,
+            pinned_bar: s.pinned_bar,
             paused,
+            hotkey: s.hotkey.clone(),
+            start_at_login: s.start_at_login,
         }
     }
 }
 
 /// Check and tidy the values before they are applied: limits that would stop
 /// capture are refused, the ignore list is trimmed, deduplicated (ignoring case,
-/// first spelling wins) and bounded.
+/// first spelling wins) and bounded, the hotkey must be a valid chord (it is
+/// returned in canonical spelling).
 pub fn validate(mut dto: SettingsDto) -> Result<SettingsDto, String> {
     if dto.max_text_bytes < MIN_CAPTURE_LIMIT_BYTES || dto.max_image_bytes < MIN_CAPTURE_LIMIT_BYTES
     {
         return Err("the text and image size limits must be at least 1 KB".to_owned());
     }
-    let mut seen = HashSet::new();
-    let mut apps = Vec::with_capacity(dto.ignored_apps.len());
-    for raw in &dto.ignored_apps {
-        let name = raw.trim();
-        if name.is_empty() {
-            continue;
-        }
-        if name.chars().count() > MAX_APP_NAME_CHARS {
-            return Err("an ignored app name is too long".to_owned());
-        }
-        if seen.insert(name.to_lowercase()) {
-            apps.push(name.to_owned());
-        }
-    }
-    if apps.len() > MAX_IGNORED_APPS {
-        return Err("the ignored apps list is too long".to_owned());
-    }
-    dto.ignored_apps = apps;
+    dto.ignored_apps = tidy_ignored_apps(&dto.ignored_apps, true)?;
+    dto.hotkey = Hotkey::parse(&dto.hotkey)
+        .map_err(|e| e.to_string())?
+        .to_string();
     Ok(dto)
 }
 
@@ -97,30 +89,71 @@ pub fn validate(mut dto: SettingsDto) -> Result<SettingsDto, String> {
 pub struct SettingsEnv<'a> {
     pub settings: &'a RwLock<Settings>,
     pub pinned_bar: &'a AtomicBool,
-    pub paused: &'a AtomicBool,
+    pub pause: &'a Pause,
     pub store: &'a Store,
     /// `None` when the OCR worker did not start.
     pub ocr: Option<&'a OcrQueueHandle>,
+    /// Registers the global hotkey.
+    pub registrar: &'a dyn Registrar,
+    /// The OS login item.
+    pub autostart: &'a dyn Autostart,
+    /// Writes `settings.json` in the background; `None` in tests that do not
+    /// look at the file.
+    pub saver: Option<&'a SettingsSaver>,
+    /// Why the configured hotkey is not active, cleared when it becomes active.
+    pub hotkey_error: &'a Mutex<Option<String>>,
 }
 
 impl SettingsEnv<'_> {
     /// The current settings as the webview sees them.
     pub fn current(&self) -> SettingsDto {
         let s = self.settings.read().unwrap_or_else(|e| e.into_inner());
-        SettingsDto::from_parts(
-            &s,
-            self.pinned_bar.load(Ordering::Relaxed),
-            self.paused.load(Ordering::Relaxed),
-        )
+        SettingsDto::from_parts(&s, self.pause.is_paused())
     }
 
-    /// Validate, store and apply `dto`; returns the normalized settings. The
-    /// order matters: the shared `Settings` is written first, because the store
-    /// (retention and cache budget) and the OCR queue read it when told to
-    /// re-apply.
+    /// Validate, apply and save `dto`; returns the normalized settings.
+    ///
+    /// Order, and why:
+    /// 1. validate (nothing changed yet on an error);
+    /// 2. the two OS side effects that can fail, the hotkey first (the likely
+    ///    one: another app may own the chord) then the login item. A failure
+    ///    returns the error with nothing applied and nothing saved; if the
+    ///    login item fails after the hotkey moved, the hotkey moves back;
+    /// 3. the shared `Settings` is written before the store and the OCR queue
+    ///    are told to re-apply, because they read it;
+    /// 4. the store runs retention once (lowered limits evict at once, pinned
+    ///    items stay);
+    /// 5. `settings.json` is requested only when a persisted value changed
+    ///    (pause is not one of them).
     pub fn apply(&self, dto: SettingsDto) -> Result<SettingsDto, String> {
         let dto = validate(dto)?;
+        let before = self
+            .settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        // `before.hotkey` was validated when it got in, so these parse.
+        let old_key = Hotkey::parse(&before.hotkey).unwrap_or_default();
+        let new_key = Hotkey::parse(&dto.hotkey).map_err(|e| e.to_string())?;
+        let moved = old_key != new_key;
+        if moved {
+            rebind(self.registrar, &old_key, &new_key)?;
+            *self.hotkey_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        } else {
+            self.retry_inactive_hotkey(&new_key);
+        }
+        if dto.start_at_login != before.start_at_login
+            && let Err(e) = self.autostart.set(dto.start_at_login)
         {
+            if moved {
+                let _ = rebind(self.registrar, &new_key, &old_key);
+            }
+            eprintln!("clipdump: login item: {e}");
+            return Err("could not change the start at login setting".to_owned());
+        }
+
+        let after = {
             let mut s = self.settings.write().unwrap_or_else(|e| e.into_inner());
             s.max_text_bytes = dto.max_text_bytes;
             s.max_image_bytes = dto.max_image_bytes;
@@ -131,15 +164,35 @@ impl SettingsEnv<'_> {
             s.ram_cache_bytes = dto.ram_cache_bytes;
             s.ocr_enabled = dto.ocr_enabled;
             s.auto_paste_on_enter = dto.auto_paste_on_enter;
-        }
+            s.pinned_bar = dto.pinned_bar;
+            s.hotkey = dto.hotkey.clone();
+            s.start_at_login = dto.start_at_login;
+            s.clone()
+        };
         self.pinned_bar.store(dto.pinned_bar, Ordering::Relaxed);
-        self.paused.store(dto.paused, Ordering::Relaxed);
+        self.pause.set(dto.paused);
         // Cache budget now, and retention once (lowered limits evict right away).
         self.store.apply_settings();
         if let Some(ocr) = self.ocr {
             ocr.apply_settings();
         }
-        Ok(dto)
+        if after != before
+            && let Some(saver) = self.saver
+        {
+            saver.request(after);
+        }
+        Ok(self.current())
+    }
+
+    /// The configured hotkey failed to register at startup (see
+    /// `hotkey_error`): every later save tries again, so closing the other app
+    /// and touching any setting brings the hotkey back. A failure keeps the
+    /// note and does not fail the save.
+    fn retry_inactive_hotkey(&self, key: &Hotkey) {
+        let mut note = self.hotkey_error.lock().unwrap_or_else(|e| e.into_inner());
+        if note.is_some() && self.registrar.register(key).is_ok() {
+            *note = None;
+        }
     }
 }
 
@@ -167,6 +220,9 @@ pub struct StatsDto {
     pub ocr_hint: &'static str,
     /// How the data key is protected, for example `"dpapi"`.
     pub key_protector: &'static str,
+    /// Set when the configured hotkey could not be registered (another app owns
+    /// it): the text to show next to the hotkey. `null` when it works.
+    pub hotkey_error: Option<String>,
 }
 
 fn engine_name(s: EngineState) -> &'static str {
@@ -183,6 +239,7 @@ pub fn stats_of(
     store: &Store,
     settings: &RwLock<Settings>,
     ocr: Option<&OcrQueueHandle>,
+    hotkey_error: Option<String>,
 ) -> StatsDto {
     let st = store.stats();
     let budget = settings
@@ -201,5 +258,6 @@ pub fn stats_of(
         ocr_engine: ocr.map_or("unavailable", |o| engine_name(o.engine_state())),
         ocr_hint: OCR_UNAVAILABLE_HINT,
         key_protector: store.persist().key_protector_name(),
+        hotkey_error,
     }
 }

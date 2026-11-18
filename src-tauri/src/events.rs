@@ -10,3 +10,6 @@ pub const BAR_HIDDEN: &str = "bar:hidden";
 pub const HISTORY_CHANGED: &str = "history:changed";
 /// Ask the bar to open its settings view (tray "Settings").
 pub const SETTINGS_OPEN: &str = "settings:open";
+/// Settings changed behind the webview's back (the tray toggled "Pause
+/// capture"). No payload: the UI calls `get_settings` again.
+pub const SETTINGS_CHANGED: &str = "settings:changed";

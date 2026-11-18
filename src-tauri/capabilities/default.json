@@ -15,6 +15,7 @@
     "allow-get-settings",
     "allow-set-settings",
     "allow-get-stats",
-    "allow-hide-bar"
+    "allow-hide-bar",
+    "allow-open-data-folder"
   ]
 }

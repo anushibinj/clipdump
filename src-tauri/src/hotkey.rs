@@ -281,6 +281,30 @@ pub trait Registrar {
     fn unregister(&self, hk: &Hotkey) -> Result<(), String>;
 }
 
+/// The global-shortcut plugin as a [`Registrar`]. The plugin runs the OS call on
+/// the main thread itself, so this is safe to use from a command thread.
+#[cfg(desktop)]
+pub struct PluginRegistrar<'a>(pub &'a tauri::AppHandle);
+
+#[cfg(desktop)]
+impl Registrar for PluginRegistrar<'_> {
+    fn register(&self, hk: &Hotkey) -> Result<(), String> {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        self.0
+            .global_shortcut()
+            .register(hk.to_shortcut())
+            .map_err(|e| e.to_string())
+    }
+
+    fn unregister(&self, hk: &Hotkey) -> Result<(), String> {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        self.0
+            .global_shortcut()
+            .unregister(hk.to_shortcut())
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// Shown when the OS refuses a chord. The OS error text is logged, not shown.
 pub const IN_USE_MESSAGE: &str =
     "That shortcut is taken by another app or reserved by Windows. Choose a different one.";
@@ -303,6 +327,20 @@ pub fn rebind(reg: &dyn Registrar, current: &Hotkey, new: &Hotkey) -> Result<(),
         eprintln!("clipdump: could not release hotkey {current}: {e}");
     }
     Ok(())
+}
+
+/// Register the configured chord at startup. A refusal (another app owns it)
+/// must not stop the app: the tray still works, and the returned text is shown
+/// next to the hotkey in Settings. The setting itself is left as the user chose
+/// it (no silent fallback to another chord); changing any setting retries.
+pub fn register_at_startup(reg: &dyn Registrar, key: &Hotkey) -> Option<String> {
+    match reg.register(key) {
+        Ok(()) => None,
+        Err(e) => {
+            eprintln!("clipdump: could not register hotkey {key}: {e}");
+            Some(IN_USE_MESSAGE.to_owned())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -500,6 +538,18 @@ mod tests {
             vec!["Ctrl+Shift+Space".to_owned()],
             "the old chord is still active"
         );
+    }
+
+    #[test]
+    fn a_startup_refusal_becomes_a_note_not_a_crash() {
+        let reg = Fake::new(&["Ctrl+Shift+Space"], &[]);
+        assert_eq!(
+            register_at_startup(&reg, &Hotkey::default()).as_deref(),
+            Some(IN_USE_MESSAGE)
+        );
+        let reg = Fake::new(&[], &[]);
+        assert_eq!(register_at_startup(&reg, &Hotkey::default()), None);
+        assert_eq!(*reg.active.borrow(), vec!["Ctrl+Shift+Space".to_owned()]);
     }
 
     #[test]

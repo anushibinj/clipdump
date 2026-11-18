@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "set_settings",
     "get_stats",
     "hide_bar",
+    "open_data_folder",
 ];
 
 fn main() {

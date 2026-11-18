@@ -773,22 +773,101 @@ fn clear_history_keeps_pinned_items() {
 
 // -- settings and stats ------------------------------------------------------
 
+/// A global hotkey registry: chords other apps own, and the ones we hold.
+#[derive(Default)]
+struct FakeReg {
+    taken: RefCell<std::collections::HashSet<String>>,
+    active: RefCell<Vec<String>>,
+}
+
+impl crate::hotkey::Registrar for FakeReg {
+    fn register(&self, hk: &crate::hotkey::Hotkey) -> Result<(), String> {
+        let name = hk.to_string();
+        if self.taken.borrow().contains(&name) || self.active.borrow().contains(&name) {
+            return Err("already registered".to_owned());
+        }
+        self.active.borrow_mut().push(name);
+        Ok(())
+    }
+    fn unregister(&self, hk: &crate::hotkey::Hotkey) -> Result<(), String> {
+        self.active.borrow_mut().retain(|c| *c != hk.to_string());
+        Ok(())
+    }
+}
+
+/// The OS login item.
+struct FakeOs {
+    on: Cell<bool>,
+    fail: Cell<bool>,
+}
+
+impl crate::autostart::Autostart for FakeOs {
+    fn set(&self, enabled: bool) -> Result<(), String> {
+        if self.fail.get() {
+            return Err("denied".to_owned());
+        }
+        self.on.set(enabled);
+        Ok(())
+    }
+    fn current(&self) -> Option<bool> {
+        Some(self.on.get())
+    }
+}
+
+#[derive(Default)]
+struct TrayCheck(Arc<std::sync::Mutex<Vec<bool>>>);
+
+impl crate::pause::PauseIndicator for TrayCheck {
+    fn show(&self, paused: bool) {
+        self.0.lock().unwrap().push(paused);
+    }
+}
+
 struct SettingsFx {
     fx: Fx,
     pinned: AtomicBool,
-    paused: AtomicBool,
+    pause: crate::pause::Pause,
+    tray: Arc<std::sync::Mutex<Vec<bool>>>,
     ocr: OcrQueueHandle,
+    reg: FakeReg,
+    os: FakeOs,
+    hotkey_error: std::sync::Mutex<Option<String>>,
+    /// A real saver over a temp dir, to look at what reaches settings.json.
+    dir: tempfile::TempDir,
+    saver: crate::settings::saver::SettingsSaver,
 }
 
 impl SettingsFx {
     fn new() -> Self {
         let fx = Fx::new();
         let ocr = OcrQueueHandle::new(Arc::clone(&fx.settings));
+        let pause = crate::pause::Pause::default();
+        let tray = TrayCheck::default();
+        let log = Arc::clone(&tray.0);
+        pause.set_indicator(Box::new(tray));
+        let reg = FakeReg::default();
+        reg.active.borrow_mut().push("Ctrl+Shift+Space".to_owned());
+        let dir = tempfile::tempdir().unwrap();
+        let saver = crate::settings::saver::SettingsSaver::start_with(
+            dir.path().to_owned(),
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
         Self {
             fx,
             pinned: AtomicBool::new(false),
-            paused: AtomicBool::new(false),
+            pause,
+            tray: log,
             ocr,
+            reg,
+            os: FakeOs {
+                on: Cell::new(true),
+                fail: Cell::new(false),
+            },
+            hotkey_error: std::sync::Mutex::new(None),
+            dir,
+            saver,
         }
     }
 
@@ -796,10 +875,24 @@ impl SettingsFx {
         SettingsEnv {
             settings: &self.fx.settings,
             pinned_bar: &self.pinned,
-            paused: &self.paused,
+            pause: &self.pause,
             store: &self.fx.store,
             ocr: Some(&self.ocr),
+            registrar: &self.reg,
+            autostart: &self.os,
+            saver: Some(&self.saver),
+            hotkey_error: &self.hotkey_error,
         }
+    }
+
+    /// What settings.json holds once the saver has written.
+    fn on_disk(&self) -> Option<crate::settings::Settings> {
+        self.saver.flush();
+        self.dir
+            .path()
+            .join(crate::settings::file::FILE_NAME)
+            .exists()
+            .then(|| crate::settings::file::load(self.dir.path()).settings)
     }
 }
 
@@ -825,9 +918,13 @@ fn get_settings_returns_the_defaults_with_the_runtime_flags() {
         "autoPasteOnEnter",
         "pinnedBar",
         "paused",
+        "hotkey",
+        "startAtLogin",
     ] {
         assert!(v.get(key).is_some(), "{key}");
     }
+    assert_eq!(dto.hotkey, "Ctrl+Shift+Space");
+    assert!(dto.start_at_login, "on by default");
 }
 
 #[test]
@@ -854,7 +951,12 @@ fn set_settings_applies_values_flags_and_retention_at_once() {
     assert_eq!((s.max_items, s.max_text_bytes), (2, 4096));
     drop(s);
     assert!(sfx.pinned.load(Ordering::Relaxed));
-    assert!(sfx.paused.load(Ordering::Relaxed));
+    assert!(sfx.pause.is_paused());
+    assert_eq!(
+        *sfx.tray.lock().unwrap(),
+        vec![false, true],
+        "the tray check follows"
+    );
     // Two unpinned kept (the newest) plus the pinned one.
     assert_eq!(sfx.fx.store.len(), 3);
     assert!(sfx.fx.store.get(pinned).is_some());
@@ -973,7 +1075,7 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
     fx.flush();
     fx.store.get_blob(img).unwrap();
 
-    let st = stats_of(&fx.store, &fx.settings, Some(&sfx.ocr));
+    let st = stats_of(&fx.store, &fx.settings, Some(&sfx.ocr), None);
     assert_eq!(st.items, 4);
     assert_eq!(st.pinned, 1);
     assert!(st.disk_bytes > 3000);
@@ -987,8 +1089,10 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
     assert_eq!(st.key_protector, fx.store.persist().key_protector_name());
     assert!(!st.key_protector.is_empty());
 
-    let none = stats_of(&fx.store, &fx.settings, None);
+    let none = stats_of(&fx.store, &fx.settings, None, Some("taken".to_owned()));
     assert_eq!(none.ocr_engine, "unavailable");
+    assert_eq!(none.hotkey_error.as_deref(), Some("taken"));
+    assert_eq!(st.hotkey_error, None);
     let v = serde_json::to_value(&st).unwrap();
     for key in [
         "diskBytes",
@@ -1000,9 +1104,256 @@ fn stats_count_items_cache_ocr_and_name_the_key_protector() {
         "ocrEngine",
         "ocrHint",
         "keyProtector",
+        "hotkeyError",
     ] {
         assert!(v.get(key).is_some(), "{key}");
     }
+}
+
+// -- Phase 12: persistence, hotkey, login item, pause, retention ---------------
+
+#[test]
+fn a_change_reaches_settings_json_and_unchanged_saves_do_not_write() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    assert!(sfx.on_disk().is_none(), "nothing written before a change");
+    let mut dto = env.current();
+    dto.max_items = 123;
+    dto.pinned_bar = true;
+    env.apply(dto).unwrap();
+    let disk = sfx.on_disk().expect("written");
+    assert_eq!((disk.max_items, disk.pinned_bar), (123, true));
+    assert_eq!(sfx.saver.write_count(), 1);
+    // Same values again: no new write.
+    env.apply(env.current()).unwrap();
+    sfx.saver.flush();
+    assert_eq!(sfx.saver.write_count(), 1);
+}
+
+#[test]
+fn many_quick_changes_make_one_write() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    for n in 1..=50 {
+        let mut dto = env.current();
+        dto.max_items = n;
+        env.apply(dto).unwrap();
+    }
+    assert_eq!(sfx.saver.write_count(), 0, "debounced");
+    assert_eq!(sfx.on_disk().unwrap().max_items, 50);
+    assert_eq!(sfx.saver.write_count(), 1);
+}
+
+#[test]
+fn pause_is_applied_but_never_written_to_disk() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.paused = true;
+    env.apply(dto).unwrap();
+    assert!(sfx.pause.is_paused());
+    assert!(
+        sfx.on_disk().is_none(),
+        "a pause alone does not touch the file"
+    );
+    let mut dto = env.current();
+    dto.max_items = 9;
+    env.apply(dto).unwrap();
+    sfx.on_disk().unwrap();
+    let text =
+        std::fs::read_to_string(sfx.dir.path().join(crate::settings::file::FILE_NAME)).unwrap();
+    assert!(!text.contains("paused"));
+}
+
+#[test]
+fn the_tray_toggle_and_the_settings_switch_stay_consistent() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    assert!(sfx.pause.toggle(), "tray: pause");
+    assert!(env.current().paused, "get_settings sees the tray's change");
+    let mut dto = env.current();
+    dto.paused = false;
+    env.apply(dto).unwrap();
+    assert!(!sfx.pause.is_paused());
+    assert_eq!(*sfx.tray.lock().unwrap(), vec![false, true, false]);
+}
+
+#[test]
+fn changing_the_hotkey_moves_the_registration_and_is_saved_canonical() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.hotkey = "alt + ctrl + k".to_owned();
+    let stored = env.apply(dto).unwrap();
+    assert_eq!(stored.hotkey, "Ctrl+Alt+K");
+    assert_eq!(*sfx.reg.active.borrow(), vec!["Ctrl+Alt+K".to_owned()]);
+    assert_eq!(sfx.on_disk().unwrap().hotkey, "Ctrl+Alt+K");
+}
+
+#[test]
+fn a_hotkey_another_app_owns_keeps_the_old_one_and_is_not_saved() {
+    let sfx = SettingsFx::new();
+    sfx.reg.taken.borrow_mut().insert("Super+L".to_owned());
+    let env = sfx.env();
+    let before = env.current();
+    let mut dto = before.clone();
+    dto.hotkey = "Win+L".to_owned();
+    dto.max_items = 77; // the same save carries another change
+    let err = env.apply(dto).unwrap_err();
+    assert!(err.contains("taken by another app"), "{err}");
+    assert_eq!(
+        *sfx.reg.active.borrow(),
+        vec!["Ctrl+Shift+Space".to_owned()]
+    );
+    assert_eq!(env.current(), before, "nothing was applied");
+    assert!(sfx.on_disk().is_none(), "the bad value is never persisted");
+}
+
+#[test]
+fn an_invalid_chord_is_refused_before_anything_changes() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    for bad in ["", "Space", "Ctrl+Shift", "Ctrl+Banana", "Ctrl+A+B"] {
+        let mut dto = env.current();
+        dto.hotkey = bad.to_owned();
+        assert!(env.apply(dto).is_err(), "{bad:?}");
+    }
+    assert_eq!(
+        *sfx.reg.active.borrow(),
+        vec!["Ctrl+Shift+Space".to_owned()]
+    );
+}
+
+#[test]
+fn a_successful_hotkey_change_clears_the_startup_note() {
+    let sfx = SettingsFx::new();
+    *sfx.hotkey_error.lock().unwrap() = Some("taken".to_owned());
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.hotkey = "Ctrl+Alt+J".to_owned();
+    env.apply(dto).unwrap();
+    assert_eq!(*sfx.hotkey_error.lock().unwrap(), None);
+}
+
+#[test]
+fn any_save_retries_a_hotkey_that_was_taken_at_startup() {
+    let sfx = SettingsFx::new();
+    // At startup "Ctrl+Shift+Space" was owned by another app: nothing is active.
+    sfx.reg.active.borrow_mut().clear();
+    *sfx.hotkey_error.lock().unwrap() = Some("taken".to_owned());
+    let env = sfx.env();
+    sfx.reg
+        .taken
+        .borrow_mut()
+        .insert("Ctrl+Shift+Space".to_owned());
+    let mut dto = env.current();
+    dto.max_items = 5;
+    env.apply(dto).expect("the unrelated save still works");
+    assert!(sfx.hotkey_error.lock().unwrap().is_some(), "still taken");
+    // The other app lets go.
+    sfx.reg.taken.borrow_mut().clear();
+    let mut dto = env.current();
+    dto.max_items = 6;
+    env.apply(dto).unwrap();
+    assert_eq!(*sfx.hotkey_error.lock().unwrap(), None);
+    assert_eq!(
+        *sfx.reg.active.borrow(),
+        vec!["Ctrl+Shift+Space".to_owned()]
+    );
+}
+
+#[test]
+fn start_at_login_goes_to_the_os_and_a_refusal_changes_nothing() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.start_at_login = false;
+    assert!(!env.apply(dto).unwrap().start_at_login);
+    assert!(!sfx.os.on.get());
+    assert!(!sfx.on_disk().unwrap().start_at_login);
+
+    sfx.os.fail.set(true);
+    let before = env.current();
+    let mut dto = before.clone();
+    dto.start_at_login = true;
+    dto.hotkey = "Ctrl+Alt+K".to_owned();
+    let err = env.apply(dto).unwrap_err();
+    assert_eq!(err, "could not change the start at login setting");
+    assert_eq!(env.current(), before);
+    assert_eq!(
+        *sfx.reg.active.borrow(),
+        vec!["Ctrl+Shift+Space".to_owned()],
+        "the hotkey moved back"
+    );
+    assert!(!sfx.pinned.load(Ordering::Relaxed));
+}
+
+#[test]
+fn the_login_item_is_only_touched_when_the_setting_changes() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    sfx.os.fail.set(true); // would fail if called
+    let mut dto = env.current();
+    dto.max_items = 3;
+    assert!(env.apply(dto).is_ok());
+}
+
+#[test]
+fn pinned_bar_flag_follows_the_setting_both_ways() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.pinned_bar = true;
+    env.apply(dto).unwrap();
+    assert!(sfx.pinned.load(Ordering::Relaxed));
+    let mut dto = env.current();
+    dto.pinned_bar = false;
+    env.apply(dto).unwrap();
+    assert!(!sfx.pinned.load(Ordering::Relaxed));
+}
+
+#[test]
+fn lowering_max_items_evicts_at_once_pins_survive_and_it_persists() {
+    let sfx = SettingsFx::new();
+    let mut unpinned = Vec::new();
+    for i in 0..8 {
+        unpinned.push(sfx.fx.text(&format!("item {i}")));
+        sfx.fx.advance(10);
+    }
+    let pinned = sfx.fx.text("keep me");
+    toggle_pin_of(&sfx.fx.store, pinned).unwrap();
+    sfx.fx.advance(10);
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.max_items = 3;
+    env.apply(dto).unwrap();
+    assert_eq!(sfx.fx.store.len(), 4, "3 unpinned newest plus the pin");
+    assert!(sfx.fx.store.get(pinned).is_some());
+    assert!(sfx.fx.store.get(unpinned[0]).is_none(), "oldest gone");
+    assert!(sfx.fx.store.get(unpinned[7]).is_some());
+    assert_eq!(sfx.on_disk().unwrap().max_items, 3);
+    // A max of 0 means no limit and evicts nothing more.
+    let mut dto = env.current();
+    dto.max_items = 0;
+    env.apply(dto).unwrap();
+    assert_eq!(sfx.fx.store.len(), 4);
+}
+
+#[test]
+fn lowering_the_age_limit_evicts_old_unpinned_items_but_not_pins() {
+    let sfx = SettingsFx::new();
+    let old = sfx.fx.text("old");
+    let old_pin = sfx.fx.text("old pinned");
+    toggle_pin_of(&sfx.fx.store, old_pin).unwrap();
+    sfx.fx.advance(3 * 24 * 3600 * 1000);
+    let fresh = sfx.fx.text("fresh");
+    let env = sfx.env();
+    let mut dto = env.current();
+    dto.max_age_days = 1;
+    env.apply(dto).unwrap();
+    assert!(sfx.fx.store.get(old).is_none());
+    assert!(sfx.fx.store.get(old_pin).is_some());
+    assert!(sfx.fx.store.get(fresh).is_some());
 }
 
 // -- capabilities --------------------------------------------------------------
@@ -1057,7 +1408,7 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
             .collect(),
     );
 
-    assert_eq!(from_build.len(), 10);
+    assert_eq!(from_build.len(), 11);
     assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
     assert_eq!(
         from_build, from_cap,

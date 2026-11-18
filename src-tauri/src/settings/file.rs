@@ -243,8 +243,10 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("deep").join("clipdump");
         write_atomic(&dir, &Settings::default()).unwrap();
-        let mut s = Settings::default();
-        s.max_items = 5;
+        let s = Settings {
+            max_items: 5,
+            ..Settings::default()
+        };
         write_atomic(&dir, &s).unwrap();
         assert_eq!(load(&dir).settings.max_items, 5);
         assert_eq!(listing(&dir), vec![FILE_NAME]);

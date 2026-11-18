@@ -96,6 +96,14 @@ pub fn show(app: &AppHandle) {
     let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
 }
 
+/// Pinned-bar mode at startup: show the bar where it belongs without taking the
+/// keyboard focus away from whatever the user is doing (nobody pressed a key).
+pub fn show_pinned(app: &AppHandle) {
+    let Some(w) = main_window(app) else { return };
+    position_on_cursor_monitor(app, &w);
+    let _ = w.show();
+}
+
 pub fn hide(app: &AppHandle) {
     let Some(w) = main_window(app) else { return };
     // Idempotent: blur-after-hide or a double Esc must not emit twice.
@@ -113,6 +121,9 @@ pub fn toggle(app: &AppHandle) {
     match (visible, pinned) {
         // Pinned-bar mode: hotkey only focuses the always-visible bar.
         (true, true) => {
+            // Remember the window the hotkey was pressed over, so Paste on
+            // Enter goes back to it.
+            crate::platform::remember_foreground(app, &w);
             focus(&w);
             let _ = w.emit_to(LABEL, events::BAR_SHOWN, ());
         }

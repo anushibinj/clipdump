@@ -18,6 +18,7 @@ mod ocr;
 // benchmark (`benches/search_bench.rs`) can build items.
 pub mod model;
 // Opened by `start_ingest`; some queries are used only by later phases.
+mod pause;
 #[allow(dead_code)]
 mod persist;
 mod platform;
@@ -26,7 +27,7 @@ mod scheme;
 // Fuzzy search over the store (Phase 8). `pub` for the benchmark; the IPC command
 // (Phase 9) is its other caller.
 pub mod search;
-// Minimal runtime settings; Phase 12 persists them.
+// Runtime settings and settings.json (Phase 12).
 mod settings;
 mod state;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
@@ -40,7 +41,7 @@ use platform::ClipboardWatcher;
 use state::AppState;
 use tauri::Manager;
 #[cfg(desktop)]
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -89,7 +90,8 @@ pub fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::get_stats,
-            commands::hide_bar
+            commands::hide_bar,
+            commands::open_data_folder
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {
@@ -113,24 +115,68 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            let state = app.state::<AppState>();
+            // %LOCALAPPDATA%\clipdump (Section 3): history, and "Open data folder".
+            if let Ok(d) = app.path().local_data_dir() {
+                let _ = state.data_dir.set(d.join("clipdump"));
+            }
+            load_settings(app);
             #[cfg(desktop)]
             {
-                let hotkey =
-                    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
+                let key = hotkey::Hotkey::parse(&state.settings.read().unwrap().hotkey)
+                    .unwrap_or_default();
                 // Registration can fail if another app owns the chord. Do not
-                // crash: the tray still works. Phase 12 surfaces this in settings.
-                if let Err(e) = app.global_shortcut().register(hotkey) {
-                    eprintln!("clipdump: could not register hotkey: {e}");
-                }
+                // crash: the tray still works and Settings shows the note.
+                let note =
+                    hotkey::register_at_startup(&hotkey::PluginRegistrar(app.handle()), &key);
+                *state.hotkey_error.lock().unwrap() = note;
             }
-            #[cfg(desktop)]
-            autostart::enable_on_first_run(app);
             tray::build(app)?;
             start_capture(app);
+            if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
+                window::show_pinned(app.handle());
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quit: write a settings change that is still waiting for its debounce.
+            if let tauri::RunEvent::Exit = event
+                && let Some(saver) = app.state::<AppState>().saver.get()
+            {
+                saver.flush();
+            }
+        });
+}
+
+/// Load `settings.json` into `AppState` (memory) and start the background
+/// saver. Never fails: a missing, damaged or unreadable file means defaults.
+fn load_settings(app: &tauri::App) {
+    use settings::saver::SettingsSaver;
+    let state = app.state::<AppState>();
+    let had_marker = autostart::take_old_marker(app.handle());
+    let Ok(config) = app.path().config_dir() else {
+        eprintln!("clipdump: no config directory, settings will not be saved");
+        return;
+    };
+    let dir = settings::file::dir_in(&config);
+    let os = autostart::SystemAutostart(app.handle());
+    let startup = settings::startup(&dir, &os, had_marker);
+    state.pinned_bar.store(
+        startup.settings.pinned_bar,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    match SettingsSaver::start(dir) {
+        Ok(saver) => {
+            if startup.needs_save {
+                saver.request(startup.settings.clone());
+            }
+            let _ = state.saver.set(saver);
+        }
+        Err(e) => eprintln!("clipdump: settings saver not started: {e}"),
+    }
+    *state.settings.write().unwrap() = startup.settings;
 }
 
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow
