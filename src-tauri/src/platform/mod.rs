@@ -5,6 +5,11 @@
 #[cfg(windows)]
 mod windows;
 
+// Pure capture decisions: no OS calls, tested everywhere. On non-Windows builds only
+// the tests use them, hence the allow.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod rules;
+
 // Dev/test only key protector. Compiled on every non-Windows target and in test
 // builds on Windows; never selected by `default_key_protector` on Windows.
 #[cfg(any(not(windows), test))]
