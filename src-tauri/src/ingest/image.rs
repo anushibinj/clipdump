@@ -255,6 +255,155 @@ pub fn decode(data: &crate::platform::ImageData) -> Result<Rgba> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Hash, PNG for storage, thumbnail
+// ---------------------------------------------------------------------------
+
+/// Dedup hash of a picture: size plus RGBA pixels, so the same picture arriving
+/// as PNG, `CF_DIBV5` or `CF_DIB` is one item. Roughly 10 GB/s, a few ms at 4K.
+pub fn hash(img: &Rgba) -> u128 {
+    crate::hash::hash_image(img.width, img.height, &img.pixels)
+}
+
+/// Lossless PNG of the picture, for the blob file.
+///
+/// Speed over size: `CompressionType::Fast` with the cheap `Sub` filter is
+/// several times faster than the default and typically makes a screenshot only
+/// 10 to 30 percent bigger, which is a good trade for the < 300 ms budget (disk
+/// is cheap, the 2 GB cap still applies). Pictures with no transparency are
+/// stored as RGB, which is a quarter less data to filter and deflate.
+pub fn encode_png(img: &Rgba) -> Result<Vec<u8>> {
+    use image::ExtendedColorType;
+    use image::ImageEncoder;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+
+    let opaque = img.pixels.chunks_exact(4).all(|p| p[3] == 0xFF);
+    let mut out = Vec::with_capacity(img.pixels.len() / 4);
+    let enc = PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Sub);
+    if opaque {
+        let rgb: Vec<u8> = img
+            .pixels
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        enc.write_image(&rgb, img.width, img.height, ExtendedColorType::Rgb8)?;
+    } else {
+        enc.write_image(&img.pixels, img.width, img.height, ExtendedColorType::Rgba8)?;
+    }
+    Ok(out)
+}
+
+/// Thumbnails are at most this tall (Section 3).
+pub const THUMB_MAX_HEIGHT: u32 = 96;
+/// Extra guard for extreme panoramas, so one thumbnail cannot be thousands of
+/// pixels wide (1,000 thumbnails stay in RAM). 4:1 at full height.
+pub const THUMB_MAX_WIDTH: u32 = 384;
+
+/// Size of the thumbnail for a `w` x `h` picture: fits in 384 x 96, keeps the
+/// aspect ratio, never upscales, never below 1 pixel.
+pub fn thumb_size(w: u32, h: u32) -> (u32, u32) {
+    if w <= THUMB_MAX_WIDTH && h <= THUMB_MAX_HEIGHT {
+        return (w, h);
+    }
+    let scale =
+        (f64::from(THUMB_MAX_HEIGHT) / f64::from(h)).min(f64::from(THUMB_MAX_WIDTH) / f64::from(w));
+    let tw = ((f64::from(w) * scale).round() as u32).clamp(1, THUMB_MAX_WIDTH);
+    let th = ((f64::from(h) * scale).round() as u32).clamp(1, THUMB_MAX_HEIGHT);
+    (tw, th)
+}
+
+/// Downscale for the list. `imageops::thumbnail` is a box style filter that is
+/// much faster than Lanczos and plenty good at 96 px.
+pub fn make_thumbnail(img: &Rgba) -> Result<Rgba> {
+    let (tw, th) = thumb_size(img.width, img.height);
+    if (tw, th) == (img.width, img.height) {
+        return Ok(img.clone());
+    }
+    // Borrow the pixels, no copy.
+    let src = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(
+        img.width,
+        img.height,
+        &img.pixels[..],
+    )
+    .context("pixel buffer does not match the size")?;
+    let small = image::imageops::thumbnail(&src, tw, th);
+    Ok(Rgba {
+        width: small.width(),
+        height: small.height(),
+        pixels: small.into_raw(),
+    })
+}
+
+/// Encode the thumbnail as WebP.
+///
+/// The `image` crate's WebP encoder is lossless only. That is acceptable here:
+/// a 96 px tall thumbnail is a few KB even lossless, and a lossy encoder would
+/// need a C library (libwebp) which we do not want in the build.
+pub fn encode_thumb_webp(thumb: &Rgba) -> Result<Vec<u8>> {
+    use image::ExtendedColorType;
+    use image::ImageEncoder;
+    use image::codecs::webp::WebPEncoder;
+
+    let mut out = Vec::new();
+    WebPEncoder::new_lossless(&mut out).write_image(
+        &thumb.pixels,
+        thumb.width,
+        thumb.height,
+        ExtendedColorType::Rgba8,
+    )?;
+    Ok(out)
+}
+
+/// Thumbnail and encode in one step (also used for image files).
+pub fn thumbnail_webp(img: &Rgba) -> Result<Vec<u8>> {
+    encode_thumb_webp(&make_thumbnail(img)?)
+}
+
+// ---------------------------------------------------------------------------
+// The item
+// ---------------------------------------------------------------------------
+
+/// Build the finished item for a captured image: decode, hash, PNG, thumbnail.
+///
+/// Speed shortcut: when the clipboard already holds a PNG (Chrome "Copy image",
+/// most screenshot tools) its bytes are stored as they are instead of being
+/// re-encoded. It is lossless by definition, and it saves the whole PNG encode,
+/// which is the slowest step for a 4K picture. We still decode it, because the
+/// hash and the thumbnail need the pixels.
+pub fn build(
+    data: crate::platform::ImageData,
+    source_app: Option<String>,
+    created_at: i64,
+) -> Result<super::IngestedItem> {
+    use crate::model::{ClipKind, OcrStatus};
+    use crate::platform::ImageFormat;
+
+    let img = decode(&data)?;
+    let item_hash = hash(&img);
+    let thumb = thumbnail_webp(&img)?;
+    let png = match data.format {
+        ImageFormat::Png => data.bytes,
+        ImageFormat::Dibv5 | ImageFormat::Dib => encode_png(&img)?,
+    };
+    Ok(super::IngestedItem {
+        kind: ClipKind::Image,
+        hash: item_hash,
+        preview: format!("Image {}x{}", img.width, img.height),
+        // Filled in by OCR (Phase 7).
+        search_text: String::new(),
+        text: None,
+        byte_size: png.len() as u64,
+        png: Some(png),
+        thumb: Some(thumb),
+        files: None,
+        width: img.width,
+        height: img.height,
+        source_app,
+        created_at,
+        ocr_status: OcrStatus::Pending,
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -592,5 +741,186 @@ pub(crate) mod tests {
         huge[8..12].copy_from_slice(&60_000u32.to_le_bytes());
         assert!(decode_dib(&huge).is_err());
         assert!(decode_png(b"not a png").is_err());
+    }
+
+    #[test]
+    fn same_picture_from_png_and_every_dib_flavour_hashes_equal() {
+        let p = pic_gradient(13, 9);
+        let from_png = decode_png(&png_of(&p)).unwrap();
+        let h = hash(&from_png);
+        assert_eq!(from_png, p);
+        for dib in [
+            dib24(&p, false),
+            dib24(&p, true),
+            dib32_info(&p, false),
+            dib32_info_bitfields(&p, true),
+            dibv5_bitfields(&p, false),
+            dibv4_rgb_alpha(&p, true),
+        ] {
+            let got = decode_dib(&dib).unwrap();
+            assert_eq!(got, from_png);
+            assert_eq!(hash(&got), h);
+        }
+        // Through the tagged entry point too.
+        use crate::platform::{ImageData, ImageFormat};
+        let via = decode(&ImageData {
+            format: ImageFormat::Dibv5,
+            bytes: dibv5_bitfields(&p, false),
+        })
+        .unwrap();
+        assert_eq!(hash(&via), h);
+    }
+
+    #[test]
+    fn alpha_picture_matches_between_png_and_v5() {
+        let p = pic_alpha(8, 6);
+        let a = decode_png(&png_of(&p)).unwrap();
+        let b = decode_dib(&dibv5_bitfields(&p, true)).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn different_pictures_hash_differently() {
+        let a = pic_gradient(8, 6);
+        let mut b = a.clone();
+        b.pixels[0] ^= 1;
+        assert_ne!(hash(&a), hash(&b));
+        // Same bytes, different shape.
+        let c = Rgba {
+            width: 6,
+            height: 8,
+            pixels: a.pixels.clone(),
+        };
+        assert_ne!(hash(&a), hash(&c));
+    }
+
+    #[test]
+    fn png_round_trip_is_lossless_opaque_and_with_alpha() {
+        for p in [pic_gradient(33, 17), pic_alpha(21, 10)] {
+            let bytes = encode_png(&p).unwrap();
+            assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+            let back = decode_png(&bytes).unwrap();
+            assert_eq!(back, p);
+            assert_eq!(hash(&back), hash(&p));
+        }
+    }
+
+    #[test]
+    fn opaque_pictures_are_stored_as_rgb_png() {
+        let bytes = encode_png(&pic_gradient(16, 16)).unwrap();
+        let dec = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(dec.color_type(), image::ColorType::Rgb8);
+        let bytes = encode_png(&pic_alpha(16, 16)).unwrap();
+        let dec = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(dec.color_type(), image::ColorType::Rgba8);
+    }
+
+    #[test]
+    fn thumb_size_limits_and_aspect() {
+        // Landscape, portrait, square, already small, panorama, 1 px sliver.
+        assert_eq!(thumb_size(3840, 2160), (171, 96));
+        assert_eq!(thumb_size(1000, 2000), (48, 96));
+        assert_eq!(thumb_size(500, 500), (96, 96));
+        assert_eq!(thumb_size(50, 40), (50, 40), "never upscale");
+        assert_eq!(thumb_size(96, 96), (96, 96));
+        assert_eq!(thumb_size(20_000, 100), (384, 2));
+        assert_eq!(thumb_size(1, 5000), (1, 96));
+        for (w, h) in [
+            (3840u32, 2160u32),
+            (1921, 1081),
+            (100, 97),
+            (700, 3000),
+            (30_000, 700),
+        ] {
+            let (tw, th) = thumb_size(w, h);
+            assert!(th <= THUMB_MAX_HEIGHT && tw <= THUMB_MAX_WIDTH && tw >= 1 && th >= 1);
+            let want = f64::from(w) / f64::from(h);
+            let got = f64::from(tw) / f64::from(th);
+            // Within one pixel of rounding on the small side.
+            let tol = 1.0 / f64::from(tw.min(th)) + 0.02;
+            assert!((got / want - 1.0).abs() <= tol, "{w}x{h} -> {tw}x{th}");
+        }
+    }
+
+    #[test]
+    fn thumbnail_pixels_have_the_computed_size_and_webp_round_trips() {
+        let p = pic_gradient(640, 360);
+        let t = make_thumbnail(&p).unwrap();
+        assert_eq!((t.width, t.height), (171, 96));
+        assert_eq!(t.pixels.len(), 171 * 96 * 4);
+        let webp = encode_thumb_webp(&t).unwrap();
+        assert_eq!(&webp[..4], b"RIFF");
+        assert_eq!(&webp[8..12], b"WEBP");
+        let back = decode_any(&webp).unwrap();
+        assert_eq!(back, t, "lossless WebP");
+        assert_eq!(thumbnail_webp(&p).unwrap(), webp);
+    }
+
+    #[test]
+    fn small_pictures_are_not_resampled() {
+        let p = pic_gradient(40, 30);
+        assert_eq!(make_thumbnail(&p).unwrap(), p);
+    }
+
+    #[test]
+    fn thumbnail_is_roughly_the_average_colour() {
+        // A flat colour stays that colour after the filter.
+        let mut p = pic(8, 8);
+        p.width = 400;
+        p.height = 400;
+        p.pixels = [10u8, 200, 30, 255].repeat(400 * 400);
+        let t = make_thumbnail(&p).unwrap();
+        assert_eq!((t.width, t.height), (96, 96));
+        assert!(t.pixels.chunks_exact(4).all(|px| px == [10, 200, 30, 255]));
+    }
+
+    #[test]
+    fn build_dedups_across_formats_and_marks_ocr_pending() {
+        use crate::platform::{ImageData, ImageFormat};
+        let p = pic_gradient(320, 200);
+        let a = build(
+            ImageData {
+                format: ImageFormat::Png,
+                bytes: png_of(&p),
+            },
+            Some("chrome.exe".into()),
+            42,
+        )
+        .unwrap();
+        let b = build(
+            ImageData {
+                format: ImageFormat::Dib,
+                bytes: dib24(&p, false),
+            },
+            None,
+            43,
+        )
+        .unwrap();
+        assert_eq!(a.hash, b.hash);
+        assert_eq!((a.width, a.height), (320, 200));
+        assert_eq!(a.preview, "Image 320x200");
+        assert_eq!(a.kind, crate::model::ClipKind::Image);
+        assert_eq!(a.ocr_status, crate::model::OcrStatus::Pending);
+        assert_eq!(a.source_app.as_deref(), Some("chrome.exe"));
+        assert_eq!(a.created_at, 42);
+        assert!(a.search_text.is_empty() && a.text.is_none() && a.files.is_none());
+        // The PNG input is stored untouched, the DIB input is re-encoded.
+        assert_eq!(a.png.as_deref(), Some(&png_of(&p)[..]));
+        assert_eq!(decode_png(b.png.as_ref().unwrap()).unwrap(), p);
+        assert_eq!(a.byte_size, a.png.as_ref().unwrap().len() as u64);
+        // 320x200 -> 154x96
+        let t = decode_any(a.thumb.as_ref().unwrap()).unwrap();
+        assert_eq!((t.width, t.height), (154, 96));
+    }
+
+    #[test]
+    fn build_rejects_undecodable_data() {
+        use crate::platform::{ImageData, ImageFormat};
+        let bad = ImageData {
+            format: ImageFormat::Dibv5,
+            bytes: vec![0; 10],
+        };
+        assert!(build(bad, None, 0).is_err());
     }
 }
