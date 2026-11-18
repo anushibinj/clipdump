@@ -217,3 +217,95 @@ unchanged.
   7 to 9).
 - Cache hits while copying an item back (Phase 11 uses `Store::get_blob` and
   `get_full_text`; the cache and the byte budget are covered by unit tests).
+
+## Phase 7: OCR
+
+Phase 7 adds the OCR worker. Every new image item is queued, one background
+thread (lowest priority) loads its PNG, runs `Windows.Media.Ocr` and stores the
+text: in RAM as the item's search text, encrypted in `items.ocr_enc` with
+`ocr_status = 1`. There is no search UI before Phases 8 to 10, so these checks
+use the terminal log from `pnpm tauri dev` and the database. The log shows, per
+image, `clipdump: ocr: item <id>: <n> chars in <ms> ms` (the text itself is
+never logged). At start it can also show `clipdump: ocr: queued <n> images from
+the history`, or `clipdump: ocr: no OCR language installed, ...`. The OCR text is
+encrypted in the database, so a SQLite viewer shows only `ocr_status` and the
+length of `ocr_enc`, not the words.
+
+Statuses in `items.ocr_status`: 0 pending, 1 done, 2 failed, 3 unavailable.
+
+### The plan's check: a screenshot is found by its words
+- [ ] Open `PLAN.md` in an editor with a large font, take a screenshot of a
+      paragraph with Win+Shift+S. The log shows an `ingested image ...` line
+      and then an `ocr: item N: <n> chars in <ms> ms` line, with `n` roughly the
+      number of characters you can see in the shot (not 0). In the database that
+      row has `ocr_status = 1` and a `length(ocr_enc)` above 40.
+- [ ] Search for a word from the screenshot and see it in the results: this part
+      cannot be done before the search engine, IPC and UI land (Phases 8 to 10).
+      Until then the log line and the database row above are the check. When
+      Phase 10 lands, repeat with a word that appears only in the picture: the
+      screenshot must appear in the results with the "OCR" badge.
+- [ ] Take a screenshot of a blank wall or a plain color: the log shows
+      `0 chars` and the row still ends with `ocr_status = 1` (an empty result is
+      a finished OCR, not a failure).
+- [ ] Take a very small crop (one word, under 40 pixels tall): it is recognized
+      (the worker enlarges small pictures 2x first). Check the log shows more
+      than 0 chars.
+- [ ] Copy a screenshot with a transparent background (a PNG with alpha, for
+      example from a design tool or "Copy image" on a transparent logo with dark
+      text): the text is still recognized (transparency is flattened onto
+      white before OCR).
+
+### Speed (budget: under 1 s for a 1080p screenshot)
+- [ ] Take three full 1080p screenshots of text heavy pages (an article, code).
+      Note the `<ms>` of each `ocr: item` line. Each must be under 1000 ms on a
+      release build (`pnpm tauri build`, run the exe from a terminal). A debug
+      build is slower and does not count. Record the numbers in
+      `docs/perf.md` later (Phase 14).
+- [ ] Do the same with a 4K screenshot: it is not part of the budget, but note
+      the time. A picture over `MaxImageDimension` (10,000 px on a side, for
+      example a long stitched page capture) is shrunk, not rejected.
+- [ ] While OCR runs (copy ten large screenshots in a row), type in Notepad and
+      press the hotkey: both stay responsive, because the OCR thread runs at idle
+      priority. In Task Manager the process CPU shows a short burst, then ~0%.
+- [ ] The Phase 5 timing line for the same screenshot (`ingested image ... in N
+      ms`) is unchanged by OCR: OCR is not part of that number.
+
+### Restart and re-queue
+- [ ] Copy 10 screenshots quickly, then quit from the tray at once (before the
+      log shows all ten `ocr: item` lines). Start the app again: the log shows
+      `queued <n> images from the history` and the remaining ones finish,
+      newest first. No row stays at `ocr_status = 0` afterwards.
+- [ ] After a normal restart the OCR text of old screenshots is still there (the
+      row keeps `ocr_status = 1`, and no `ocr: item` line is printed for it).
+- [ ] Delete a screenshot right after copying it (no UI before Phase 10: remove
+      the row while the app is closed). No crash or error line at the next
+      start, and the file is not recreated.
+
+### No OCR language installed
+- [ ] Remove every OCR capable language, or use a Windows install without one
+      (Settings > Time & language > Language & region; English (United States)
+      normally has OCR, a language added "without optional features" may not).
+      Start the app: the log shows `ocr: no OCR language installed`. Copy a
+      screenshot: it is stored normally, the row gets `ocr_status = 3`, and no
+      `ocr: item` line is printed.
+- [ ] Add a language with the OCR optional feature
+      (Settings > Time & language > Language & region > Add a language), restart
+      Clipdump: the log shows `queued <n> images from the history` and the
+      screenshots that were `3` become `1`.
+- [ ] The hint text for the settings screen is the constant
+      `ocr::OCR_UNAVAILABLE_HINT`; the settings UI that shows it arrives in
+      Phase 10. The count of affected items is `StoreStats::ocr_unavailable`
+      (`get_stats`, Phase 9).
+
+### The OCR setting
+- [ ] There is no settings screen or `settings.json` before Phase 12, so the
+      switch is `Settings::default().ocr_enabled` in `src-tauri/src/settings.rs`.
+      Set it to `false`, run `pnpm tauri dev`, copy a screenshot: no `ocr: item`
+      line, the row stays `ocr_status = 0`. Set it back to `true` and restart:
+      the pending screenshots are processed. (Changing it live is wired in
+      Phase 12, which calls `OcrWorker::apply_settings`.)
+
+### Not testable yet
+- Searching OCR text, the "OCR" badge and the snippet (Phases 8 to 10).
+- The language status and hint in settings (Phase 10).
+- Live on/off switching from a settings screen (Phase 12).
