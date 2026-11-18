@@ -1,6 +1,88 @@
 //! Search tests. Items are built in memory; nothing here touches disk.
 
 use super::*;
+use crate::model::{FileRef, OcrStatus};
+
+const DAY: i64 = 86_400_000;
+/// The "now" most tests use.
+const NOW: i64 = 1_000 * DAY;
+
+/// A text item. `age_ms` is how long ago it was last used.
+fn text(id: u64, body: &str, age_ms: i64) -> Arc<ClipItem> {
+    Arc::new(ClipItem {
+        id,
+        hash: id as u128,
+        kind: ClipKind::Text,
+        created_at: NOW - age_ms,
+        last_used_at: NOW - age_ms,
+        use_count: 0,
+        pinned: false,
+        preview: Arc::from(body.split_whitespace().collect::<Vec<_>>().join(" ")),
+        search_text: Arc::from(body),
+        text_in_ram: Some(Arc::from(body)),
+        thumb: None,
+        files: None,
+        width: 0,
+        height: 0,
+        byte_size: body.len() as u64,
+        ocr_status: OcrStatus::Done,
+        source_app: None,
+        blob_hash: None,
+    })
+}
+
+fn with(item: Arc<ClipItem>, f: impl FnOnce(&mut ClipItem)) -> Arc<ClipItem> {
+    let mut item = item;
+    f(Arc::make_mut(&mut item));
+    item
+}
+
+fn pinned(item: Arc<ClipItem>) -> Arc<ClipItem> {
+    with(item, |i| i.pinned = true)
+}
+
+fn image(id: u64, ocr: &str, age_ms: i64) -> Arc<ClipItem> {
+    with(text(id, ocr, age_ms), |i| {
+        i.kind = ClipKind::Image;
+        i.preview = Arc::from("Image 1920x1080");
+        i.text_in_ram = None;
+        i.width = 1920;
+        i.height = 1080;
+        i.byte_size = 1_200_000;
+        i.thumb = Some(Arc::from(vec![1u8, 2, 3]));
+    })
+}
+
+fn files(id: u64, paths: &[&str], age_ms: i64) -> Arc<ClipItem> {
+    let list: Vec<FileRef> = paths
+        .iter()
+        .map(|p| FileRef {
+            path: (*p).to_string(),
+            size: 10,
+            is_dir: false,
+        })
+        .collect();
+    let names: Vec<&str> = paths
+        .iter()
+        .map(|p| p.rsplit(['/', '\\']).next().unwrap())
+        .collect();
+    with(text(id, &paths.join("\n"), age_ms), |i| {
+        i.kind = ClipKind::Files;
+        i.preview = Arc::from(names.join(", "));
+        i.text_in_ram = None;
+        i.byte_size = 10 * list.len() as u64;
+        i.files = Some(Arc::from(list));
+    })
+}
+
+/// Rank `items` (given newest first, as the store iterates them).
+fn ranked(items: &[Arc<ClipItem>], query: &str, filter: TypeFilter) -> Vec<Ranked> {
+    rank(items.iter(), &SearchRequest::new(query, filter, NOW))
+}
+
+fn ids(r: &[Ranked]) -> Vec<u64> {
+    r.iter().map(|r| r.item().id).collect()
+}
 
 #[test]
 fn blank_queries_have_no_terms() {
@@ -129,4 +211,50 @@ fn type_filter_deserializes_from_the_ui_names() {
         serde_json::from_str::<TypeFilter>("\"all\"").unwrap(),
         TypeFilter::All
     );
+}
+
+// -- empty query ----------------------------------------------------------
+
+#[test]
+fn empty_query_lists_pinned_first_then_most_recent() {
+    // Newest first, as the store iterates.
+    let items = [
+        text(1, "newest", 10),
+        text(2, "second", 20),
+        pinned(text(3, "old pinned", 5 * DAY)),
+        text(4, "third", 30),
+        pinned(text(5, "older pinned", 9 * DAY)),
+    ];
+    assert_eq!(ids(&ranked(&items, "", TypeFilter::All)), [3, 5, 1, 2, 4]);
+    // Whitespace is an empty query too.
+    assert_eq!(
+        ids(&ranked(&items, "  \t", TypeFilter::All)),
+        [3, 5, 1, 2, 4]
+    );
+}
+
+#[test]
+fn empty_query_respects_the_limit_and_filters() {
+    let items = [
+        text(1, "a", 1),
+        image(2, "", 2),
+        text(3, "b", 3),
+        pinned(files(4, &["/x/a.txt"], 4)),
+    ];
+    let mut req = SearchRequest::new("", TypeFilter::All, NOW);
+    req.limit = 2;
+    assert_eq!(ids(&rank(items.iter(), &req)), [4, 1]);
+    assert_eq!(ids(&ranked(&items, "", TypeFilter::Images)), [2]);
+    assert_eq!(ids(&ranked(&items, "img:", TypeFilter::All)), [2]);
+    assert_eq!(ids(&ranked(&items, "file:", TypeFilter::Text)), [4]);
+    req.limit = 0;
+    assert!(rank(items.iter(), &req).is_empty());
+}
+
+#[test]
+fn pinned_items_alone_can_fill_the_limit() {
+    let items: Vec<_> = (1..=10).map(|i| pinned(text(i, "p", i as i64))).collect();
+    let mut req = SearchRequest::new("", TypeFilter::All, NOW);
+    req.limit = 3;
+    assert_eq!(ids(&rank(items.iter(), &req)), [1, 2, 3]);
 }

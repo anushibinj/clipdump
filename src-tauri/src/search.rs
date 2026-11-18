@@ -19,10 +19,11 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
-use crate::model::ClipKind;
+use crate::model::{ClipItem, ClipKind};
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
@@ -162,6 +163,116 @@ pub fn parse_query(raw: &str, ui: TypeFilter) -> ParsedQuery<'_> {
         text: trimmed,
         filter: ui,
     }
+}
+
+/// Most results a search returns unless the caller asks for fewer.
+pub const DEFAULT_LIMIT: usize = 50;
+/// Upper bound on a caller supplied limit. The UI shows about 8 rows and asks
+/// for 50; the cap only stops a bad argument from turning one keystroke into a
+/// scan that builds thousands of DTOs.
+pub const MAX_LIMIT: usize = 200;
+
+/// Everything a search needs besides the items.
+#[derive(Clone, Copy, Debug)]
+pub struct SearchRequest<'a> {
+    /// What the user typed, prefix included.
+    pub query: &'a str,
+    /// The type filter chosen in the UI; a typed prefix overrides it.
+    pub filter: TypeFilter,
+    /// How many results at most (0 gives none, capped at [`MAX_LIMIT`]).
+    pub limit: usize,
+    /// "Now" in unix ms, for the recency boost. Injected so tests can move time;
+    /// the IPC command passes the store clock.
+    pub now_ms: i64,
+}
+
+impl<'a> SearchRequest<'a> {
+    pub fn new(query: &'a str, filter: TypeFilter, now_ms: i64) -> Self {
+        Self {
+            query,
+            filter,
+            limit: DEFAULT_LIMIT,
+            now_ms,
+        }
+    }
+}
+
+/// One selected result: a snapshot of the item (a cheap `Arc` clone, so the store
+/// lock can be released before the DTOs are built) and why it ranked here.
+#[derive(Clone, Debug)]
+pub struct Ranked {
+    item: Arc<ClipItem>,
+    /// Every word of the query occurs as a contiguous substring.
+    exact: bool,
+    /// Fuzzy score plus boosts; 0 for the empty query.
+    score: f64,
+}
+
+impl Ranked {
+    pub fn item(&self) -> &Arc<ClipItem> {
+        &self.item
+    }
+
+    pub fn is_exact(&self) -> bool {
+        self.exact
+    }
+
+    pub fn score(&self) -> f64 {
+        self.score
+    }
+}
+
+/// Pick and order the results. Call it with the store's read guard held (the
+/// iterator borrows the items) and release the guard before rendering.
+///
+/// `items` must be newest first: with equal rank, the earlier item wins, so ties
+/// always put the newer item on top.
+pub fn rank<'a>(
+    items: impl Iterator<Item = &'a Arc<ClipItem>>,
+    req: &SearchRequest<'_>,
+) -> Vec<Ranked> {
+    let limit = req.limit.min(MAX_LIMIT);
+    if limit == 0 {
+        return Vec::new();
+    }
+    let parsed = parse_query(req.query, req.filter);
+    match Query::parse(parsed.text) {
+        None => rank_recent(items, parsed.filter, limit),
+        // Added with the fuzzy ranking in the next commit.
+        Some(_) => Vec::new(),
+    }
+}
+
+/// The empty query: pinned items first, then the rest, each group newest first.
+/// One pass over the items that stops early once the pinned group fills the
+/// limit.
+fn rank_recent<'a>(
+    items: impl Iterator<Item = &'a Arc<ClipItem>>,
+    filter: TypeFilter,
+    limit: usize,
+) -> Vec<Ranked> {
+    let mut pinned: Vec<&Arc<ClipItem>> = Vec::new();
+    let mut recent: Vec<&Arc<ClipItem>> = Vec::with_capacity(limit);
+    for item in items.filter(|i| filter.accepts(i.kind)) {
+        if item.pinned {
+            pinned.push(item);
+            if pinned.len() == limit {
+                break;
+            }
+        } else if recent.len() < limit {
+            recent.push(item);
+        }
+    }
+    pinned
+        .into_iter()
+        .chain(recent)
+        .take(limit)
+        .map(|item| Ranked {
+            item: Arc::clone(item),
+            exact: false,
+            score: 0.0,
+        })
+        .collect()
 }
 
 #[cfg(test)]
