@@ -106,8 +106,20 @@ rustup show        # default host should be x86_64-pc-windows-msvc
    `clipdump/history.db` in the data folder must be moved to `history.corrupt-<ts>.db` and the
    recovery notice must show in the bar (run Vite on port 1420, start openbox, press the hotkey
    with `xdotool key ctrl+shift+space`, screenshot with ImageMagick's `import -window root`).
-7. **Per phase hand-off**: at the end of each phase that has a runtime "Check:" step, list the steps
+7. **Performance tooling (Phase 14)**: `docs/perf.md` has the figures and how each was measured.
+   `cargo build --profile perf` and `cargo test --profile perf ...` use the `perf` Cargo profile
+   (release without LTO, hot crates optimized; far cheaper than the shipping fat LTO profile, which
+   this container cannot afford to build repeatedly). `node scripts/stress.mjs` runs the stress
+   scenarios and the cold start measurement of `src-tauri/src/perf/`; the real app runs under Xvfb
+   and openbox with `--perf` (or `CLIPDUMP_PERF=1`): build it with
+   `cargo build --profile perf --features tauri/custom-protocol --bin clipdump` after `pnpm build`
+   (the feature embeds `dist`, so no Vite server is needed), point `XDG_DATA_HOME` and
+   `XDG_CONFIG_HOME` at temp folders, press the hotkey with `xdotool`, then
+   `clipdump --perf-summary <data folder>/clipdump/perf.log`. Delete `src-tauri/target/perf` and
+   `src-tauri/target/debug/incremental` afterwards: together they are several gigabytes. All of it
+   gives relative Linux figures, never a Windows number.
+8. **Per phase hand-off**: at the end of each phase that has a runtime "Check:" step, list the steps
    that were verified here (compile, unit tests, cross-check) separately from those the user must run
    on Windows. Do not claim a Windows runtime check as passed from this container.
-8. **Commit gate**: before each commit that touches Rust, `cargo check` natively and
+9. **Commit gate**: before each commit that touches Rust, `cargo check` natively and
    `cargo check --target x86_64-pc-windows-gnu` must both pass.

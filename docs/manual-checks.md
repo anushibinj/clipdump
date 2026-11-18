@@ -1070,5 +1070,9 @@ OS flushing its file cache, autostart and WebView2 starting fresh.
       `hotkey_to_painted` is within a few ms of the median of the next twenty. The window is
       created hidden at startup, the page loaded, React mounted, the font loaded, the first
       empty search answered and the first rows' thumbnails fetched before the first press. If the
-      first show is slower, say by how much: WebView2 may suspend a hidden window's rendering, in
-      which case the fix is to show the bar off screen for one frame at startup.
+      first show is slower, say by how much. On Linux (WebKitGTK) the first show of a never shown
+      window took 330 to 375 ms against 20 ms for the rest, which `$env:CLIPDUMP_PREWARM=1` removes
+      by showing the window once, off screen, 1.5 s after start. Run `.\clipdump.exe --perf` with
+      and without it. If the knob helps, also check that nothing steals the keyboard focus from
+      the app you are typing in during the first two seconds after the start (type in Notepad while
+      starting Clipdump); only then should it become the default (`window::prewarm`).
