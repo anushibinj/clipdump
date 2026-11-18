@@ -372,7 +372,7 @@ pub const USE_COUNT_WEIGHT: f64 = 8.0;
 /// page of text almost any short word is a subsequence somewhere, so scattered
 /// matches would be noise, and the optimal fuzzy matcher costs O(word x text)
 /// per item. Bytes, not chars: no counting pass over a long text. Accent folding
-/// ("cafe" finds "caf\u{e9}") is also part of the fuzzy stage, so it too applies
+/// ("cafe" finds a text spelled with an accented e) is also part of the fuzzy stage, so it too applies
 /// only up to this size.
 pub const FUZZY_MAX_BYTES: usize = 256;
 
