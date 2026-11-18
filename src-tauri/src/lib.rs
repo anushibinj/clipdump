@@ -4,6 +4,9 @@ mod autostart;
 mod hash;
 // Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
+// OCR worker and queue (Phase 7). Wired in `start_ingest`.
+#[allow(dead_code)]
+mod ocr;
 // Persistence value types and the in-memory ClipItem.
 #[allow(dead_code)]
 mod model;
