@@ -651,6 +651,7 @@ dependencies = [
  "crossbeam-channel",
  "image",
  "lru",
+ "memchr",
  "nucleo-matcher",
  "parking_lot 0.13.0",
  "rayon",

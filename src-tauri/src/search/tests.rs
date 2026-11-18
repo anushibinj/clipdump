@@ -1,7 +1,7 @@
 //! Search tests. Items are built in memory; nothing here touches disk.
 
 use super::*;
-use crate::model::{FileRef, OcrStatus};
+use crate::model::{FileRef, OcrStatus, fold_for_search};
 
 const DAY: i64 = 86_400_000;
 /// The "now" most tests use.
@@ -19,6 +19,7 @@ fn text(id: u64, body: &str, age_ms: i64) -> Arc<ClipItem> {
         pinned: false,
         preview: Arc::from(body.split_whitespace().collect::<Vec<_>>().join(" ")),
         search_text: Arc::from(body),
+        search_lower: fold_for_search(&Arc::from(body)),
         text_in_ram: Some(Arc::from(body)),
         thumb: None,
         files: None,

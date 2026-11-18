@@ -126,7 +126,7 @@ fn highlight(item: &ClipItem, q: &Query, sc: &mut Scratch) -> (Option<String>, V
     // OCR text, or a match that lies beyond the preview: show a window of the
     // searched text around the first match and highlight inside that window.
     let text: &str = &item.search_text;
-    let Some(pos) = first_match(q, text, sc) else {
+    let Some(pos) = q.first_hit(item).or_else(|| first_match(q, text, sc)) else {
         return (None, Vec::new());
     };
     let snippet = snippet_around(text, pos);

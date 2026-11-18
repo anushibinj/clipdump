@@ -1,18 +1,38 @@
-//! Search engine (Phase 8): fuzzy search over the in-memory history.
+//! Search engine (Phase 8): fast search over the in-memory history.
 //!
-//! Search takes only the store's read lock, scans every item once and never
-//! sends full content to the webview. This file grows over the Phase 8 steps:
-//! the matcher and query plan, filters, ranking, then the result DTOs.
+//! Search takes only the store's read lock (see `Store::search`), scans every
+//! item once, and never sends full content to the webview: results are small
+//! DTOs with a one line preview and, for matches deep inside long text or OCR
+//! text, a short snippet.
+//!
+//! # How an item is matched (cheapest first)
+//!
+//! 1. The query is parsed once with nucleo's `Pattern::parse` (smart case, smart
+//!    Latin normalization, fzf style `'word` `^word` `word$` `!word`).
+//! 2. Each plain word is looked up with a `memchr::memmem` byte search in the
+//!    item's `search_text`, or in its precomputed lowercase twin `search_lower`
+//!    for a lowercase word (smart case). That decides almost every item, has no
+//!    per item allocation and runs at memory speed. A hit is an *exact* match.
+//! 3. A plain word that was not found contiguously gets nucleo's fuzzy match
+//!    (scattered letters, accent folding), but only for texts of at most
+//!    [`FUZZY_MAX_BYTES`] bytes: over a page of text nearly any short word is a
+//!    subsequence somewhere, so those matches are noise as well as slow.
+//! 4. Anchored words (`^word`, `word$`) always go through nucleo.
+//!
+//! Ranking: items whose every word is an exact match form a tier that always
+//! sorts above fuzzy-only items; within a tier the order is the match score plus
+//! a decaying recency boost plus a use count boost, then newest first. The
+//! constants are below, in one place.
 //!
 //! # Speed rules
 //!
 //! * One `nucleo_matcher::Matcher` per thread (`thread_local!`): creating one
 //!   allocates about 135 KB, which would dwarf the search itself.
-//! * The per item loop allocates nothing: the haystack is the item's own
-//!   `search_text` (already capped at 10,000 chars), a `Vec<char>` scratch buffer
-//!   is reused for the rare non ASCII text, and hits are 24 byte structs.
-//! * Smart case and Latin normalization come from nucleo itself
-//!   (`CaseMatching::Smart`, `Normalization::Smart`).
+//! * The per item loop allocates nothing. Hits are 24 byte structs, the
+//!   `Vec<char>` buffer nucleo needs for non ASCII text is reused, and only the
+//!   at most 50 winners get DTOs (highlight indices, snippets, file checks).
+//! * Result DTOs and the file existence check happen after the store lock is
+//!   released.
 
 mod dto;
 mod paths;
@@ -27,6 +47,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use memchr::memmem;
 use serde::Deserialize;
 
 use crate::model::{ClipItem, ClipKind};
@@ -55,15 +76,94 @@ fn with_scratch<R>(f: impl FnOnce(&mut Scratch) -> R) -> R {
     SCRATCH.with(|s| f(&mut s.borrow_mut()))
 }
 
+/// A word that a plain byte search can decide (a fuzzy word, or `'word` and
+/// `!word`). That is nearly every word a person types.
+struct Plain {
+    finder: memmem::Finder<'static>,
+    /// Length of the word in chars: the score scale of a hit.
+    chars: u32,
+    /// Smart case: a word with a capital is searched in the original text,
+    /// every other word in the lowercase twin (`ClipItem::search_lower`).
+    case_sensitive: bool,
+}
+
+impl Plain {
+    /// `None` for the anchored forms (`^word`, `word$`, `^word$`) and their
+    /// negations, which keep using nucleo.
+    fn from_atom(atom: &Atom) -> Option<Self> {
+        match (atom.kind, atom.negative) {
+            (AtomKind::Fuzzy, false) | (AtomKind::Substring, _) => {}
+            _ => return None,
+        }
+        // The needle as nucleo prepared it: already case folded for a lowercase
+        // word, untouched for a word with a capital.
+        let needle: String = match atom.needle_text() {
+            Utf32Str::Ascii(bytes) => bytes.iter().map(|&b| char::from(b)).collect(),
+            Utf32Str::Unicode(chars) => chars.iter().collect(),
+        };
+        if needle.is_empty() {
+            return None;
+        }
+        let case_sensitive = needle.chars().any(char::is_uppercase);
+        let needle = if case_sensitive {
+            needle
+        } else {
+            needle.to_lowercase()
+        };
+        Some(Self {
+            finder: memmem::Finder::new(needle.as_bytes()).into_owned(),
+            chars: needle.chars().count() as u32,
+            case_sensitive,
+        })
+    }
+
+    /// The text this word is searched in.
+    fn haystack<'a>(&self, item: &'a ClipItem) -> &'a str {
+        if self.case_sensitive {
+            &item.search_text
+        } else {
+            &item.search_lower
+        }
+    }
+
+    /// Score of the best of the first few occurrences, `None` if the word is not
+    /// in `hay`. Same idea as nucleo's contiguous score: a base per char plus a
+    /// bonus when the match starts a word (after a space, slash, dot, bracket, or
+    /// at the start of the text), see the constants at the top of the file.
+    fn score(&self, hay: &[u8]) -> Option<u32> {
+        let base = EXACT_CHAR_SCORE * self.chars;
+        let mut best: Option<u32> = None;
+        for pos in self.finder.find_iter(hay).take(MAX_OCCURRENCES) {
+            let bonus = match pos.checked_sub(1).map(|p| hay[p]) {
+                None => EXACT_TEXT_START_BONUS + EXACT_WORD_START_BONUS,
+                Some(prev) if prev < 0x80 && !prev.is_ascii_alphanumeric() => {
+                    EXACT_WORD_START_BONUS
+                }
+                Some(_) => 0,
+            };
+            best = best.max(Some(base + bonus));
+            if bonus >= EXACT_WORD_START_BONUS {
+                break; // a word start is as good as it gets (text start comes first)
+            }
+        }
+        best
+    }
+}
+
 /// One word of the query, ready to match.
 struct Term {
     /// The word as nucleo parsed it (fuzzy, or `'x` `^x` `x$` `!x` syntax).
     atom: Atom,
-    /// For a plain fuzzy word: the same word as a contiguous (substring) match.
-    /// An item that matches this way counts as an exact match and ranks above
-    /// fuzzy-only items.
+    /// For a plain fuzzy word: the same word as a contiguous (substring) match,
+    /// used to highlight one run of letters instead of scattered ones. Its
+    /// presence also means the word may fall back to the fuzzy match.
     exact: Option<Atom>,
+    /// The byte search form, when the word has one.
+    plain: Option<Plain>,
 }
+
+/// Most words of a query that are used; the rest are ignored.
+const MAX_TERMS: usize = 32;
 
 /// A parsed, non empty query.
 struct Query {
@@ -91,6 +191,7 @@ impl Query {
         let terms = pattern
             .atoms
             .into_iter()
+            .take(MAX_TERMS)
             .map(|atom| {
                 let exact = (!atom.negative && atom.kind == AtomKind::Fuzzy).then(|| {
                     let mut twin = atom.clone();
@@ -100,35 +201,75 @@ impl Query {
                 if !atom.negative {
                     positives += 1;
                 }
-                Term { atom, exact }
+                let plain = Plain::from_atom(&atom);
+                Term { atom, exact, plain }
             })
             .collect();
         Some(Self { terms, positives })
     }
 
-    /// Score `hay`: the summed nucleo score of every word and whether all
-    /// positive words matched contiguously. `None` when the item does not match
-    /// (a word is missing, or a `!negated` word is present).
+    /// Score one item: the summed score of every word and whether all positive
+    /// words matched contiguously. `None` when the item does not match (a word is
+    /// missing, or a `!negated` word is present).
     ///
-    /// A plain word is tried as a substring first: that is memchr accelerated, and
-    /// when it hits there is no need for the much costlier fuzzy pass. nucleo
-    /// scores a contiguous placement with the same function, so the two scores
-    /// are comparable.
-    fn score(&self, hay: Utf32Str<'_>, m: &mut Matcher) -> Option<(u32, bool)> {
+    /// Two stages, cheapest first:
+    ///
+    /// 1. Every plain word is looked for with a `memmem` byte search. That is
+    ///    SIMD fast, needs no conversion of the text, and decides almost every
+    ///    item: no hit and a long text means no match; a hit gives the score.
+    /// 2. Only words that need it go through nucleo: a plain word that was not
+    ///    found contiguously in a short text (the scattered letter match, with
+    ///    nucleo's accent folding), and the anchored forms (`^word`, `word$`).
+    fn score(&self, item: &ClipItem, sc: &mut Scratch) -> Option<(u32, bool)> {
         let mut total = 0u32;
         let mut exact = self.positives > 0;
-        for t in &self.terms {
-            if let Some(twin) = &t.exact {
-                if let Some(s) = twin.score(hay, m) {
-                    total += u32::from(s);
-                    continue;
+        // Bit i set: word i still needs nucleo.
+        let mut pending = 0u32;
+        let fuzzy_ok = item.search_text.len() <= FUZZY_MAX_BYTES;
+        for (i, t) in self.terms.iter().enumerate() {
+            let Some(p) = &t.plain else {
+                pending |= 1 << i;
+                continue;
+            };
+            let hit = p.score(p.haystack(item).as_bytes());
+            match (hit, t.atom.negative) {
+                (Some(s), false) => total += s,
+                (Some(_), true) => return None,
+                (None, true) => {}
+                (None, false) if t.exact.is_some() && fuzzy_ok => {
+                    exact = false;
+                    pending |= 1 << i;
                 }
-                exact = false;
+                (None, false) => return None,
             }
-            // `!negated` words score 0 when absent and `None` when present.
-            total += u32::from(t.atom.score(hay, m)?);
+        }
+        if pending != 0 {
+            let Scratch { matcher, chars, .. } = sc;
+            let hay = Utf32Str::new(&item.search_text, chars);
+            for (i, t) in self.terms.iter().enumerate() {
+                if pending & (1 << i) != 0 {
+                    // `!negated` words score 0 when absent and `None` when present.
+                    total += u32::from(t.atom.score(hay, matcher)?);
+                }
+            }
         }
         Some((total, exact))
+    }
+
+    /// Char position of the first occurrence of the first positive word, found
+    /// with the byte search. `None` when that word has no byte search form or is
+    /// not found that way; the caller then asks nucleo.
+    fn first_hit(&self, item: &ClipItem) -> Option<usize> {
+        let t = self.terms.iter().find(|t| !t.atom.negative)?;
+        let p = t.plain.as_ref()?;
+        let hay = p.haystack(item);
+        let byte = p.finder.find(hay.as_bytes())?;
+        // Offsets in the lowercase twin only mean something in the original when
+        // lowercasing kept every length (always true for ASCII).
+        if hay.len() != item.search_text.len() {
+            return None;
+        }
+        Some(item.search_text.get(..byte)?.chars().count())
     }
 }
 
@@ -225,6 +366,28 @@ pub const USE_COUNT_WEIGHT: f64 = 8.0;
 // Exact (contiguous, case insensitive per smart case) matches are not a score
 // bonus: they are a separate tier that always sorts above fuzzy-only matches, see
 // `Hit::cmp_rank`. That guarantees "exact beats fuzzy" whatever the boosts are.
+
+/// Texts longer than this many bytes match only when every word occurs as a
+/// contiguous substring; the scattered letter (fuzzy) match is not tried. Over a
+/// page of text almost any short word is a subsequence somewhere, so scattered
+/// matches would be noise, and the optimal fuzzy matcher costs O(word x text)
+/// per item. Bytes, not chars: no counting pass over a long text. Accent folding
+/// ("cafe" finds "caf\u{e9}") is also part of the fuzzy stage, so it too applies
+/// only up to this size.
+pub const FUZZY_MAX_BYTES: usize = 256;
+
+/// Score of a contiguous (byte search) hit, per char of the word. nucleo awards
+/// 16 points per matched char (`SCORE_MATCH`), so hit scores sit on the same
+/// scale as fuzzy ones.
+pub const EXACT_CHAR_SCORE: u32 = 16;
+/// Bonus when the hit starts a word: after a space, slash, dot or other
+/// punctuation (nucleo's boundary bonus, doubled for the first char).
+pub const EXACT_WORD_START_BONUS: u32 = 16;
+/// Extra bonus when the hit is at the very start of the text.
+pub const EXACT_TEXT_START_BONUS: u32 = 8;
+/// A word is looked for at most this many times per text before the best seen
+/// is taken: bounds the work for a word like "e" in a 10,000 char text.
+const MAX_OCCURRENCES: usize = 8;
 
 /// Everything a search needs besides the items.
 #[derive(Clone, Copy, Debug)]
@@ -354,8 +517,7 @@ fn rank_matches<'a>(
         if text.is_empty() && q.positives > 0 {
             continue;
         }
-        let hay = Utf32Str::new(text, &mut sc.chars);
-        let Some((fuzzy, exact)) = q.score(hay, &mut sc.matcher) else {
+        let Some((fuzzy, exact)) = q.score(item, sc) else {
             continue;
         };
         hits.push(Hit {

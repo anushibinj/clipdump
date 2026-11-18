@@ -42,6 +42,9 @@ rayon = "1.12"
 # character (code point) position. Without it each `char` is one position, which is
 # also a little faster. Case folding and Latin normalization stay on.
 nucleo-matcher = { version = "0.3.1", default-features = false, features = ["unicode-casefold", "unicode-normalization"] }
+# Substring search over the history: the fast path that decides most items before
+# nucleo is asked (see `search.rs`). Already in the tree through nucleo.
+memchr = "2"
 
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

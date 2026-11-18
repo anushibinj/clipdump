@@ -101,6 +101,12 @@ pub struct ClipItem {
     /// What fuzzy search matches: the first 10,000 chars of text, the OCR text
     /// of an image (empty until OCR finishes), or the paths of a file list.
     pub search_text: Arc<str>,
+    /// `search_text` lowercased ([`fold_for_search`]), precomputed so a
+    /// case insensitive substring search is a single `memmem` pass with no
+    /// per-keystroke lowercasing. Shares the allocation with `search_text` when it
+    /// is already lowercase. Always change both together: use
+    /// [`ClipItem::set_search_text`] or build both with [`fold_for_search`].
+    pub search_lower: Arc<str>,
     /// Full text when it is at most 64 KB. Larger texts load on demand.
     pub text_in_ram: Option<Arc<str>>,
     /// WebP thumbnail, 96 px tall at most.
@@ -117,6 +123,31 @@ pub struct ClipItem {
     /// omits it; it is the same as the hex item hash today, but carrying the
     /// stored value means the store never has to assume that.
     pub blob_hash: Option<Arc<str>>,
+}
+
+impl ClipItem {
+    /// Replace the search text and its lowercase twin together.
+    pub fn set_search_text(&mut self, text: Arc<str>) {
+        self.search_lower = fold_for_search(&text);
+        self.search_text = text;
+    }
+}
+
+/// The lowercase form of a search text, for case insensitive substring search.
+/// ASCII text is folded byte by byte (and shared, not copied, when it has no
+/// capital); other text goes through Unicode lowercasing, which can change its
+/// byte length, so offsets into the folded text are not offsets into the
+/// original (search only uses it to find out whether a word occurs).
+pub fn fold_for_search(text: &Arc<str>) -> Arc<str> {
+    if text.is_ascii() {
+        if text.bytes().any(|b| b.is_ascii_uppercase()) {
+            Arc::from(text.to_ascii_lowercase())
+        } else {
+            Arc::clone(text)
+        }
+    } else {
+        Arc::from(text.to_lowercase())
+    }
 }
 
 /// What the app asks the OS clipboard to hold when copying an item back

@@ -56,7 +56,7 @@ use rayon::prelude::*;
 use crate::ingest::changed::HistoryChanged;
 use crate::ingest::text::search_slice;
 use crate::ingest::{IngestedItem, ItemSink, OcrJob, OcrQueue, files};
-use crate::model::{ClipItem, ClipKind, FileRef, OcrStatus};
+use crate::model::{ClipItem, ClipKind, FileRef, OcrStatus, fold_for_search};
 use crate::persist::blobs::hash_hex;
 use crate::persist::crypto::{Crypto, OVERHEAD};
 use crate::persist::db::MetaRow;
@@ -570,7 +570,7 @@ impl Store {
             .map_or_else(|| Arc::from(""), |t| Arc::from(search_slice(t)));
         let mut items = self.items.write();
         let found = items.update(id, |it| {
-            it.search_text = search;
+            it.set_search_text(search);
             it.ocr_status = status;
         });
         if !found {
@@ -690,6 +690,7 @@ fn build_new(id: u64, last_used_at: i64, it: IngestedItem) -> (ClipItem, WriteOp
         use_count: 0,
         pinned: false,
         preview: Arc::from(preview.as_str()),
+        search_lower: fold_for_search(&search),
         search_text: search,
         text_in_ram,
         thumb: thumb.as_deref().map(Arc::from),
@@ -792,6 +793,7 @@ fn item_from_row(persist: &Persist, row: MetaRow) -> Result<ClipItem> {
         use_count: row.use_count,
         pinned: row.pinned,
         preview: Arc::from(preview),
+        search_lower: fold_for_search(&search_text),
         search_text,
         text_in_ram,
         thumb,
