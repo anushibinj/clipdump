@@ -54,6 +54,37 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# `cargo bench` (the Phase 8 search benchmark). The inherited release profile has
+# fat LTO and one codegen unit, which would spend minutes and gigabytes
+# re-optimizing all of Tauri for a benchmark of one module. So LTO is off and the
+# dependencies are built unoptimized, except the ones on the search path (the
+# matcher, memchr which it calls, and the benchmark harness). The code under test
+# (`search.rs`, `model.rs`) is the package itself and stays at opt-level 3.
+# Numbers are therefore close to, but not identical with, the shipped release
+# build: LTO can only make the Windows release a little faster.
+[profile.bench]
+inherits = "release"
+opt-level = 3
+lto = "off"
+codegen-units = 16
+strip = "none"
+
+[profile.bench.package."*"]
+opt-level = 0
+
+[profile.bench.package.nucleo-matcher]
+opt-level = 3
+
+[profile.bench.package.memchr]
+opt-level = 3
+
+[profile.bench.package.criterion]
+opt-level = 3
+
+[[bench]]
+name = "search_bench"
+harness = false
+
 # Desktop-only plugins (the product is a desktop tray app).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
