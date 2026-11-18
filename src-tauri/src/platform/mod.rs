@@ -117,13 +117,11 @@ pub trait ClipboardWatcher {
 }
 
 /// Puts an item on the clipboard (Phase 11 implements it for Windows).
-#[allow(dead_code)] // first caller arrives in Phase 11
 pub trait ClipboardWriter {
     fn set(payload: &Payload) -> anyhow::Result<()>;
 }
 
 /// Pastes into another window (Phase 11 implements it for Windows).
-#[allow(dead_code)] // first caller arrives in Phase 11
 pub trait Paster {
     /// `target` is the raw handle recorded by [`remember_foreground`].
     fn paste_into(target: Option<isize>) -> anyhow::Result<()>;
@@ -135,6 +133,19 @@ pub trait Paster {
 pub type Watcher = windows::watcher::WindowsWatcher;
 #[cfg(not(windows))]
 pub type Watcher = stub::StubWatcher;
+
+/// The clipboard writer of this platform. Windows: a Phase 11 stub that fails
+/// until the Win32 code lands. Elsewhere: fails with "not supported".
+#[cfg(windows)]
+pub type Writer = windows::write::WindowsWriter;
+#[cfg(not(windows))]
+pub type Writer = stub::StubWriter;
+
+/// The auto-paster of this platform (same status as [`Writer`]).
+#[cfg(windows)]
+pub type PasterImpl = windows::paste::WindowsPaster;
+#[cfg(not(windows))]
+pub type PasterImpl = stub::StubPaster;
 
 /// Wraps and unwraps the small secret that protects the history at rest (the
 /// 32-byte data key stored in `key.bin`).

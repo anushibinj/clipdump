@@ -56,7 +56,7 @@ use rayon::prelude::*;
 use crate::ingest::changed::HistoryChanged;
 use crate::ingest::text::search_slice;
 use crate::ingest::{IngestedItem, ItemSink, OcrJob, OcrQueue, files};
-use crate::model::{ClipItem, ClipKind, FileRef, OcrStatus, fold_for_search};
+use crate::model::{ClipItem, ClipKind, FileRef, OcrStatus, Payload, fold_for_search};
 use crate::persist::blobs::hash_hex;
 use crate::persist::crypto::{Crypto, OVERHEAD};
 use crate::persist::db::MetaRow;
@@ -629,6 +629,35 @@ impl Store {
             .with_context(|| format!("item {id} has no image"))?
             .to_owned();
         self.cache.get_or_load(id, || self.persist.read_blob(&name))
+    }
+
+    /// What to put on the clipboard to copy item `id` back (Phase 9 `copy_item`,
+    /// written by Phase 11): the full text, the PNG bytes with the pixel size, or
+    /// the file paths. Loads from the cache or disk like [`Store::get_full_text`]
+    /// and [`Store::get_blob`], so call it off the UI thread.
+    pub fn payload(&self, id: u64) -> Result<Payload> {
+        let item = self.get(id).context("no such item")?;
+        Ok(match item.kind {
+            ClipKind::Text => {
+                let bytes = self.get_full_text(id)?;
+                Payload::Text(
+                    String::from_utf8(bytes.to_vec()).context("stored text is not UTF-8")?,
+                )
+            }
+            ClipKind::Image => Payload::Image {
+                png: self.get_blob(id)?,
+                width: item.width,
+                height: item.height,
+            },
+            ClipKind::Files => Payload::Files(
+                item.files
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|f| std::path::PathBuf::from(&f.path))
+                    .collect(),
+            ),
+        })
     }
 
     /// The persistence handle (shutdown flushes it, tests read through it).

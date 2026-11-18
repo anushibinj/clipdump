@@ -1,11 +1,17 @@
 //! Tests of the command logic. They call the plain functions with a real store
 //! over a temp directory (no Tauri runtime).
 
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicIsize, Ordering};
+
 use super::*;
 use crate::commands::preview::{
     PREVIEW_FILES_MAX, PREVIEW_TEXT_MAX_BYTES, file_name, truncate_utf8,
 };
+use crate::model::Payload;
 use crate::model::{ClipKind, OcrStatus};
+use crate::platform::self_write::SelfWriteGuard;
+use crate::platform::{ClipboardWriter, Paster};
 use crate::search::PathChecker;
 use crate::store::tests::{Fx, fake_files};
 
@@ -283,4 +289,222 @@ fn truncate_utf8_and_file_name_edges() {
     assert_eq!(file_name("C:\\"), "C:");
     assert_eq!(file_name("plain"), "plain");
     assert_eq!(file_name("/"), "/");
+}
+
+// -- copy_item ---------------------------------------------------------------
+
+thread_local! {
+    static WRITTEN: RefCell<Vec<Payload>> = const { RefCell::new(Vec::new()) };
+    static PASTED: RefCell<Vec<Option<isize>>> = const { RefCell::new(Vec::new()) };
+    static FAIL_WRITE: Cell<bool> = const { Cell::new(false) };
+    static FAIL_PASTE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Each test runs on its own thread, so the thread locals are per test.
+struct FakeWriter;
+struct FakePaster;
+
+impl ClipboardWriter for FakeWriter {
+    fn set(payload: &Payload) -> anyhow::Result<()> {
+        if FAIL_WRITE.get() {
+            anyhow::bail!("clipboard is locked");
+        }
+        WRITTEN.with(|w| w.borrow_mut().push(payload.clone()));
+        Ok(())
+    }
+}
+
+impl Paster for FakePaster {
+    fn paste_into(target: Option<isize>) -> anyhow::Result<()> {
+        PASTED.with(|p| p.borrow_mut().push(target));
+        if FAIL_PASTE.get() {
+            anyhow::bail!("no window");
+        }
+        Ok(())
+    }
+}
+
+struct CopyFx {
+    guard: SelfWriteGuard,
+    prev: AtomicIsize,
+}
+
+impl CopyFx {
+    fn new(prev: isize) -> Self {
+        Self {
+            guard: SelfWriteGuard::default(),
+            prev: AtomicIsize::new(prev),
+        }
+    }
+
+    fn copy(
+        &self,
+        fx: &Fx,
+        paths: &dyn PathChecker,
+        id: u64,
+        paste: bool,
+    ) -> (Result<(), String>, bool) {
+        let env = CopyEnv {
+            store: &fx.store,
+            paths,
+            self_write: &self.guard,
+            prev_foreground: &self.prev,
+            now_ms: 1_000,
+        };
+        let hidden = Cell::new(false);
+        let r = copy_item_with::<FakeWriter, FakePaster>(&env, id, paste, || hidden.set(true));
+        (r, hidden.get())
+    }
+}
+
+fn written() -> Vec<Payload> {
+    WRITTEN.with(|w| w.borrow().clone())
+}
+
+fn pasted() -> Vec<Option<isize>> {
+    PASTED.with(|p| p.borrow().clone())
+}
+
+#[test]
+fn copying_text_writes_marks_used_hides_and_notes_the_write() {
+    let fx = Fx::new();
+    let a = fx.text("first");
+    fx.advance(10);
+    let b = fx.text("second");
+    assert_eq!(fx.ids(), vec![b, a]);
+    let cfx = CopyFx::new(77);
+
+    let (r, hidden) = cfx.copy(&fx, &all_exist(), a, false);
+    assert_eq!(r, Ok(()));
+    assert!(hidden);
+    assert_eq!(written(), vec![Payload::Text("first".into())]);
+    assert_eq!(fx.ids(), vec![a, b], "the copied item moved to the top");
+    assert_eq!(fx.store.get(a).unwrap().use_count, 1);
+    // The guard knows the hash, so the watcher treats the echo as a bump.
+    let hash = fx.store.get(a).unwrap().hash;
+    assert_eq!(cfx.guard.text_echo(1_100, hash), Some(hash));
+    // No paste was asked for: the saved window is kept.
+    assert!(pasted().is_empty());
+    assert_eq!(cfx.prev.load(Ordering::Relaxed), 77);
+}
+
+#[test]
+fn copying_an_image_builds_a_png_payload_and_arms_the_image_guard() {
+    let fx = Fx::new();
+    let id = fx.image(3, 2048);
+    fx.flush();
+    let cfx = CopyFx::new(0);
+    let (r, _) = cfx.copy(&fx, &all_exist(), id, false);
+    assert_eq!(r, Ok(()));
+    match &written()[0] {
+        Payload::Image { png, width, height } => {
+            assert_eq!(png.len(), 2048);
+            assert_eq!((*width, *height), (640, 480));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(cfx.guard.image_echo(1_050).is_some());
+}
+
+#[test]
+fn copying_files_skips_missing_paths_and_fails_when_all_are_missing() {
+    let fx = Fx::new();
+    let id = match fx.store.insert(fake_files(1, fx.now())) {
+        crate::store::Inserted::New(id) | crate::store::Inserted::Bumped(id) => id,
+    };
+    let cfx = CopyFx::new(0);
+    let one_gone = Missing(vec!["C:\\docs\\project1\\file1.txt"]);
+    assert_eq!(cfx.copy(&fx, &one_gone, id, false).0, Ok(()));
+    match &written()[0] {
+        Payload::Files(list) => assert_eq!(list.len(), 2),
+        other => panic!("{other:?}"),
+    }
+
+    struct NoneExist;
+    impl PathChecker for NoneExist {
+        fn exists(&self, _: &str) -> bool {
+            false
+        }
+    }
+    let (r, hidden) = cfx.copy(&fx, &NoneExist, id, false);
+    assert_eq!(r, Err("none of the files exist any more".to_owned()));
+    assert!(!hidden, "the bar stays open on an error");
+    assert_eq!(written().len(), 1, "nothing else was written");
+}
+
+#[test]
+fn a_failed_write_changes_nothing() {
+    let fx = Fx::new();
+    let a = fx.text("one");
+    fx.advance(10);
+    let b = fx.text("two");
+    FAIL_WRITE.set(true);
+    let cfx = CopyFx::new(5);
+    let (r, hidden) = cfx.copy(&fx, &all_exist(), a, true);
+    assert_eq!(r, Err("clipboard is locked".to_owned()));
+    assert!(!hidden);
+    assert_eq!(fx.ids(), vec![b, a], "order unchanged");
+    assert_eq!(fx.store.get(a).unwrap().use_count, 0);
+    assert!(pasted().is_empty(), "no paste after a failed copy");
+    assert_eq!(cfx.prev.load(Ordering::Relaxed), 5);
+}
+
+#[test]
+fn paste_takes_the_saved_window_once() {
+    let fx = Fx::new();
+    let id = fx.text("paste me");
+    let cfx = CopyFx::new(1234);
+    assert_eq!(cfx.copy(&fx, &all_exist(), id, true).0, Ok(()));
+    assert_eq!(pasted(), vec![Some(1234)]);
+    assert_eq!(cfx.prev.load(Ordering::Relaxed), 0, "taken");
+    // A second paste has no window to go to.
+    assert_eq!(cfx.copy(&fx, &all_exist(), id, true).0, Ok(()));
+    assert_eq!(pasted(), vec![Some(1234), None]);
+}
+
+#[test]
+fn a_failed_paste_reports_that_the_copy_worked() {
+    let fx = Fx::new();
+    let id = fx.text("x");
+    FAIL_PASTE.set(true);
+    let cfx = CopyFx::new(9);
+    let (r, hidden) = cfx.copy(&fx, &all_exist(), id, true);
+    assert_eq!(
+        r,
+        Err("copied, but auto-paste failed: no window".to_owned())
+    );
+    assert!(hidden);
+    assert_eq!(written().len(), 1);
+}
+
+#[test]
+fn copying_an_unknown_id_is_a_plain_error() {
+    let fx = Fx::new();
+    let cfx = CopyFx::new(0);
+    let (r, hidden) = cfx.copy(&fx, &all_exist(), 404, false);
+    assert_eq!(r, Err("item not found".to_owned()));
+    assert!(!hidden);
+    assert!(written().is_empty());
+}
+
+#[test]
+fn the_platform_writer_is_a_stub_that_fails_until_phase_11() {
+    let fx = Fx::new();
+    let id = fx.text("keep");
+    let cfx = CopyFx::new(0);
+    let env = CopyEnv {
+        store: &fx.store,
+        paths: &all_exist(),
+        self_write: &cfx.guard,
+        prev_foreground: &cfx.prev,
+        now_ms: 0,
+    };
+    let r = copy_item_with::<crate::platform::Writer, crate::platform::PasterImpl>(
+        &env,
+        id,
+        false,
+        || panic!("must not hide"),
+    );
+    assert!(r.is_err());
+    assert_eq!(fx.store.get(id).unwrap().use_count, 0);
 }

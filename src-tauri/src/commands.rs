@@ -21,14 +21,19 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
-use crate::search::{PathChecker, ResultDto, SearchRequest, TypeFilter};
+use crate::platform;
+use crate::platform::self_write::mono_ms;
+use crate::search::{FsPathChecker, PathChecker, ResultDto, SearchRequest, TypeFilter};
 use crate::state::AppState;
 use crate::store::Store;
+use crate::window;
 
+pub mod copy;
 pub mod preview;
 #[cfg(test)]
 mod tests;
 
+pub use copy::{CopyEnv, copy_item_with};
 pub use preview::{PreviewDto, preview_item};
 
 /// The history store, or a plain error when it failed to open at startup (the
@@ -87,4 +92,27 @@ pub fn get_preview(app: AppHandle, id: u64) -> Result<PreviewDto, String> {
     let store = store(&app)?;
     let state = app.state::<AppState>();
     preview_item(&store, state.paths.as_ref(), id)
+}
+
+// ---------------------------------------------------------------------------
+// copy_item
+// ---------------------------------------------------------------------------
+
+/// Copy an item back to the clipboard and hide the bar; with `paste`, also paste
+/// into the window that was focused before the bar opened.
+///
+/// The clipboard write and the paste are Phase 11 stubs for now: this returns
+/// their error and changes nothing.
+#[tauri::command(async)]
+pub fn copy_item(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
+    let store = store(&app)?;
+    let state = app.state::<AppState>();
+    let env = CopyEnv {
+        store: &store,
+        paths: &FsPathChecker,
+        self_write: &state.self_write,
+        prev_foreground: &state.prev_foreground,
+        now_ms: mono_ms(),
+    };
+    copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || window::hide(&app))
 }

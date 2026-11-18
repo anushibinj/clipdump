@@ -74,7 +74,8 @@ pub fn run() {
         // list: each command is a permission the main window must be granted.
         .invoke_handler(tauri::generate_handler![
             commands::search,
-            commands::get_preview
+            commands::get_preview,
+            commands::copy_item
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {

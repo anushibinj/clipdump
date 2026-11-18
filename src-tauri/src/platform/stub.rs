@@ -32,7 +32,6 @@ impl StubWatcher {
 }
 
 /// Fails every write: there is no clipboard to write to.
-#[allow(dead_code)] // first caller arrives in Phase 11
 pub struct StubWriter;
 
 impl ClipboardWriter for StubWriter {
@@ -42,7 +41,6 @@ impl ClipboardWriter for StubWriter {
 }
 
 /// Fails every paste: there is no window to paste into.
-#[allow(dead_code)] // first caller arrives in Phase 11
 pub struct StubPaster;
 
 impl Paster for StubPaster {
