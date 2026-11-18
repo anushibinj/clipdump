@@ -47,6 +47,7 @@ async function startServer() {
   const given = opt("url");
   if (given) return { url: given, stop: async () => {} };
   const port = 1431;
+  let builtDir = null;
   let serveArgs = ["exec", "vite", "--mode", "mock", "--port", String(port), "--strictPort"];
   if (args.includes("--prod")) {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "clipdump-mock-"));
@@ -54,6 +55,7 @@ async function startServer() {
       const b = spawn("pnpm", ["exec", "vite", "build", "--mode", "mock", "--outDir", outDir, "--emptyOutDir"], { cwd: repo, stdio: "ignore" });
       b.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`mock build failed (${c})`))));
     });
+    builtDir = outDir;
     serveArgs = ["exec", "vite", "preview", "--mode", "mock", "--outDir", outDir, "--port", String(port), "--strictPort"];
   }
   const child = spawn("pnpm", serveArgs, {
@@ -79,6 +81,7 @@ async function startServer() {
       } catch {
         // already gone
       }
+      if (builtDir) fs.rmSync(builtDir, { recursive: true, force: true });
     },
   };
 }
