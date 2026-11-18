@@ -309,3 +309,65 @@ Statuses in `items.ocr_status`: 0 pending, 1 done, 2 failed, 3 unavailable.
 - Searching OCR text, the "OCR" badge and the snippet (Phases 8 to 10).
 - The language status and hint in settings (Phase 10).
 - Live on/off switching from a settings screen (Phase 12).
+
+## Phase 8: Search engine
+
+Phase 8 adds the search code (`src-tauri/src/search.rs` and `search/`), the
+`Store::search` entry point and a Criterion benchmark. There is no IPC command or
+UI before Phases 9 and 10, so nothing is visible in `pnpm tauri dev` yet. The
+Linux figures from the development container are relative only; the numbers that
+matter are the ones below on Windows.
+
+### The 1 ms budget (Section 4: search itself in Rust, 1,000 items)
+- [ ] From `src-tauri` in a normal terminal run `cargo bench --bench search_bench`.
+      It uses the `bench` profile from `Cargo.toml` (optimization level 3, no fat
+      LTO, so it builds in about two minutes instead of recompiling all of Tauri
+      with LTO). Read the `search_1000/...` lines. The line that counts is
+      `search_1000/full/<query>` (ranking plus building the result rows); the
+      `rank` lines are the scan alone. Every query must show a median under
+      1 ms. Record the table for `docs/perf.md` (Phase 14). The Linux reference
+      from the container, medians in microseconds for 1,000 items: empty 5,
+      1 char 106, common word 371, rare word 198, two words 423, fuzzy code 360,
+      typo 177, smart case 102, url 162, unicode 120, `img:` 68, no match 83.
+- [ ] Look at `search_10000/...` too. It is not part of the budget (retention caps
+      the history at 1,000 unpinned items) but shows how it scales: expect roughly
+      10 times the 1,000 item numbers.
+- [ ] Repeat once with Windows Defender real time protection on (the benchmark
+      reads no files, so there should be no difference; this just rules it out).
+- [ ] If any `search_1000/full` median is over 1 ms on Windows, the knobs are in
+      `search.rs`: `FUZZY_MAX_BYTES` (lower it to make fewer texts take the
+      scattered letter fuzzy match) and `MAX_OCCURRENCES`. Report the table.
+
+### Missing files check (the existence test of file results)
+The result rows carry `missingFiles`, computed with a real `stat` on the file
+paths of the returned file items only (cached for 2 seconds). It is wired to the
+real file system by Phase 9; until then only unit tests with a fake file system
+cover it. When Phase 10 shows the badge:
+- [ ] Copy two files in Explorer, find them with `file:`, rename one in Explorer,
+      wait 2 seconds, type one more character: the badge appears for the renamed
+      one without restarting.
+- [ ] Copy a file from a USB drive or a network share, then disconnect it: the
+      badge appears, and typing does not freeze. A disconnected network share can
+      make a Windows `stat` block for several seconds; if typing stalls here,
+      note it. The mitigation would be to move the check to a background thread.
+- [ ] Copy a folder tree with several thousand files: search still answers
+      instantly (only the first 128 paths of an item are checked, so the missing
+      count of a huge list is a lower bound).
+
+### Behaviors to confirm once the UI exists (Phase 10)
+- [ ] `Alt+1` to `Alt+4` filters and typed `img:`, `file:`, `txt:` prefixes agree
+      (a typed prefix wins over the toggle).
+- [ ] A word that appears only inside a screenshot (OCR) finds it with a subtitle
+      snippet around the word and the word highlighted in the snippet.
+- [ ] Highlights are right for text with accents, CJK and emoji (they count
+      characters, not bytes).
+- [ ] Text longer than 256 bytes is found by any word it contains, but not by
+      scattered letters or by an unaccented spelling of an accented word (for
+      example `cafe` finds a short note spelled with an accent (cafe with an acute e), not a 5 KB text that only
+      has that word somewhere in it). This is deliberate (see `FUZZY_MAX_BYTES`).
+
+### Not testable here, and when it is
+- Keystroke to results rendered under 16 ms (Section 4) needs the UI and IPC. It
+  is verified in Phase 14 (`--perf` log lines and the stress script), not before.
+- Search is only ever called from the command thread; nothing in Phase 8 runs on
+  the clipboard watcher or ingest threads.
