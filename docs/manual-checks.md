@@ -1076,3 +1076,99 @@ OS flushing its file cache, autostart and WebView2 starting fresh.
       and without it. If the knob helps, also check that nothing steals the keyboard focus from
       the app you are typing in during the first two seconds after the start (type in Notepad while
       starting Clipdump); only then should it become the default (`window::prewarm`).
+
+## Phase 15: packaging (Windows only)
+
+The installer, the uninstaller and the release workflow cannot run in the Linux container. What was
+checked there is listed in `docs/packaging.md` ("What is verified"): the config schema, and a
+`makensis` compile of the real Tauri installer script with the hooks and the custom English strings.
+Nothing below has been run. Use a clean Windows 10 or 11 machine or VM with a normal (non
+administrator) account, and no earlier Clipdump installed. Note the Windows version and whether
+WebView2 was present.
+
+### Build
+- [ ] `pnpm install --frozen-lockfile; pnpm check:version; pnpm tsc --noEmit; pnpm test` pass.
+- [ ] `cd src-tauri; cargo test` passes on Windows (the container only ran it on Linux).
+- [ ] `pnpm tauri build` finishes and prints the path of
+      `src-tauri\target\release\bundle\nsis\clipdump_0.1.0_x64-setup.exe`. No MSI is produced.
+- [ ] Installer size, `(Get-Item <that file>).Length / 1MB`: under 12 MB. Record the number, the
+      WebView2 mode and the date in the "Installer size" row of `docs/perf.md`. If it is over, say by
+      how much; do not change the budget.
+- [ ] The file properties of the installer show the product name, version 0.1.0 and the copyright text.
+
+### Install (per user, no UAC)
+- [ ] Double click the installer from a normal account: **no UAC prompt** (SmartScreen may warn, that
+      is expected for an unsigned file: note what it said). The welcome, install location and finish
+      pages show, in English, with no language dialog.
+- [ ] The install location page proposes `%LOCALAPPDATA%\clipdump`. Install there.
+- [ ] After the install: `%LOCALAPPDATA%\clipdump\clipdump.exe` and `uninstall.exe` exist; the Start
+      menu shows "clipdump" (no sub folder); "Apps and features" lists clipdump 0.1.0 with publisher
+      Clipdump; `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\clipdump` exists.
+- [ ] The finish page has "Run clipdump" and "Create desktop shortcut"; with the first ticked the app
+      starts, the tray icon appears and `Ctrl+Shift+Space` shows the bar.
+- [ ] Silent install (`clipdump_0.1.0_x64-setup.exe /S`) works without any window and without UAC, and
+      the app is installed afterwards. Note that it creates a desktop shortcut unless `/NS` is given.
+- [ ] Running the installer again over an installed copy offers the reinstall page (add or reinstall,
+      uninstall first); choosing reinstall keeps the history.
+- [ ] Installing a second time into a different folder is allowed or refused cleanly (note which).
+
+### WebView2
+- [ ] On a machine that has the runtime (any Windows 11): the installer does not download anything and
+      the WebView2 section is skipped. The app starts.
+- [ ] On a machine or VM without the runtime (Windows 10 VM image, or uninstall "Microsoft Edge
+      WebView2 Runtime" first if the OS allows it): the installer shows "Downloading WebView2
+      bootstrapper...", then "WebView2 installed successfully", with no extra window (silent). Note
+      whether a UAC prompt appears for the runtime (the bootstrapper installs machine wide) and how long
+      the step takes. The app starts afterwards.
+- [ ] With no internet access on such a machine: the installer says the download failed and aborts
+      with the "Failed to install WebView2" message instead of installing an app that cannot start.
+
+### Start at login
+- [ ] After the first launch from the installer: `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v clipdump`
+      shows `"%LOCALAPPDATA%\clipdump\clipdump.exe"` and Task Manager, Startup apps lists clipdump as
+      Enabled.
+- [ ] Sign out and in: the app starts by itself, tray icon present.
+
+### Uninstall, history kept (checkbox unchecked)
+- [ ] Copy a few items, pin one, change a setting (for example the max items), quit the app from the
+      tray. Note that `%LOCALAPPDATA%\clipdump` has `history.db`, `blobs`, `thumbs`, `key.bin` and
+      `%APPDATA%\clipdump\settings.json` exists.
+- [ ] Start the uninstaller from "Apps and features". The confirm page shows one checkbox,
+      **Also delete clipboard history**, **unchecked**. Leave it and uninstall.
+- [ ] Gone: `clipdump.exe`, `uninstall.exe`, the Start menu shortcut, the "Apps and features" entry,
+      `HKCU\...\Run` value `clipdump` and `HKCU\...\Explorer\StartupApproved\Run` value `clipdump`.
+- [ ] Kept: `%LOCALAPPDATA%\clipdump` with `history.db`, `blobs`, `thumbs`, `key.bin`, and
+      `%APPDATA%\clipdump\settings.json`.
+- [ ] Install again (same account): the app starts with the old items and pin, the setting is still
+      changed, and the OCR search of an old screenshot still works.
+- [ ] Uninstalling while the app is running closes it first (no "file in use" error).
+
+### Uninstall, history deleted (checkbox checked)
+- [ ] Start the uninstaller, tick **Also delete clipboard history**, uninstall.
+- [ ] Gone: everything from the previous list, and also `%LOCALAPPDATA%\clipdump` (the whole folder,
+      including `history.db`, `blobs`, `thumbs`, `key.bin`), `%APPDATA%\clipdump`,
+      `%LOCALAPPDATA%\com.clipdump.app`, `%APPDATA%\com.clipdump.app` (if they exist), and
+      `HKCU\Software\Clipdump`.
+- [ ] Install again: the app starts with an empty history and default settings, no recovery notice.
+- [ ] Nothing else in `%LOCALAPPDATA%` or `%APPDATA%` was touched (compare the folder lists before and
+      after).
+
+### Silent and passive uninstall keep the data
+- [ ] With data present: `"%LOCALAPPDATA%\clipdump\uninstall.exe" /S` uninstalls with no window and
+      **keeps** `%LOCALAPPDATA%\clipdump\history.db` and `%APPDATA%\clipdump\settings.json`; the `Run`
+      value is removed.
+- [ ] Same with `/P` (passive: progress only, no confirm page): data kept.
+- [ ] Upgrading by running a newer installer over this one (the reinstall page, "Uninstall before
+      installing") keeps the data and keeps the `Run` value.
+
+### Release workflow (needs the repository on GitHub)
+- [ ] Actions, "build-windows", "Run workflow" on a branch: all steps green, the artifact
+      `clipdump-windows-installer` holds the installer, the run summary shows its size, no release is
+      created.
+- [ ] Push a tag `v0.1.0` (or a `v0.1.0-test` tag on a scratch branch, then delete the tag and the
+      release): the tag check passes, a draft release with the installer is created. A tag that does not
+      match the version (`v0.1.1` while the files say 0.1.0) fails at "Check that the tag is the version"
+      and creates nothing.
+- [ ] Download the artifact from the release and run the install checks above with that exact file.
+- [ ] The installer is unsigned: SmartScreen shows the unknown publisher warning (expected, see
+      "Code signing (future step)" in `docs/packaging.md`).
