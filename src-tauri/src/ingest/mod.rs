@@ -9,6 +9,8 @@
 //! happens on the worker threads, never on the capture thread.
 
 
+pub mod text;
+
 use std::sync::Arc;
 
 use crate::model::{ClipKind, FileRef, OcrStatus};
