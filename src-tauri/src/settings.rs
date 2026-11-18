@@ -35,6 +35,11 @@ pub struct Settings {
     /// Byte budget of the RAM cache for full images and large texts. Default
     /// 64 MiB. 0 turns the cache off (everything loads from disk).
     pub ram_cache_bytes: usize,
+    /// Run OCR on image items (Phase 7). Default true. When off, new images are
+    /// not queued and keep `ocr_status = Pending` (there is no separate
+    /// "skipped" state, so the on-disk codes stay as the plan defines them);
+    /// turning it back on queues every pending image again.
+    pub ocr_enabled: bool,
 }
 
 impl Default for Settings {
@@ -47,6 +52,7 @@ impl Default for Settings {
             max_age_days: 30,
             disk_cap_bytes: 2 * GIB,
             ram_cache_bytes: 64 * MIB,
+            ocr_enabled: true,
         }
     }
 }
@@ -78,6 +84,7 @@ mod tests {
         assert_eq!(s.max_age_days, 30);
         assert_eq!(s.disk_cap_bytes, 2 * 1024 * 1024 * 1024);
         assert_eq!(s.ram_cache_bytes, 64 * 1024 * 1024);
+        assert!(s.ocr_enabled);
     }
 
     #[test]
@@ -113,5 +120,6 @@ mod tests {
         assert_eq!(s.max_text_bytes, 7);
         assert_eq!(s.max_image_bytes, 50 * 1024 * 1024);
         assert_eq!(s.max_items, 1_000, "retention fields default too");
+        assert!(s.ocr_enabled, "ocr_enabled defaults to on");
     }
 }
