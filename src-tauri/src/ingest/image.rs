@@ -923,4 +923,96 @@ pub(crate) mod tests {
         };
         assert!(build(bad, None, 0).is_err());
     }
+
+    /// Timing sanity check for a 4K picture, not a budget check: Linux numbers
+    /// say nothing about the Windows budget (Section 4: clipboard event to item
+    /// visible < 300 ms excluding OCR). Run with
+    /// `cargo test --release ingest::image::tests::timing_4k -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing report, run by hand"]
+    fn timing_4k() {
+        use crate::platform::{ImageData, ImageFormat};
+        use std::time::Instant;
+
+        // Screenshot-like: gradient background, flat panels and bands of noise
+        // standing in for text and photos.
+        let (w, h) = (3840u32, 2160u32);
+        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+        let mut seed = 0x1234_5678u32;
+        for y in 0..h {
+            for x in 0..w {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noisy = (y / 300) % 3 == 1;
+                let n = (seed >> 24) as u8;
+                pixels.extend_from_slice(&if noisy {
+                    [n, n.wrapping_add(40), n.wrapping_add(90), 255]
+                } else if (x / 400 + y / 200) % 2 == 0 {
+                    [240, 240, 245, 255]
+                } else {
+                    [(x / 16) as u8, (y / 9) as u8, 128, 255]
+                });
+            }
+        }
+        let pic = Rgba {
+            width: w,
+            height: h,
+            pixels,
+        };
+        let dib = dibv5_bitfields(&pic, false);
+        let png = png_of(&pic);
+        eprintln!(
+            "4K input: dibv5 {} MB, png {} MB",
+            dib.len() >> 20,
+            png.len() >> 20
+        );
+
+        let t = |label: &str, start: Instant| {
+            eprintln!(
+                "  {label:<22} {:>7.1} ms",
+                start.elapsed().as_secs_f64() * 1e3
+            )
+        };
+        eprintln!("steps from DIBV5:");
+        let s = Instant::now();
+        let img = decode_dib(&dib).unwrap();
+        t("decode dibv5", s);
+        let s = Instant::now();
+        let _ = hash(&img);
+        t("hash rgba", s);
+        let s = Instant::now();
+        let out = encode_png(&img).unwrap();
+        t("encode png (fast)", s);
+        eprintln!("  stored png {} MB", out.len() >> 20);
+        let s = Instant::now();
+        let _ = thumbnail_webp(&img).unwrap();
+        t("thumbnail + webp", s);
+        let s = Instant::now();
+        let item = build(
+            ImageData {
+                format: ImageFormat::Dibv5,
+                bytes: dib,
+            },
+            None,
+            0,
+        )
+        .unwrap();
+        t("build() total, dibv5", s);
+        assert_eq!(item.hash, hash(&img));
+
+        eprintln!("steps from PNG:");
+        let s = Instant::now();
+        let _ = decode_png(&png).unwrap();
+        t("decode png", s);
+        let s = Instant::now();
+        let _ = build(
+            ImageData {
+                format: ImageFormat::Png,
+                bytes: png,
+            },
+            None,
+            0,
+        )
+        .unwrap();
+        t("build() total, png", s);
+    }
 }
