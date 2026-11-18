@@ -8,7 +8,7 @@
 //! Everything that is slow (image decode, PNG and WebP encode, file stat calls)
 //! happens on the worker threads, never on the capture thread.
 
-
+pub mod image;
 pub mod text;
 
 use std::sync::Arc;
