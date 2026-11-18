@@ -187,6 +187,8 @@ export const ResultItem = memo(function ResultItem({
         "group/row mx-1 flex cursor-default items-center gap-3 rounded-lg px-2.5 text-sm transition-colors",
         // Clipboard text is shown literally: no ligatures (Geist turns -> into an arrow).
         "scroll-my-1 [font-variant-ligatures:none] data-[selected=true]:bg-foreground/[0.07] dark:data-[selected=true]:bg-foreground/[0.1]",
+        // Rows below the fold skip layout and paint until scrolled near (about 50 rows are rendered, 8 are seen).
+        "[content-visibility:auto] [contain-intrinsic-size:auto_44px]",
         tall ? "min-h-[52px] py-1.5" : "min-h-10 py-1.5",
       )}
       // A pointer that only sits still while the list scrolls must not steal the selection.
