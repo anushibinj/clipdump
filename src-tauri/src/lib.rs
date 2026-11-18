@@ -1,4 +1,7 @@
 mod autostart;
+// Wired into the app by Phase 6 (store). Until then nothing calls it.
+#[allow(dead_code)]
+mod persist;
 mod platform;
 mod state;
 mod tray;
