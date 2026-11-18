@@ -39,10 +39,10 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 use ::windows::core::{PCWSTR, w};
 use anyhow::{Context, Result, anyhow, bail};
 
-use super::read::{self, CF_UNICODETEXT};
+use super::read::{self, CF_DIBV5, CF_UNICODETEXT};
 use crate::model::Payload;
 use crate::platform::ClipboardWriter;
-use crate::platform::clipfmt::{unicode_text_units, write_units_le};
+use crate::platform::clipfmt::{dibv5_len, fill_dibv5, unicode_text_units, write_units_le};
 
 pub struct WindowsWriter;
 
@@ -78,7 +78,36 @@ fn prepare(payload: &Payload) -> Result<Vec<Prepared>> {
                 mem,
             }])
         }
-        Payload::Image { .. } => bail!("copying images is not implemented yet"),
+        Payload::Image { png, .. } => {
+            // The stored PNG is the lossless original, so the registered `PNG`
+            // format is a plain copy of it (alpha intact). `CF_DIBV5` is what
+            // most Windows apps (Paint, Office, older software) look for; it
+            // needs the pixels, so this is the one place a copy decodes an
+            // image. Decoding and the single conversion pass into global memory
+            // dominate the time of a 4K copy (budget: 150 ms), which is why they
+            // run before the clipboard is opened and why the bytes go straight
+            // into the HGLOBAL with no intermediate buffer.
+            let png_format = registered(&PNG_FORMAT, w!("PNG"))?;
+            let rgba = crate::ingest::image::decode_png(png)
+                .context("could not decode the stored picture")?;
+            let dib_len = dibv5_len(rgba.width, rgba.height)
+                .with_context(|| format!("picture {}x{} is too large", rgba.width, rgba.height))?;
+            let dib = OwnedGlobal::alloc(dib_len)?;
+            dib.fill(|out| fill_dibv5(&rgba.pixels, rgba.width, rgba.height, out))?;
+            drop(rgba); // 4 bytes per pixel: free it before the clipboard is touched
+            let png_mem = OwnedGlobal::from_bytes(png)?;
+            // PNG first (the lossless original), then the DIB that every app knows.
+            Ok(vec![
+                Prepared {
+                    format: png_format,
+                    mem: png_mem,
+                },
+                Prepared {
+                    format: CF_DIBV5,
+                    mem: dib,
+                },
+            ])
+        }
         Payload::Files(_) => bail!("copying files is not implemented yet"),
     }
 }
@@ -133,6 +162,16 @@ impl OwnedGlobal {
         })
     }
 
+    /// A block holding a copy of `bytes`.
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mem = Self::alloc(bytes.len())?;
+        mem.fill(|out| {
+            out.copy_from_slice(bytes);
+            Ok(())
+        })?;
+        Ok(mem)
+    }
+
     /// Run `f` on the `len` bytes of the block. The block is locked only for
     /// the duration of `f`.
     fn fill(&self, f: impl FnOnce(&mut [u8]) -> Result<()>) -> Result<()> {
@@ -182,11 +221,13 @@ impl Drop for OwnedGlobal {
 // Registered formats
 // ---------------------------------------------------------------------------
 
+/// The registered `PNG` format (what browsers, Office and most screenshot tools
+/// put on the clipboard next to the DIB).
+static PNG_FORMAT: AtomicU32 = AtomicU32::new(0);
+
 /// Registered format id, looked up once and cached (the id is constant for the
 /// Windows session; registering again returns the same value, so a race here
 /// is harmless).
-// Used by the image and file writers.
-#[allow(dead_code)]
 fn registered(cache: &AtomicU32, name: PCWSTR) -> Result<u32> {
     let cached = cache.load(Ordering::Relaxed);
     if cached != 0 {
