@@ -6,6 +6,8 @@ mod events;
 // Canonical content hashes (text, image pixels, file lists), used by ingest and
 // the capture self-write guard.
 mod hash;
+// The global hotkey chord: parse, validate, rebind (Phase 12).
+mod hotkey;
 // Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
 // OCR worker and queue (Phase 7). Wired in `start_ingest`; the stats accessors
