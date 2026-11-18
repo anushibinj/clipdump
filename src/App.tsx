@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { onBarHidden, onBarShown } from "@/lib/ipc";
 
 // Phase 2 shell: a blank rounded card that tracks bar visibility. The real
 // search UI arrives in Phase 10.
@@ -9,8 +10,8 @@ function App() {
   useEffect(() => {
     const unlisten: Promise<UnlistenFn>[] = [];
     try {
-      unlisten.push(listen("bar:shown", () => setShown(true)));
-      unlisten.push(listen("bar:hidden", () => setShown(false)));
+      unlisten.push(onBarShown(() => setShown(true)));
+      unlisten.push(onBarHidden(() => setShown(false)));
     } catch {
       // Plain browser (pnpm dev without Tauri): no event bus, stay blank.
     }
