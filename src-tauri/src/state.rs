@@ -15,6 +15,7 @@ use crate::platform::self_write::SelfWriteGuard;
 use crate::search::CachedPathChecker;
 use crate::settings::Settings;
 use crate::settings::saver::SettingsSaver;
+use crate::shutdown::Shutdown;
 
 #[derive(Default)]
 pub struct AppState {
@@ -42,6 +43,8 @@ pub struct AppState {
     /// Raw handle (HWND on Windows, 0 elsewhere) of the window that had focus
     /// before the bar opened. `copy_item` takes it for auto-paste.
     pub prev_foreground: AtomicIsize,
+    /// The once only gate of the graceful shutdown (`shutdown.rs`).
+    pub shutdown: Shutdown,
     /// The physical size last applied to the bar, width in the high 32 bits and
     /// height in the low 32 (0 before the first show). `window.rs` only sets the
     /// size when the target monitor's scale makes it differ.

@@ -206,7 +206,6 @@ impl IngestPool {
 
     /// Wait for the workers to finish. They finish once all senders are
     /// dropped, so drop those first. Used by tests and by shutdown.
-    #[allow(dead_code)] // production shutdown (Phase 13) calls it
     pub fn join(self) {
         for w in self.workers {
             let _ = w.join();

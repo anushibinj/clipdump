@@ -29,6 +29,8 @@ mod scheme;
 pub mod search;
 // Runtime settings and settings.json (Phase 12).
 mod settings;
+// Ordered, idempotent, time bounded shutdown (Phase 13).
+mod shutdown;
 mod state;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
 // commands (Phase 9) are its other callers; until then part of its API is unused.
@@ -120,6 +122,9 @@ pub fn run() {
             if let Ok(d) = app.path().local_data_dir() {
                 let _ = state.data_dir.set(d.join("clipdump"));
             }
+            if let Err(e) = platform::prefer_late_shutdown() {
+                eprintln!("clipdump: shutdown level not set: {e}");
+            }
             load_settings(app);
             #[cfg(desktop)]
             {
@@ -140,13 +145,15 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            // Quit: write a settings change that is still waiting for its debounce.
-            if let tauri::RunEvent::Exit = event
-                && let Some(saver) = app.state::<AppState>().saver.get()
-            {
-                saver.flush();
-            }
+        .run(|app, event| match event {
+            // Not prevented anywhere, so `Exit` always follows. Only a harmless
+            // early flush here; the real shutdown waits for `Exit`.
+            tauri::RunEvent::ExitRequested { .. } => shutdown::flush_early(app),
+            // Tray Quit, `app.exit`, and Windows logoff, shutdown and restart
+            // (tao turns `WM_ENDSESSION` into this event): flush and stop
+            // everything in order (see `shutdown.rs`).
+            tauri::RunEvent::Exit => shutdown::run(app),
+            _ => {}
         });
 }
 
@@ -193,9 +200,10 @@ fn start_capture(app: &tauri::App) {
     }
     let ctx = app.state::<AppState>().capture_context();
     match platform::Watcher::start(ctx, tx) {
-        // Kept in managed state: dropping the watcher shuts its thread down.
+        // Kept in managed state (in a slot the shutdown can empty): dropping the
+        // watcher shuts its thread down.
         Ok(watcher) => {
-            app.manage(watcher);
+            app.manage(shutdown::Slot::new(watcher));
         }
         Err(e) => eprintln!("clipdump: clipboard capture unavailable: {e:#}"),
     }
@@ -239,7 +247,11 @@ fn start_ingest(
         store.len(),
         store.load_time().as_millis()
     );
-    ingest::IngestPool::start(rx, store.clone())?;
+    // Joined by the shutdown, after the watcher is gone, so queued items finish.
+    app.manage(shutdown::Slot::new(ingest::IngestPool::start(
+        rx,
+        store.clone(),
+    )?));
     // OCR runs on its own idle priority thread. On start it re-queues the images
     // whose OCR never finished. Failing to start only turns image search off.
     match ocr::OcrWorker::start(
@@ -262,8 +274,8 @@ fn start_ingest(
         }
         Err(e) => eprintln!("clipdump: retention timer not started: {e}"),
     }
-    // Kept for the life of the app: Phase 8 (search) and Phase 9 (commands) read
-    // it, Phase 13 flushes the database on quit.
+    // Kept for the life of the app: search and the commands read it, and the
+    // shutdown flushes the database through it.
     app.manage(store);
     app.manage(persist);
     Ok(())
