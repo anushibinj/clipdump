@@ -261,6 +261,12 @@ impl Persist {
         }
     }
 
+    /// Writes queued for the writer thread and not yet taken by it. The stress
+    /// run samples it as the ingest backlog; it is a channel length, so free.
+    pub fn backlog(&self) -> usize {
+        self.tx.len()
+    }
+
     /// Snapshot of the writer counters.
     pub fn stats(&self) -> WriterStats {
         WriterStats {

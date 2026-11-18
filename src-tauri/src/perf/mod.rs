@@ -44,6 +44,8 @@
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod procmem;
+#[cfg(test)]
+mod stress;
 pub mod summary;
 
 use std::fs::{self, File, OpenOptions};
