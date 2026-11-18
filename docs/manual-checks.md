@@ -63,3 +63,66 @@ clipboard content. Skips print a short reason, or nothing when paused.
   behavior must be re-checked in Phase 11 by copying an item back and confirming
   that no new history entry appears.
 - Source app name stored with the item (Phase 5).
+
+## Phase 5: Ingest pipeline
+
+Phase 5 replaces the logging placeholder with the real ingest pool. A temporary
+sink (`ingest/sink.rs`, replaced by the store in Phase 6) writes every item to
+the encrypted history database in `%LOCALAPPDATA%\clipdump\`. There is no UI yet,
+so the checks use the terminal log (`pnpm tauri dev`) and the files on disk.
+Each ingested item prints one line, for example
+`clipdump: ingested image 3840x2160, 2113456 bytes png, from mspaint.exe in 140 ms`.
+The log never contains clipboard content.
+
+### End to end capture into the database
+- [ ] Start the app, copy text in Notepad: one `ingested text, N bytes, from notepad.exe in N ms` line.
+- [ ] `%LOCALAPPDATA%\clipdump\history.db` and `history.db-wal` exist after the first copy;
+      open `history.db` in a hex or text viewer and confirm no readable copied text.
+- [ ] Copy the same text again, and the same text from another app: no new item
+      (the row count does not grow; the item is moved to the top). Check by
+      counting rows with a SQLite viewer (`SELECT count(*) FROM items`), the
+      columns are encrypted but the count and `use_count` are readable.
+- [ ] Copy text with multiple lines from Notepad (CRLF) and the same text from
+      VS Code (LF): one item, not two.
+- [ ] Copy a Win+Shift+S screenshot: one `ingested image WxH` line, a new file
+      under `blobs\xx\` and `thumbs\xx\` (both unreadable as images, they are
+      encrypted), and `ocr_status = 0` (pending) in the row.
+- [ ] Copy the same picture from Paint (DIB) and from Chrome "Copy image" (PNG):
+      they dedup to one item (same pixels).
+- [ ] Copy a screenshot that has transparency (a PNG with alpha opened in a
+      browser, "Copy image"): ingested without error.
+- [ ] Copy files and a folder in Explorer: one `ingested files, N paths` line.
+      Copy one image file: its thumbnail file appears under `thumbs\`.
+- [ ] Copy files, then copy the same files in a different selection order:
+      still one item.
+- [ ] Restart the app, copy something that was copied before the restart: it
+      does not create a second row (dedup survives restart).
+- [ ] The source app (`notepad.exe`, `chrome.exe`) shows in the log line and in
+      the `source_app` column.
+
+### Timings (Section 4: clipboard event to item visible < 300 ms excluding OCR)
+- [ ] 4K screenshot (Win+Shift+S on a 4K monitor, full screen): the `in N ms`
+      value of the log line is under 300 ms in a release build
+      (`pnpm tauri build` then run the exe from a terminal). Record the value.
+      The Linux figure from the development container is not a substitute.
+- [ ] Same for a 1080p screenshot and for a 5 MB text.
+- [ ] While a 4K screenshot is being processed, typing in another window and the
+      hotkey stay responsive (workers run at below normal priority).
+- [ ] In Process Explorer or Task Manager details, the `ingest-0` and `ingest-1`
+      threads show priority "Below Normal" (Process Explorer, thread tab).
+
+### Edge cases
+- [ ] A text over 5 MB and an image over 50 MB are still skipped by the watcher.
+- [ ] Copy an image from an app that offers only `CF_DIB` (older tools, for
+      example MS Paint from Windows 7 era) and from an app with a 32 bit
+      `CF_DIBV5` with an alpha channel: the picture is right way up and not
+      transparent or inverted (open the item in the Phase 10 UI when available;
+      until then, compare `width`/`height` in the row with the source picture).
+- [ ] Copy 20 different short texts in a row very quickly: 20 rows, in copy order
+      (`created_at` increasing).
+
+### Not testable yet (arrive with later phases)
+- `history:changed` reaching the UI (Phase 9/10 listens for it); until then it is
+  emitted but nobody receives it.
+- Queued OCR (Phase 7): image rows stay `ocr_status = 0`.
+- Retention, in-memory store, search (Phases 6 and 8).
