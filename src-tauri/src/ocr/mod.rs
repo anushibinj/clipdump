@@ -389,7 +389,7 @@ pub struct OcrConfig {
 /// The OCR thread. Dropping it stops the thread (see the module docs).
 pub struct OcrWorker {
     queue: OcrQueueHandle,
-    join: Option<JoinHandle<()>>,
+    join: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl OcrWorker {
@@ -409,7 +409,7 @@ impl OcrWorker {
             .spawn(move || run(&shared, &store, factory, config))?;
         Ok(Self {
             queue,
-            join: Some(join),
+            join: Mutex::new(Some(join)),
         })
     }
 
@@ -424,12 +424,22 @@ impl OcrWorker {
     }
 }
 
-impl Drop for OcrWorker {
-    fn drop(&mut self) {
+impl OcrWorker {
+    /// Stop the thread: queued jobs are discarded (their items stay `Pending` in
+    /// the database and are queued again at the next start), the job in flight
+    /// is waited for (about a second at most). Idempotent; shutdown calls it
+    /// before the history is flushed, so a late result cannot race the flush.
+    pub fn stop(&self) {
         self.queue.close();
-        if let Some(j) = self.join.take() {
+        if let Some(j) = self.join.lock().take() {
             let _ = j.join();
         }
+    }
+}
+
+impl Drop for OcrWorker {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
