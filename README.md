@@ -1,1 +1,33 @@
-# clipper-plus
+# Clipdump
+
+An ultra-fast clipboard history for Windows: it records text, screenshots and copied files, and
+finds any of them again from the keyboard (`Ctrl+Shift+Space`, type, `Ctrl+Enter`). Text inside
+screenshots is searchable through Windows OCR. Everything stays on the machine, encrypted at rest.
+
+Status: version 0.1.0, not released. The code is tested on Linux and cross-checked against the Windows
+APIs; it has not been run on Windows yet (`docs/manual-checks.md` lists what is left to verify).
+The plan is in `PLAN.md`.
+
+## Install
+
+Download `clipdump_<version>_x64-setup.exe` from the GitHub release. It installs for the current user
+(no administrator prompt) and is not code signed yet, so Windows SmartScreen will warn. The uninstaller
+offers "Also delete clipboard history". Details: `docs/packaging.md`.
+
+## Build
+
+Needs Rust (MSVC toolchain), Node 22 and pnpm, see `docs/environment.md`.
+
+```
+pnpm install
+pnpm tauri dev      # run the app
+pnpm tauri build    # NSIS installer in src-tauri/target/release/bundle/nsis
+pnpm tsc --noEmit && pnpm test
+cd src-tauri && cargo test
+```
+
+## Release
+
+Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, add the
+`CHANGELOG.md` entry, check with `pnpm check:version`, then push a tag `vX.Y.Z`. The
+`build-windows` workflow builds the installer and drafts the release. See `docs/packaging.md`.
