@@ -78,6 +78,10 @@ export function ResultList({
       label="Clipboard history"
       className="h-full rounded-xl bg-transparent"
       onKeyDownCapture={onKeyDownCapture}
+      // A click on anything but the input or the preview text must not move focus away from typing.
+      onMouseDown={(e) => {
+        if (!(e.target as HTMLElement).closest("input, aside")) e.preventDefault();
+      }}
     >
       {header}
       <div className="flex min-h-0 flex-1">

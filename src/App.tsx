@@ -59,6 +59,7 @@ function App() {
   const [historyTick, setHistoryTick] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const confirmTimer = useRef<number | undefined>(undefined);
 
@@ -245,9 +246,11 @@ function App() {
     };
   }, [disarm, loadSettings, loadStats]);
 
-  // Keep the input focused whenever the search view is (back from settings, after a click).
+  // Keep keyboard focus inside the card: the input in the search view, the card itself in
+  // settings (so Esc and Ctrl+, still reach the key handler when no field is focused).
   useEffect(() => {
     if (view === "search") inputRef.current?.focus();
+    else mainRef.current?.focus();
   }, [view]);
 
   const changeTheme = useCallback((pref: ThemePref) => {
@@ -281,8 +284,10 @@ function App() {
       {/* 8 px padding leaves room for the native window shadow and the card shadow. */}
       <div className="h-screen w-screen p-2">
         <main
+          ref={mainRef}
+          tabIndex={-1}
           onKeyDownCapture={view === "settings" ? onKeyDownCapture : undefined}
-          className="h-full w-full overflow-hidden rounded-xl border border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
+          className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
         >
           {view === "settings" ? (
             <div className="flex h-full flex-col">

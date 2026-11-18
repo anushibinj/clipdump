@@ -1,5 +1,4 @@
-import type { Ref } from "react";
-import { memo } from "react";
+import { memo, useEffect, type RefObject } from "react";
 import { Badge } from "@/components/ui/badge";
 import { CommandInput } from "@/components/ui/command";
 
@@ -11,7 +10,7 @@ interface SearchBarProps {
   paused: boolean;
   /** Id of the selected row, for `aria-activedescendant` (rows are not cmdk items, see ResultList). */
   activeDescendant?: string;
-  inputRef: Ref<HTMLInputElement>;
+  inputRef: RefObject<HTMLInputElement | null>;
 }
 
 /**
@@ -27,6 +26,16 @@ export const SearchBar = memo(function SearchBar({
   activeDescendant,
   inputRef,
 }: SearchBarProps) {
+  // cmdk sets `aria-activedescendant` on the input itself from its own item store,
+  // which is empty here (rows are not cmdk items), and that overrides a prop. Set it
+  // on the element so screen readers follow the selected row.
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    if (activeDescendant) input.setAttribute("aria-activedescendant", activeDescendant);
+    else input.removeAttribute("aria-activedescendant");
+  }, [inputRef, activeDescendant]);
+
   return (
     <CommandInput
       ref={inputRef}
@@ -34,7 +43,6 @@ export const SearchBar = memo(function SearchBar({
       onValueChange={onQueryChange}
       placeholder="Search text, screenshots, files..."
       aria-label="Search clipboard history"
-      aria-activedescendant={activeDescendant}
       autoFocus
       wrapperClassName="h-12 gap-2.5 px-4 transition-shadow has-[input:focus-visible]:border-ring has-[input:focus-visible]:shadow-[inset_0_-1px_0_0_var(--ring)]"
       className="h-11 text-[15px]"
