@@ -17,7 +17,7 @@ interface Row extends MockItem {
 
 const NOW = Date.now();
 let rows: Row[] = [];
-let nextId = 1;
+let nextId = 100_001;
 
 function toRow(it: MockItem): Row {
   const searchable = it.kind === "files" ? it.files.map((f) => f.path).join("\n") : it.text;
@@ -26,7 +26,7 @@ function toRow(it: MockItem): Row {
 
 function load(count: number) {
   rows = generateItems(count, NOW).map(toRow);
-  nextId = count + 1;
+  nextId = 100_001;
 }
 
 const DEFAULT_SETTINGS = {

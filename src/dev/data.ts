@@ -170,8 +170,10 @@ function collapse(s: string): string {
   return s.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
+const ID_BASE = 100_000;
+
 /**
- * `count` items, newest first, ids descending from `count`. Mix: about 55%
+ * `count` items, newest first, ids descending from 100,000. Mix: about 55%
  * text (short, multi-line, long), 25% screenshots with OCR text, 20% file
  * lists; a handful are pinned.
  */
@@ -180,7 +182,9 @@ export function generateItems(count: number, now: number = Date.now(), seed = 7)
   const items: MockItem[] = [];
   let createdAt = now - 20_000;
   for (let i = 0; i < count; i += 1) {
-    const id = count - i;
+    // Ids do not depend on `count`, so the dev server (which draws the pictures) and
+    // the page agree on which id is which item however many items the page loads.
+    const id = ID_BASE - i;
     // Gaps grow with age: minutes at first, hours and days further back.
     createdAt -= Math.round((5_000 + rand() * 120_000) * (1 + i / 12));
     const roll = rand();
