@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::model::{ClipKind, OcrStatus};
 
@@ -190,6 +190,98 @@ fn bad_code(col: usize, what: &str) -> rusqlite::Error {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
+/// Insert a new item. The id is chosen by the in-memory store (it must be able
+/// to hand out ids without waiting for the writer thread), so callers get ids
+/// from a counter seeded with [`max_id`]` + 1`.
+///
+/// Fails if the id or the hash already exists: dedup is the store's job, and
+/// a violation should be loud rather than silently dropped.
+pub fn insert_item(conn: &Connection, row: &ItemRow) -> Result<()> {
+    let mut stmt = conn.prepare_cached(
+        "INSERT INTO items (id, hash, kind, created_at, last_used_at, use_count, pinned,
+                            preview_enc, text_enc, ocr_enc, ocr_status, files_enc, blob_hash,
+                            width, height, byte_size, source_app)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+    )?;
+    stmt.execute(params![
+        row.id,
+        &row.hash[..],
+        row.kind.code(),
+        row.created_at,
+        row.last_used_at,
+        row.use_count,
+        row.pinned,
+        row.preview_enc,
+        row.text_enc,
+        row.ocr_enc,
+        row.ocr_status.code(),
+        row.files_enc,
+        row.blob_hash,
+        row.width,
+        row.height,
+        to_i64(row.byte_size),
+        row.source_app,
+    ])?;
+    Ok(())
+}
+
+/// Load every item for the startup index, newest use first. See [`MetaRow`]
+/// for what `small_text_limit` does (it is a limit on *encrypted* bytes).
+pub fn load_all_meta(conn: &Connection, small_text_limit: usize) -> Result<Vec<MetaRow>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, hash, kind, created_at, last_used_at, use_count, pinned, preview_enc,
+                text_enc IS NOT NULL,
+                CASE WHEN length(text_enc) <= ?1 THEN text_enc END,
+                ocr_enc, ocr_status, files_enc, blob_hash, width, height, byte_size, source_app
+         FROM items
+         ORDER BY last_used_at DESC, id DESC",
+    )?;
+    let rows = stmt.query_map([to_i64(small_text_limit as u64)], |r| {
+        Ok(MetaRow {
+            id: r.get(0)?,
+            hash: hash_from(r.get(1)?)?,
+            kind: ClipKind::from_code(r.get(2)?).ok_or_else(|| bad_code(2, "kind"))?,
+            created_at: r.get(3)?,
+            last_used_at: r.get(4)?,
+            use_count: r.get(5)?,
+            pinned: r.get(6)?,
+            preview_enc: r.get(7)?,
+            has_text: r.get(8)?,
+            text_enc: r.get(9)?,
+            ocr_enc: r.get(10)?,
+            ocr_status: OcrStatus::from_code(r.get(11)?)
+                .ok_or_else(|| bad_code(11, "ocr_status"))?,
+            files_enc: r.get(12)?,
+            blob_hash: r.get(13)?,
+            width: r.get(14)?,
+            height: r.get(15)?,
+            byte_size: u64::try_from(r.get::<_, i64>(16)?).unwrap_or(0),
+            source_app: r.get(17)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// The encrypted full text of one item (`None` for a missing item or an item
+/// without text).
+pub fn load_text(conn: &Connection, id: i64) -> Result<Option<Vec<u8>>> {
+    let mut stmt = conn.prepare_cached("SELECT text_enc FROM items WHERE id = ?1")?;
+    let mut rows = stmt.query([id])?;
+    match rows.next()? {
+        Some(row) => Ok(row.get(0)?),
+        None => Ok(None),
+    }
+}
+
+/// Largest id in use, or 0 for an empty table. Seeds the store's id counter.
+pub fn max_id(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM items", [], |r| r.get(0))?)
+}
+
 // QUERIES-MARKER
 
 #[cfg(test)]
@@ -256,11 +348,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reopen_keeps_data_and_does_not_remigrate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DB_FILE);
+        {
+            let conn = open_writer(&path).unwrap();
+            insert_item(&conn, &sample(1)).unwrap();
+        }
+        let conn = open_writer(&path).unwrap();
+        assert_eq!(load_all_meta(&conn, 1 << 20).unwrap().len(), 1);
+        assert_eq!(user_version(&conn), 1);
+    }
+
+    #[test]
     fn upgrade_runs_only_missing_migrations() {
         let dir = tempfile::tempdir().unwrap();
         let mut conn = Connection::open(dir.path().join("t.db")).unwrap();
         migrate_with(&mut conn, &[SCHEMA_V1]).unwrap();
-        conn.execute("INSERT INTO items (hash, kind, created_at, last_used_at, preview_enc, byte_size) VALUES (x'00', 0, 1, 1, x'00', 1)", []).unwrap();
+        insert_item(&conn, &sample(1)).unwrap();
         // A later release adds a column: existing rows survive.
         let v2 = "ALTER TABLE items ADD COLUMN note TEXT;";
         migrate_with(&mut conn, &[SCHEMA_V1, v2]).unwrap();
@@ -290,5 +395,81 @@ pub(crate) mod tests {
         assert!(err.contains("99"), "{err}");
     }
 
+    #[test]
+    fn insert_then_load_round_trips_every_column() {
+        let conn = memory();
+        let mut img = sample(2);
+        img.kind = ClipKind::Image;
+        img.text_enc = None;
+        img.ocr_enc = Some(vec![4, 4]);
+        img.ocr_status = OcrStatus::Done;
+        img.blob_hash = Some("abcdef0123456789abcdef0123456789".into());
+        img.width = Some(1920);
+        img.height = Some(1080);
+        img.byte_size = 5_000_000_000; // above u32
+        img.pinned = true;
+        img.use_count = 7;
+        let mut files = sample(3);
+        files.kind = ClipKind::Files;
+        files.text_enc = None;
+        files.files_enc = Some(vec![5, 5, 5]);
+        insert_item(&conn, &sample(1)).unwrap();
+        insert_item(&conn, &img).unwrap();
+        insert_item(&conn, &files).unwrap();
 
+        let meta = load_all_meta(&conn, 1 << 20).unwrap();
+        assert_eq!(meta.len(), 3);
+        // Newest first (last_used_at DESC).
+        assert_eq!(meta.iter().map(|m| m.id).collect::<Vec<_>>(), vec![3, 2, 1]);
+        let m = meta.iter().find(|m| m.id == 2).unwrap();
+        assert_eq!(m.hash, img.hash);
+        assert_eq!(m.kind, ClipKind::Image);
+        assert_eq!((m.width, m.height), (Some(1920), Some(1080)));
+        assert_eq!(m.byte_size, 5_000_000_000);
+        assert!(m.pinned);
+        assert_eq!(m.use_count, 7);
+        assert_eq!(m.ocr_enc, Some(vec![4, 4]));
+        assert_eq!(m.ocr_status, OcrStatus::Done);
+        assert_eq!(m.blob_hash.as_deref(), Some("abcdef0123456789abcdef0123456789"));
+        assert!(!m.has_text && m.text_enc.is_none());
+        let t = meta.iter().find(|m| m.id == 1).unwrap();
+        assert!(t.has_text);
+        assert_eq!(t.text_enc, Some(vec![9; 40]));
+        assert_eq!(t.source_app.as_deref(), Some("notepad.exe"));
+        let f = meta.iter().find(|m| m.id == 3).unwrap();
+        assert_eq!(f.files_enc, Some(vec![5, 5, 5]));
+        assert_eq!(max_id(&conn).unwrap(), 3);
+    }
+
+    #[test]
+    fn large_text_is_left_out_of_meta_and_loaded_on_demand() {
+        let conn = memory();
+        let mut big = sample(1);
+        big.text_enc = Some(vec![7; 100_000]);
+        insert_item(&conn, &big).unwrap();
+        insert_item(&conn, &sample(2)).unwrap();
+        let meta = load_all_meta(&conn, 65_536).unwrap();
+        let b = meta.iter().find(|m| m.id == 1).unwrap();
+        assert!(b.has_text);
+        assert!(b.text_enc.is_none(), "over the limit, must not be loaded");
+        assert!(meta.iter().find(|m| m.id == 2).unwrap().text_enc.is_some());
+        assert_eq!(load_text(&conn, 1).unwrap(), Some(vec![7; 100_000]));
+        assert_eq!(load_text(&conn, 2).unwrap(), Some(vec![9; 40]));
+        assert_eq!(load_text(&conn, 99).unwrap(), None);
+    }
+
+    #[test]
+    fn duplicate_hash_or_id_is_rejected() {
+        let conn = memory();
+        insert_item(&conn, &sample(1)).unwrap();
+        assert!(insert_item(&conn, &sample(1)).is_err(), "same id");
+        let mut dup_hash = sample(2);
+        dup_hash.hash = sample(1).hash;
+        assert!(insert_item(&conn, &dup_hash).is_err(), "same hash");
+    }
+
+    #[test]
+    fn empty_table_has_max_id_zero() {
+        assert_eq!(max_id(&memory()).unwrap(), 0);
+    }
 }
