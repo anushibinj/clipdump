@@ -1,6 +1,8 @@
 //! System tray: Show, Pause capture, Settings, Quit. Left click toggles the bar.
 //! Built once at startup; menu handling is event driven so idle cost is zero.
 
+use std::sync::Arc;
+
 use tauri::{
     App, AppHandle, Emitter, Manager, Wry,
     image::Image,
@@ -28,35 +30,68 @@ struct TrayMenu(Menu<Wry>);
 
 /// The real tray as the pause indicator's target (`pause.rs` decides what to show):
 /// the "Pause capture" check item, the icon (both images are decoded once at
-/// startup, switching is a handle swap) and the tooltip. Tauri dispatches every
-/// call to the main thread, so any thread may call them.
-struct TrayPause {
+/// startup, switching is a handle swap) and the tooltip.
+///
+/// Tauri runs tray and menu changes on the main thread and, when called from
+/// another thread (the Settings switch comes in on a command thread), waits for it.
+/// Waiting while holding the pause lock could deadlock with a tray click on the
+/// main thread, so `apply` queues one job that does all three changes and returns
+/// at once; jobs run in the order they were queued.
+struct TrayPause(Arc<TrayParts>);
+
+struct TrayParts {
     check: CheckMenuItem<Wry>,
     tray: TrayIcon<Wry>,
     normal: Image<'static>,
     paused: Image<'static>,
 }
 
-impl TrayTarget for TrayPause {
-    fn set_checked(&self, checked: bool) {
-        if let Err(e) = self.check.set_checked(checked) {
+impl TrayParts {
+    fn show(&self, look: TrayLook) {
+        if let Err(e) = self.check.set_checked(look.checked) {
             eprintln!("clipdump: could not update the tray check mark: {e}");
         }
-    }
-
-    fn set_icon(&self, icon: TrayIconKind) {
-        let image = match icon {
+        let image = match look.icon {
             TrayIconKind::Normal => &self.normal,
             TrayIconKind::Paused => &self.paused,
         };
         if let Err(e) = self.tray.set_icon(Some(image.clone())) {
             eprintln!("clipdump: could not update the tray icon: {e}");
         }
+        if let Err(e) = self.tray.set_tooltip(Some(look.tooltip)) {
+            eprintln!("clipdump: could not update the tray tooltip: {e}");
+        }
+    }
+}
+
+impl TrayTarget for TrayPause {
+    fn set_checked(&self, checked: bool) {
+        if let Err(e) = self.0.check.set_checked(checked) {
+            eprintln!("clipdump: could not update the tray check mark: {e}");
+        }
+    }
+
+    fn set_icon(&self, icon: TrayIconKind) {
+        let image = match icon {
+            TrayIconKind::Normal => &self.0.normal,
+            TrayIconKind::Paused => &self.0.paused,
+        };
+        if let Err(e) = self.0.tray.set_icon(Some(image.clone())) {
+            eprintln!("clipdump: could not update the tray icon: {e}");
+        }
     }
 
     fn set_tooltip(&self, tooltip: &str) {
-        if let Err(e) = self.tray.set_tooltip(Some(tooltip)) {
+        if let Err(e) = self.0.tray.set_tooltip(Some(tooltip)) {
             eprintln!("clipdump: could not update the tray tooltip: {e}");
+        }
+    }
+
+    fn apply(&self, look: TrayLook) {
+        let parts = Arc::clone(&self.0);
+        let app = parts.tray.app_handle().clone();
+        if let Err(e) = app.run_on_main_thread(move || parts.show(look)) {
+            eprintln!("clipdump: could not queue the tray update: {e}");
         }
     }
 }
@@ -124,12 +159,12 @@ pub fn build(app: &App) -> tauri::Result<()> {
     // them in step from here on.
     app.state::<AppState>()
         .pause
-        .set_indicator(Box::new(TrayIndicator(TrayPause {
+        .set_indicator(Box::new(TrayIndicator(TrayPause(Arc::new(TrayParts {
             check: pause_item,
             tray,
             normal,
             paused: paused_icon,
-        })));
+        })))));
     Ok(())
 }
 
