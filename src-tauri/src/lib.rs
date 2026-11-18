@@ -248,8 +248,8 @@ fn start_ingest(
         platform::ocr_engine_factory(),
         ocr::OcrConfig::default(),
     ) {
-        // Kept in managed state: dropping it stops the thread. Phase 12 calls
-        // `apply_settings` on it when `ocr_enabled` changes.
+        // Kept in managed state: dropping it stops the thread. `set_settings`
+        // calls `apply_settings` on its queue when `ocr_enabled` changes.
         Ok(worker) => {
             app.manage(worker);
         }

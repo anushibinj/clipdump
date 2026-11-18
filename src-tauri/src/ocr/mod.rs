@@ -307,7 +307,7 @@ impl OcrQueueHandle {
         }
     }
 
-    /// Call after `ocr_enabled` may have changed (Phase 12 calls it when the
+    /// Call after `ocr_enabled` may have changed (`set_settings` calls it when the
     /// settings are saved). Turning OCR off drops the waiting jobs, their items
     /// stay `Pending`; turning it on makes the worker scan the store and queue
     /// every pending image (and the unavailable ones if an OCR language has

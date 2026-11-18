@@ -394,7 +394,7 @@ impl Store {
     }
 
     /// Re-read the settings that have a live effect: the cache budget, and run
-    /// retention once so lowered limits apply immediately (Phase 12 calls this).
+    /// retention once so lowered limits apply immediately (`set_settings` calls this).
     pub fn apply_settings(&self) {
         let budget = self
             .settings

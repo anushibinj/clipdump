@@ -1,7 +1,8 @@
 // Light/dark theme. shadcn's `dark:` variant keys off a `.dark` class on <html>
 // (see `@custom-variant dark` in index.css), so something must toggle it from
 // `prefers-color-scheme`. The user's choice (System, Light, Dark) is a UI
-// preference kept in localStorage; Phase 12 may move it into settings.json.
+// preference kept in localStorage on purpose (it must be known before the first
+// paint, so it does not wait for the backend); it is not part of settings.json.
 
 export type ThemePref = "system" | "light" | "dark";
 

@@ -188,7 +188,7 @@ unchanged.
       ahead, wait up to 15 minutes (or restart), the old unpinned items are
       evicted. Set the date back afterwards.
 - [ ] Disk cap: temporarily put `disk_cap_bytes` to 50 MB in
-      `Settings::default()` (no settings file before Phase 12), copy ten 4K
+      `settings.json` (or the "Disk cap" field in Settings), copy ten 4K
       screenshots (several MB each): the oldest screenshot rows and their
       `blobs\` and `thumbs\` files disappear until the folder is about 50 MB or
       less. SQLite and WAL overhead is not counted, so allow a few MB extra.
@@ -296,17 +296,14 @@ Statuses in `items.ocr_status`: 0 pending, 1 done, 2 failed, 3 unavailable.
       (`get_stats`, Phase 9).
 
 ### The OCR setting
-- [ ] There is no settings screen or `settings.json` before Phase 12, so the
-      switch is `Settings::default().ocr_enabled` in `src-tauri/src/settings.rs`.
-      Set it to `false`, run `pnpm tauri dev`, copy a screenshot: no `ocr: item`
-      line, the row stays `ocr_status = 0`. Set it back to `true` and restart:
-      the pending screenshots are processed. (Changing it live is wired in
-      Phase 12, which calls `OcrWorker::apply_settings`.)
+- [ ] Settings, Capture, "Recognize text in images (OCR)" off, then copy a
+      screenshot: no `ocr: item` line, the row stays `ocr_status = 0`. Switch it
+      back on: the pending screenshots are processed at once (live, through
+      `OcrWorker::apply_settings`). It survives a restart.
 
 ### Not testable yet
 - Searching OCR text, the "OCR" badge and the snippet (Phases 8 to 10).
 - The language status and hint in settings (Phase 10).
-- Live on/off switching from a settings screen (Phase 12).
 
 ## Phase 8: Search engine
 
@@ -437,10 +434,8 @@ images and with `fetch`, and is refused for commands outside the capability.
       `cacheBytes`, and `ocrHint` text.
 - [ ] `set_settings` with `maxItems: 3`, then `search("")`: only three unpinned
       items remain (retention ran at once). `pinnedBar: true` keeps the bar
-      visible when it loses focus. Settings are in memory only until Phase 12, so
-      a restart returns to the defaults.
-- [ ] The tray "Pause capture" check mark does not follow `set_settings({ paused })`
-      yet (the menu item is not wired back); the pause itself works.
+      visible when it loses focus. Since Phase 12 these are saved to
+      `settings.json` (see the Phase 12 section) and survive a restart.
 
 ## Phase 10: UI (shadcn look)
 
@@ -541,20 +536,20 @@ WebView2, so everything below still needs a Windows run.
 - [ ] Settings, Theme: System follows Windows (switch Windows light/dark while
       the bar is open and while it is hidden), Light and Dark force a palette
       and the choice is still there after a restart (stored in the webview's
-      localStorage; Phase 12 may move it into settings.json).
+      localStorage on purpose: it is needed before the first paint, so it is not in
+      settings.json).
 - [ ] Dark mode: selected row, "missing" badge, highlights and Kbd chips have
       enough contrast.
 
 ### Settings
 - [ ] Every control applies at once. Lower "Keep at most" to 3: the list shrinks
       and the count badge updates. "Pause capture" shows the "Paused" badge and
-      stops capture; the tray check mark does not follow yet (known, Phase 12).
+      stops capture; the tray check mark follows it (Phase 12).
 - [ ] Enter a limit below 1 KB for the text or image size: an inline error from
       the backend appears and the field returns to the stored value.
 - [ ] Ignored apps: add `notepad.exe`, copy in Notepad: nothing is captured.
-- [ ] Disabled on purpose, with the note "Saved in a later update": hotkey,
-      Start at login (Paste on Enter works since Phase 11, in memory only). "Open data folder" is disabled with a
-      tooltip (no backend command yet).
+- [ ] No control is disabled any more: hotkey, Start at login and "Open data
+      folder" work since Phase 12 (see that section).
 - [ ] The stats show items, pinned, disk use, RAM cache and the key protector
       (`dpapi`); with no OCR language installed the OCR hint explains how to add one.
 
@@ -654,8 +649,7 @@ restart Clipdump (the cache is empty) and copy a 4K screenshot from the history.
   because they cannot be tested without Windows.
 
 ### Paste on Enter (setting `autoPasteOnEnter`, default off)
-Settings, General, "Paste on Enter". In memory until Phase 12 (a restart turns it
-off again).
+Settings, General, "Paste on Enter". Saved to `settings.json` since Phase 12.
 - [ ] Off: `Enter` and `Ctrl+Enter` only copy and hide the bar.
 - [ ] On: open Notepad, press the hotkey, search, select an item, press `Enter`:
       the bar hides and the item appears in Notepad without touching `Ctrl+V`.
@@ -711,3 +705,97 @@ elevated window, for example an admin PowerShell or Task Manager.
   gives plain text in the destination style.
 - Delayed rendering and the owner window's `WM_RENDERFORMAT` handling are not
   implemented (eager rendering only).
+
+## Phase 12: settings persistence (Windows only)
+
+Everything below needs Windows. Container checks (unit tests, the Xvfb run of
+the real app on Linux, the mock UI) are listed in the Phase 12 hand-off, not here.
+
+### settings.json
+- [ ] First launch creates `%APPDATA%\clipdump\settings.json` (type
+      `%APPDATA%\clipdump` in Explorer's address bar). It is readable, pretty
+      printed JSON with `version`, `hotkey`, `start_at_login`, `pinned_bar`,
+      `max_items` and the other settings, and no `paused` and no theme. It is NOT
+      encrypted (history stays in `%LOCALAPPDATA%\clipdump`).
+- [ ] Change "Keep at most" in Settings, wait one second, open the file: the new
+      value is there. Change five settings quickly: the file ends with all five
+      (the writes are coalesced, nothing is written on the click itself).
+- [ ] Quit from the tray right after changing a setting: the change is in the file.
+- [ ] Restart the app: every setting is as left (hotkey, pinned bar, limits,
+      ignore list, Paste on Enter, OCR). Capture is NOT paused after a restart,
+      by design.
+- [ ] Edit the file by hand: delete `max_items`, put `"max_age_days": "soon"`,
+      add `"foo": 1`, save, restart. The app starts, the missing field has its
+      default, the bad one falls back to 30, the unknown one is ignored.
+- [ ] Break the file (delete the last brace), restart. The app starts with the
+      defaults, the broken file is renamed to `settings.corrupt-<number>.json`
+      next to a fresh `settings.json`.
+- [ ] A file saved by Notepad with a byte order mark loads normally.
+
+### Hotkey
+- [ ] Settings, General, Hotkey, Change: the row shows "Press the new shortcut";
+      hold Ctrl and Alt: the key caps show them live; press K: the row shows
+      Ctrl Alt K, the file has `"hotkey": "Ctrl+Alt+K"`. The new chord toggles the
+      bar, the old one (Ctrl+Shift+Space) does nothing.
+- [ ] Esc while recording cancels and does NOT close the settings view.
+- [ ] A key alone (for example Space) or Shift plus a letter shows "Use Ctrl, Alt
+      or Win together with another key." under the row and changes nothing.
+- [ ] A chord Windows reserves, for example Win+L (or Win+D, Ctrl+Alt+Delete,
+      which Windows never gives to apps): the row shows "That shortcut is taken
+      by another app or reserved by Windows. Choose a different one." and the old
+      hotkey still works. `settings.json` still has the old chord.
+- [ ] A chord another app owns (start an app that registers, for example,
+      Ctrl+Alt+M, such as AutoHotkey with `^!m::MsgBox hi`): same message.
+- [ ] Put a chord another app owns into `settings.json` by hand and start the
+      app: it starts, the tray works, Settings shows the message under the
+      hotkey row. Close the other app and change any setting: the message goes
+      away and the hotkey works.
+
+### Retention on change
+- [ ] With more than 20 unpinned items and two pinned ones, set "Keep at most"
+      to 10: the list shrinks to 10 unpinned plus the pinned ones at once, the
+      count badge follows, the evicted items' files disappear from
+      `%LOCALAPPDATA%\clipdump\blobs`. Set it to 0 (no limit): nothing more is
+      evicted.
+- [ ] "Keep for at most" 1 day with older items: they go at once, pinned stay.
+
+### Start at login
+- [ ] A first launch (no `settings.json`, installed build) adds Clipdump to
+      Task Manager, Startup apps as Enabled, and to
+      `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+- [ ] Switch "Start at login" off: the Run value is gone and Task Manager no
+      longer lists it. Switch it on: it is back.
+- [ ] Disable it in Task Manager's Startup tab, restart the app: the Settings
+      switch now shows off and the app did not re-enable it.
+- [ ] A dev build (`pnpm tauri dev`) never touches the Run key unless started
+      with `CLIPDUMP_AUTOSTART=1`.
+
+### Pinned bar
+- [ ] Switch on "Pinned bar": the bar stays when you click another window and
+      stays on top of it. Restart with it on: the bar is shown at startup without
+      taking the keyboard focus.
+- [ ] The hotkey focuses the bar instead of hiding it (input focused, text
+      selected). Esc hides it (the hotkey shows it again).
+- [ ] Ctrl+Enter copies and the bar stays visible. After a plain copy the bar
+      still has the keyboard focus, so click the target window before Ctrl+V
+      (known limitation, documented). With "Paste on Enter" on, Enter copies, the
+      focus returns to the window the hotkey was pressed over and the text pastes
+      there; the bar stays.
+- [ ] Over a fullscreen game or video: the bar is always on top of normal
+      windows; note whether it shows over exclusive fullscreen (Windows does not
+      allow that for any ordinary window).
+- [ ] Switch it off: clicking elsewhere hides the bar again.
+
+### Pause capture and the tray
+- [ ] Settings, Pause capture on: the tray menu's "Pause capture" shows a check
+      mark; copy something: nothing is captured. Off: the check goes away.
+- [ ] Tray, Pause capture: the Settings switch (open it, also while the bar is
+      pinned and already showing settings) and the "Paused" badge follow.
+- [ ] Pause, restart the app: capture is running again and neither the tray
+      check nor the switch is set.
+
+### Open data folder
+- [ ] Settings, Data, Open: Explorer opens `%LOCALAPPDATA%\clipdump` with
+      `history.db`, `blobs`, `thumbs` and `key.bin`. Click it twice: two windows
+      or one reused, no error. Delete the folder first (app closed), start the
+      app and click Open: the folder is created and opens.
