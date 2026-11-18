@@ -196,6 +196,10 @@ struct State {
     closed: bool,
     /// Scan the store for pending (and now possible) items.
     rescan: bool,
+    /// The worker is inside a scan right now. `rescan` is cleared when the scan
+    /// starts, so without this `is_idle` reported idle mid-scan, before the
+    /// scan had queued anything.
+    scanning: bool,
 }
 
 struct Shared {
@@ -234,6 +238,7 @@ impl Shared {
             }
             if st.rescan {
                 st.rescan = false;
+                st.scanning = true;
                 return Step::Rescan;
             }
             if let Some(job) = st.queue.pop_front() {
@@ -336,7 +341,7 @@ impl OcrQueueHandle {
     /// Nothing queued, nothing running, no scan requested.
     pub fn is_idle(&self) -> bool {
         let st = self.shared.state.lock();
-        st.queue.is_empty() && st.in_flight.is_none() && !st.rescan
+        st.queue.is_empty() && st.in_flight.is_none() && !st.rescan && !st.scanning
     }
 
     /// Whether an OCR language is installed, as far as the worker has seen.
@@ -445,6 +450,7 @@ fn run(shared: &Arc<Shared>, store: &Weak<Store>, factory: EngineFactory, cfg: O
             Step::Rescan => {
                 let Some(store) = store.upgrade() else { break };
                 rescan(shared, &store, &*engine);
+                shared.state.lock().scanning = false;
             }
             Step::Job(job) => {
                 let Some(store) = store.upgrade() else { break };
