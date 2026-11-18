@@ -199,12 +199,10 @@ mod tests {
         let mut timer: Option<Instant> = None;
         for step in 0..=57u64 {
             let now = ms(t0, step * 7);
-            if let Some(t) = timer {
-                if now >= t {
-                    assert!(d.on_timer(t));
-                    emits.push(t);
-                    timer = None;
-                }
+            if let Some(t) = timer.filter(|&t| now >= t) {
+                assert!(d.on_timer(t));
+                emits.push(t);
+                timer = None;
             }
             match d.on_change(now) {
                 Decision::EmitNow => emits.push(now),

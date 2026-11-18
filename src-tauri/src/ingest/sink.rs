@@ -272,7 +272,9 @@ mod tests {
 
         // "Restart": a new sink over the same database still dedups and does
         // not reuse ids. Also exercises Bump.
-        let known_hash = files::build(&[file.clone()], None, 0).unwrap().hash;
+        let known_hash = files::build(std::slice::from_ref(&file), None, 0)
+            .unwrap()
+            .hash;
         run(
             &persist,
             &ocr,

@@ -483,7 +483,7 @@ pub(crate) mod tests {
     }
 
     /// Rows in file order: bottom up unless `top_down`.
-    fn rows<'a>(pic: &'a Rgba, top_down: bool) -> Vec<&'a [u8]> {
+    fn rows(pic: &Rgba, top_down: bool) -> Vec<&[u8]> {
         let stride = pic.width as usize * 4;
         let mut r: Vec<&[u8]> = pic.pixels.chunks_exact(stride).collect();
         if !top_down {
@@ -834,7 +834,7 @@ pub(crate) mod tests {
             (30_000, 700),
         ] {
             let (tw, th) = thumb_size(w, h);
-            assert!(th <= THUMB_MAX_HEIGHT && tw <= THUMB_MAX_WIDTH && tw >= 1 && th >= 1);
+            assert!((1..=THUMB_MAX_HEIGHT).contains(&th) && (1..=THUMB_MAX_WIDTH).contains(&tw));
             let want = f64::from(w) / f64::from(h);
             let got = f64::from(tw) / f64::from(th);
             // Within one pixel of rounding on the small side.
