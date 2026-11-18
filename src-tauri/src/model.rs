@@ -35,8 +35,10 @@ impl ClipKind {
     }
 }
 
-/// Progress of OCR for an image item. Stored in `items.ocr_status`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Progress of OCR for an image item. Stored in `items.ocr_status`. Serialized
+/// to the webview as `"pending"`, `"done"`, `"failed"` or `"unavailable"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum OcrStatus {
     Pending = 0,

@@ -1,4 +1,6 @@
 mod autostart;
+// The IPC commands the webview calls (Phase 9).
+mod commands;
 // Event names shared with the frontend (`src/lib/ipc.ts`).
 mod events;
 // Canonical content hashes (text, image pixels, file lists), used by ingest and
@@ -68,6 +70,9 @@ pub fn run() {
     ));
 
     builder
+        // Keep `build.rs` (COMMANDS) and capabilities/default.json in step with this
+        // list: each command is a permission the main window must be granted.
+        .invoke_handler(tauri::generate_handler![commands::search])
         .manage(AppState::default())
         .on_window_event(|win, event| {
             if win.label() != window::LABEL {

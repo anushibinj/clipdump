@@ -65,6 +65,12 @@ pub struct CachedPathChecker {
     entries: Mutex<HashMap<String, (Instant, bool)>>,
 }
 
+impl Default for CachedPathChecker {
+    fn default() -> Self {
+        Self::for_fs()
+    }
+}
+
 impl CachedPathChecker {
     /// The app's checker: the real file system, [`MISSING_TTL`], wall clock.
     pub fn for_fs() -> Self {

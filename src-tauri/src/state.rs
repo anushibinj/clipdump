@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::platform::CaptureContext;
 use crate::platform::self_write::SelfWriteGuard;
+use crate::search::CachedPathChecker;
 use crate::settings::Settings;
 
 #[derive(Default)]
@@ -27,6 +28,9 @@ pub struct AppState {
     /// Raw handle (HWND on Windows, 0 elsewhere) of the window that had focus
     /// before the bar opened. Used by auto-paste in Phase 11.
     pub prev_foreground: AtomicIsize,
+    /// File existence checks for search rows and previews, cached for 2 seconds
+    /// so typing never repeats a `stat` (see `search::paths`).
+    pub paths: Arc<CachedPathChecker>,
 }
 
 /// Is pinned-bar mode on? Relaxed is enough: it is an independent flag.

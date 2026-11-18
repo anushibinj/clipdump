@@ -42,7 +42,7 @@
 pub mod cache;
 pub mod retention;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -401,6 +401,12 @@ impl Store {
 
     fn now(&self) -> i64 {
         (self.clock)()
+    }
+
+    /// "Now" in unix ms from the store's clock (the search recency boost uses
+    /// it, so tests that move the clock move the ranking with it).
+    pub fn now_ms(&self) -> i64 {
+        self.now()
     }
 
     /// Queue a persist op. A failure (only after shutdown) is logged, never
