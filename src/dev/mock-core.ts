@@ -48,6 +48,8 @@ const control = {
   calls: [] as { cmd: string; args: unknown }[],
   /** Simulated IPC round trip per call, in ms (0 = resolve on the next microtask). */
   latencyMs: 0,
+  /** Extra delay per exact query string for `search`, to force out of order responses in tests. */
+  delayByQuery: {} as Record<string, number>,
   /** `copy_item` rejects with this message when set (the real one rejects on Windows until Phase 11). */
   copyError: null as string | null,
   /** `get_stats` reports an OCR engine without a language. */
@@ -267,8 +269,10 @@ export function invoke<T>(cmd: string, args: Record<string, unknown> = {}): Prom
       return Promise.reject(e);
     }
   };
-  if (control.latencyMs > 0) {
-    return new Promise<T>((resolve, reject) => setTimeout(() => go().then(resolve, reject), control.latencyMs));
+  const delay =
+    cmd === "search" ? (control.delayByQuery[String(args.query ?? "")] ?? control.latencyMs) : control.latencyMs;
+  if (delay > 0) {
+    return new Promise<T>((resolve, reject) => setTimeout(() => go().then(resolve, reject), delay));
   }
   return go();
 }
@@ -297,6 +301,7 @@ const hooks = {
     settings = { ...DEFAULT_SETTINGS };
     control.calls.length = 0;
     control.latencyMs = 0;
+    control.delayByQuery = {};
     control.copyError = null;
     control.ocrUnavailable = false;
     load(200);
