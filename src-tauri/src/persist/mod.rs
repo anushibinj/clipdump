@@ -9,5 +9,6 @@
 //! key.bin               32 byte data key, protected by the platform keystore
 //! ```
 
+pub mod blobs;
 pub mod crypto;
 pub mod db;
