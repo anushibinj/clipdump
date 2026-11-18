@@ -40,6 +40,10 @@ pub struct Settings {
     /// "skipped" state, so the on-disk codes stay as the plan defines them);
     /// turning it back on queues every pending image again.
     pub ocr_enabled: bool,
+    /// Plain `Enter` in the bar copies AND pastes into the window that was
+    /// focused before the bar opened (Phase 11). `Ctrl+Enter` and `Ctrl+1..9`
+    /// only ever copy. Default false.
+    pub auto_paste_on_enter: bool,
 }
 
 impl Default for Settings {
@@ -53,6 +57,7 @@ impl Default for Settings {
             disk_cap_bytes: 2 * GIB,
             ram_cache_bytes: 64 * MIB,
             ocr_enabled: true,
+            auto_paste_on_enter: false,
         }
     }
 }
@@ -85,6 +90,7 @@ mod tests {
         assert_eq!(s.disk_cap_bytes, 2 * 1024 * 1024 * 1024);
         assert_eq!(s.ram_cache_bytes, 64 * 1024 * 1024);
         assert!(s.ocr_enabled);
+        assert!(!s.auto_paste_on_enter, "auto paste is opt in");
     }
 
     #[test]
@@ -121,5 +127,9 @@ mod tests {
         assert_eq!(s.max_image_bytes, 50 * 1024 * 1024);
         assert_eq!(s.max_items, 1_000, "retention fields default too");
         assert!(s.ocr_enabled, "ocr_enabled defaults to on");
+        assert!(
+            !s.auto_paste_on_enter,
+            "auto_paste_on_enter defaults to off"
+        );
     }
 }

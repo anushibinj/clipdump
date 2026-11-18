@@ -810,6 +810,7 @@ fn get_settings_returns_the_defaults_with_the_runtime_flags() {
     assert_eq!(dto.max_items, 1_000);
     assert_eq!(dto.max_age_days, 30);
     assert!(dto.ocr_enabled);
+    assert!(!dto.auto_paste_on_enter, "auto paste is off by default");
     assert!(!dto.pinned_bar && !dto.paused);
     let v = serde_json::to_value(&dto).unwrap();
     for key in [
@@ -821,6 +822,7 @@ fn get_settings_returns_the_defaults_with_the_runtime_flags() {
         "diskCapBytes",
         "ramCacheBytes",
         "ocrEnabled",
+        "autoPasteOnEnter",
         "pinnedBar",
         "paused",
     ] {
@@ -880,6 +882,32 @@ fn set_settings_shrinks_the_ram_cache_and_stops_ocr() {
     env.apply(dto).unwrap();
     assert_eq!(sfx.fx.store.cache_bytes(), 0, "budget 0 empties the cache");
     assert_eq!(sfx.ocr.backlog(), 0, "waiting OCR jobs are dropped");
+}
+
+#[test]
+fn auto_paste_on_enter_applies_and_is_what_get_settings_returns() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    assert!(!dto.auto_paste_on_enter);
+    dto.auto_paste_on_enter = true;
+    let stored = env.apply(dto).unwrap();
+    assert!(stored.auto_paste_on_enter);
+    assert!(env.current().auto_paste_on_enter);
+    assert!(
+        sfx.fx.settings.read().unwrap().auto_paste_on_enter,
+        "the shared Settings carries it"
+    );
+    // The webview sends the whole object: a change to another field keeps it.
+    let mut other = env.current();
+    other.max_items = 500;
+    assert!(env.apply(other).unwrap().auto_paste_on_enter);
+    // And it switches off again.
+    let mut off = env.current();
+    off.auto_paste_on_enter = false;
+    assert!(!env.apply(off).unwrap().auto_paste_on_enter);
+    let json = serde_json::to_value(env.current()).unwrap();
+    assert_eq!(json["autoPasteOnEnter"], false);
 }
 
 #[test]

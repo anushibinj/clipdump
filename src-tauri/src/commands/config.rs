@@ -38,6 +38,8 @@ pub struct SettingsDto {
     /// 0 turns the cache off.
     pub ram_cache_bytes: usize,
     pub ocr_enabled: bool,
+    /// Enter copies and pastes into the window the bar came from.
+    pub auto_paste_on_enter: bool,
     /// Keep the bar visible and do not hide it on blur.
     pub pinned_bar: bool,
     /// Capture paused (the tray toggle sets the same flag).
@@ -55,6 +57,7 @@ impl SettingsDto {
             disk_cap_bytes: s.disk_cap_bytes,
             ram_cache_bytes: s.ram_cache_bytes,
             ocr_enabled: s.ocr_enabled,
+            auto_paste_on_enter: s.auto_paste_on_enter,
             pinned_bar,
             paused,
         }
@@ -127,6 +130,7 @@ impl SettingsEnv<'_> {
             s.disk_cap_bytes = dto.disk_cap_bytes;
             s.ram_cache_bytes = dto.ram_cache_bytes;
             s.ocr_enabled = dto.ocr_enabled;
+            s.auto_paste_on_enter = dto.auto_paste_on_enter;
         }
         self.pinned_bar.store(dto.pinned_bar, Ordering::Relaxed);
         self.paused.store(dto.paused, Ordering::Relaxed);
