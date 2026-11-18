@@ -95,7 +95,9 @@ tauri-plugin-autostart = "2"
 # Windows only: foreground tracking (Phase 2), DPAPI key protection (Phase 3),
 # clipboard listener and reader (Phase 4), OCR (Phase 7: Media_Ocr, a
 # SoftwareBitmap from Graphics_Imaging filled through a DataWriter from
-# Storage_Streams, and the WinRT apartment from Win32_System_WinRT).
+# Storage_Streams, and the WinRT apartment from Win32_System_WinRT), clipboard
+# writer and auto-paste (Phase 11: Win32_UI_Input_KeyboardAndMouse for SendInput
+# and GetAsyncKeyState).
 windows = { version = "0.62", features = [
     "Foundation",
     "Foundation_Collections",
@@ -110,6 +112,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Memory",
     "Win32_System_Threading",
     "Win32_System_WinRT",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

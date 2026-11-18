@@ -276,6 +276,11 @@ pub fn own_window_handle(app: &AppHandle) -> Option<isize> {
 /// Store the foreground window in `AppState` unless it is the bar itself.
 pub fn remember_foreground(app: &AppHandle, w: &WebviewWindow) {
     let Some(fg) = foreground_window() else {
+        // Nothing has the focus: forget the old target, a stale handle must
+        // never receive a Ctrl+V.
+        app.state::<AppState>()
+            .prev_foreground
+            .store(0, Ordering::Relaxed);
         return;
     };
     if Some(fg) == own_handle(w) {
