@@ -787,4 +787,108 @@ pub(crate) mod tests {
         }
         assert!(!p.load_all_meta(0).unwrap().is_empty());
     }
+
+    /// Every file under `dir`, with its raw bytes.
+    fn all_files(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(d).unwrap().flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let bytes = fs::read(&path).unwrap();
+                    out.push((path, bytes));
+                }
+            }
+        }
+        out
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn nothing_on_disk_contains_plaintext() {
+        const MARKER: &str = "ZXQ_PLAINTEXT_MARKER_9f3a7c";
+        let dir = tempfile::tempdir().unwrap();
+
+        // Positive control: the scan below really finds plaintext when it is there.
+        let control = tempfile::tempdir().unwrap();
+        let conn = Connection::open(control.path().join("control.db")).unwrap();
+        conn.execute_batch("CREATE TABLE t(x TEXT)").unwrap();
+        conn.execute("INSERT INTO t VALUES (?1)", [MARKER]).unwrap();
+        drop(conn);
+        assert!(
+            all_files(control.path()).iter().any(|(_, b)| contains(b, MARKER.as_bytes())),
+            "control must be detectable"
+        );
+
+        let p = open(dir.path());
+        // Text with the marker in preview and body, a large text, an image whose
+        // OCR text, blob and thumbnail all carry the marker, and a file list.
+        let mut text = text_item(1, &format!("body {MARKER} body"));
+        text.preview = format!("preview {MARKER}");
+        let mut big = text_item(2, &MARKER.repeat(20_000)); // over the 64 KB RAM limit
+        big.preview = MARKER.into();
+        let mut img = image_item(3);
+        img.ocr = Some(format!("ocr {MARKER}"));
+        let mut files = text_item(4, "");
+        files.kind = ClipKind::Files;
+        files.text = None;
+        files.files = Some(vec![FileRef {
+            path: format!("C:\\Users\\{MARKER}\\secret.txt"),
+            size: 1,
+            is_dir: false,
+        }]);
+        p.submit(insert_op(text)).unwrap();
+        p.submit(insert_op(big)).unwrap();
+        let img_hash = img.hash;
+        let blob_name = img.blob_hash.clone().unwrap();
+        p.submit(WriteOp::Insert {
+            item: Box::new(img),
+            blob: Some(format!("PNG {MARKER}").into_bytes().repeat(50)),
+            thumb: Some(format!("WEBP {MARKER}").into_bytes()),
+        })
+        .unwrap();
+        p.submit(insert_op(files)).unwrap();
+        p.flush().unwrap();
+
+        // Sanity: the data is really there and decrypts to the marker.
+        assert!(p.load_text(1).unwrap().unwrap().contains(MARKER));
+        assert!(contains(&p.read_blob(&blob_name).unwrap(), MARKER.as_bytes()));
+        assert!(contains(&p.read_thumb(&img_hash).unwrap(), MARKER.as_bytes()));
+
+        let check = |when: &str| {
+            let files = all_files(dir.path());
+            // history.db, blob and thumb files must all be among the scanned files.
+            assert!(files.iter().any(|(p, _)| p.ends_with("history.db")), "{when}");
+            assert!(files.iter().any(|(p, _)| p.starts_with(dir.path().join("blobs"))), "{when}");
+            assert!(files.iter().any(|(p, _)| p.starts_with(dir.path().join("thumbs"))), "{when}");
+            for (path, bytes) in files {
+                assert!(
+                    !contains(&bytes, MARKER.as_bytes()),
+                    "plaintext marker found in {} {when}",
+                    path.display()
+                );
+            }
+        };
+        // 1. After commit, before any checkpoint: data lives in history.db-wal.
+        assert!(
+            dir.path().join("history.db-wal").metadata().unwrap().len() > 0,
+            "this step must really scan a non empty WAL"
+        );
+        check("(before checkpoint, WAL present)");
+        // 2. After shutdown: WAL folded into history.db.
+        p.shutdown().unwrap();
+        check("(after shutdown and checkpoint)");
+        // 3. After a reopen as well.
+        drop(p);
+        let p = open(dir.path());
+        assert!(p.load_text(1).unwrap().unwrap().contains(MARKER));
+        drop(p);
+        check("(after reopen)");
+    }
 }
