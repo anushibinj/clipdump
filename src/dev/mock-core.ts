@@ -67,6 +67,8 @@ const control = {
   openFolderError: null as string | null,
   /** `get_stats` reports that the history was moved aside at startup (the recovery notice). */
   recovery: null as string | null,
+  /** `get_stats` reports `--perf` (the page then sends `perf_ack` timings). */
+  perf: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -210,6 +212,7 @@ function stats() {
     keyProtector: "dpapi",
     hotkeyError: control.hotkeyStartupError,
     recovery: control.recovery,
+    perf: control.perf,
   };
 }
 
@@ -282,6 +285,8 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "open_data_folder":
       if (control.openFolderError) throw control.openFolderError;
       return null;
+    case "perf_ack":
+      return null; // recorded in `control.calls` like every command
     case "hide_bar":
       setTimeout(() => emit("bar:hidden"), 0);
       return null;
@@ -339,6 +344,7 @@ const hooks = {
     control.hotkeyStartupError = null;
     control.openFolderError = null;
     control.recovery = null;
+    control.perf = false;
     load(200);
     changed();
   },

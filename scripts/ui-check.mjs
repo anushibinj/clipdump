@@ -512,6 +512,22 @@ async function keys(browser, url) {
   await settle();
   check("the next Esc hides the bar again", (await calls("hide_bar")).length === hides1 + 1);
 
+  // `--perf` support (Phase 14): silent without the flag, acks with it
+  await reset();
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await page.keyboard.type("bu");
+  await settle();
+  check("no perf_ack without --perf", (await calls("perf_ack")).length === 0);
+  await page.evaluate(() => (window.__clipMock.control.perf = true));
+  await page.evaluate(() => window.__clipMock.emit("bar:shown")); // get_stats now says perf: the next show acks
+  await settle();
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await page.keyboard.type("i");
+  await settle();
+  const acks = await calls("perf_ack");
+  check("--perf: the painted ack follows bar:shown", acks.some((a) => a.args.kind === "barPainted"), JSON.stringify(acks));
+  check("--perf: each search reports its round trip in ms", acks.some((a) => a.args.kind === "searchRtt" && typeof a.args.ms === "number" && a.args.ms >= 0 && a.args.ms < 1000), JSON.stringify(acks));
+
   check("no console errors or page errors", problems.length === 0, problems.slice(0, 3).join(" | "));
   console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
   await page.context().close();

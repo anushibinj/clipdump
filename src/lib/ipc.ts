@@ -131,11 +131,33 @@ export interface StatsDto {
    * was moved aside: what happened, the folder and the new file names. Show it until dismissed.
    */
   recovery: string | null;
+  /** The app runs with `--perf`: send the timings of `perfAck`. False in normal use. */
+  perf: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether the backend runs with `--perf` (`getStats().perf`). Off in normal use, and then the
+ * only cost of the perf support is this flag being read: no timer, no extra IPC.
+ */
+let perfOn = false;
+export function setPerf(on: boolean): void {
+  perfOn = on;
+}
+export const perfEnabled = (): boolean => perfOn;
+
+/** Report a timing or a paint to the `--perf` log (`perf_ack`). Only call it when `perfEnabled()`. */
+export function perfAck(kind: "barPainted" | "searchRtt", ms?: number): void {
+  invoke<void>("perf_ack", { kind, ms }).catch(() => {});
+}
+
+/** Run `fn` after the next frame has been produced (two animation frames), as the bar is painted. */
+export function afterPaint(fn: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(fn));
+}
 
 /** Search the history. `limit` defaults to 50 on the backend (200 at most). */
 export function search(
@@ -143,7 +165,13 @@ export function search(
   filter: TypeFilter = "all",
   limit?: number,
 ): Promise<ResultDto[]> {
-  return invoke<ResultDto[]>("search", { query, filter, limit });
+  if (!perfOn) return invoke<ResultDto[]>("search", { query, filter, limit });
+  // `--perf` only: the round trip as the webview sees it (the backend logs its own share).
+  const t0 = performance.now();
+  return invoke<ResultDto[]>("search", { query, filter, limit }).then((r) => {
+    perfAck("searchRtt", performance.now() - t0);
+    return r;
+  });
 }
 
 export function getPreview(id: number): Promise<PreviewDto> {

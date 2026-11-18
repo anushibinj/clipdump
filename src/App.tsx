@@ -21,6 +21,7 @@ import {
   errorMessage,
   getSettings,
   getStats,
+  afterPaint,
   hideBar,
   onBarHidden,
   onBarShown,
@@ -28,6 +29,9 @@ import {
   onHistoryRecovered,
   onSettingsChanged,
   onSettingsOpen,
+  perfAck,
+  perfEnabled,
+  setPerf,
   setSettings as saveSettingsDto,
   togglePin,
   type SettingsDto,
@@ -94,7 +98,10 @@ function App() {
   // ---- backend data -------------------------------------------------------
 
   const loadStats = useCallback(() => {
-    getStats().then(setStats, () => {});
+    getStats().then((st) => {
+      setPerf(st.perf);
+      setStats(st);
+    }, () => {});
   }, []);
   const loadSettings = useCallback(() => {
     getSettings().then(setSettings, () => {});
@@ -239,6 +246,8 @@ function App() {
             input.select();
           }
           latest.current.refresh({ resetSelection: true });
+          // `--perf` only: tell the backend when the bar has been painted, for hotkey to paint.
+          if (perfEnabled()) afterPaint(() => perfAck("barPainted"));
           if (stickyNotice.current) {
             stickyNotice.current = false;
             window.clearTimeout(noticeTimer.current);
