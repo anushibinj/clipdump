@@ -2,11 +2,15 @@
 //
 //   node scripts/ui-check.mjs keys    keyboard flow assertions (exit code 1 on a failure)
 //   node scripts/ui-check.mjs perf    keystroke to rendered timings with 1,000 fake items
-//   node scripts/ui-check.mjs shots   screenshots for docs/screenshots (needs --out DIR)
+//   node scripts/ui-check.mjs shots   screenshots for docs/screenshots (needs --out DIR). The
+//                                     committed PNGs were palette-quantized with Pillow afterwards
+//                                     (96 colors, no dithering) to stay under 1 MB in total.
 //
 // Options: --url http://localhost:1430   use a running `pnpm dev:mock` instead of
 //                                          starting a private dev server
 //          --out DIR                      where `shots` writes the PNG files
+//          --prod                         build the mock app for production (minified, React
+//                                          production mode) and serve that; use it for `perf`
 //
 // Uses the Playwright that is preinstalled in the dev container (it is not a
 // project dependency; point PLAYWRIGHT_DIR at a node_modules folder that has it).
@@ -22,6 +26,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import os from "node:os";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "x.js") : "/opt/node-tools/node_modules/x.js");
@@ -42,7 +47,16 @@ async function startServer() {
   const given = opt("url");
   if (given) return { url: given, stop: async () => {} };
   const port = 1431;
-  const child = spawn("pnpm", ["exec", "vite", "--mode", "mock", "--port", String(port), "--strictPort"], {
+  let serveArgs = ["exec", "vite", "--mode", "mock", "--port", String(port), "--strictPort"];
+  if (args.includes("--prod")) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "clipdump-mock-"));
+    await new Promise((resolve, reject) => {
+      const b = spawn("pnpm", ["exec", "vite", "build", "--mode", "mock", "--outDir", outDir, "--emptyOutDir"], { cwd: repo, stdio: "ignore" });
+      b.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`mock build failed (${c})`))));
+    });
+    serveArgs = ["exec", "vite", "preview", "--mode", "mock", "--outDir", outDir, "--port", String(port), "--strictPort"];
+  }
+  const child = spawn("pnpm", serveArgs, {
     cwd: repo,
     stdio: "ignore",
     detached: true,
@@ -431,6 +445,23 @@ async function perf(browser, url) {
     rowsOut.push({ label, n: commit.length, c50: pct(commit, 50), c95: pct(commit, 95), cmax: commit.at(-1), f50: pct(frames, 50), f95: pct(frames, 95), problems });
     await ctx.close();
   }
+  {
+    const { page, ctx } = await openPage(browser, url);
+    await page.evaluate(() => window.__clipMock.setCount(1000));
+    const t = await page.evaluate(() => {
+      const times = [];
+      for (const w of ["regression", "invoice", "revenue", "kubectl", "meeting", "build", "quarterly"]) {
+        for (let i = 1; i <= w.length; i += 1) {
+          const t0 = performance.now();
+          window.__clipMock.searchNow(w.slice(0, i));
+          times.push(performance.now() - t0);
+        }
+      }
+      return times.sort((a, b) => a - b);
+    });
+    console.log(`the mock search alone (JavaScript, 1,000 items): p50 ${pct(t, 50).toFixed(2)} ms, p95 ${pct(t, 95).toFixed(2)} ms\n`);
+    await ctx.close();
+  }
   console.log("keystroke to rendered, 1,000 fake items, Chromium on Linux (relative figures, not Windows):\n");
   console.log("scenario                          samples  commit p50  commit p95  commit max  next-frame p50  next-frame p95");
   for (const r of rowsOut) {
@@ -456,9 +487,12 @@ async function shots(browser, url) {
   for (const scheme of ["light", "dark"]) {
     const { page, ctx, problems } = await openPage(browser, url, { scheme, dpr: 2 });
     // A backdrop so the translucent card and its shadow show up as they do on a desktop.
-    await page.addStyleTag({ content: "html{background:linear-gradient(135deg,#7c8aa5,#c9b8a6) !important}" });
+    await page.addStyleTag({ content: "html{background:#9aa3b5 !important}" });
     const input = page.locator("input[cmdk-input]");
+    // Dark gets a few frames only, to keep docs/screenshots small.
+    const darkSet = ["02-text-search", "06-preview-image", "07-files-missing", "12-settings"];
     const shot = async (name) => {
+      if (scheme === "dark" && !darkSet.includes(name)) return;
       await page.waitForTimeout(300);
       await page.screenshot({ path: path.join(out, `${name}-${scheme}.png`) });
     };

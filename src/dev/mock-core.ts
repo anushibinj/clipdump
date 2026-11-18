@@ -328,6 +328,8 @@ const hooks = {
     );
     changed();
   },
+  /** The fake search alone (no IPC, no UI), to separate its cost from rendering. */
+  searchNow: (query: string, filter: Filter = "all") => search(query, filter),
   rows: () => rows,
   settings: () => settings,
 };
