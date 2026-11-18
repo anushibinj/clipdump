@@ -28,6 +28,8 @@ crossbeam-channel = "0.5"
 anyhow = "1"
 # `bundled` compiles SQLite in, so there is no system dependency on Windows.
 rusqlite = { version = "0.43", features = ["bundled"] }
+# xxh3-128 is the content hash for dedup and the self-write guard.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -44,10 +46,16 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 
 [target.'cfg(windows)'.dependencies]
-# Windows only: foreground tracking (Phase 2) and DPAPI key protection (Phase 3).
+# Windows only: foreground tracking (Phase 2), DPAPI key protection (Phase 3),
+# clipboard listener and reader (Phase 4).
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security_Cryptography",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
