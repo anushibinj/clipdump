@@ -8,6 +8,8 @@
 //! `Preferred DropEffect`. The registered `PNG` format is the stored PNG file
 //! as it is, so it needs no builder.
 
+use std::path::PathBuf;
+
 use anyhow::{Result, ensure};
 
 // ---------------------------------------------------------------------------
@@ -171,12 +173,83 @@ pub fn build_dibv5(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// CF_HDROP and Preferred DropEffect
+// ---------------------------------------------------------------------------
+
+/// `sizeof(DROPFILES)`: `DWORD pFiles; POINT pt; BOOL fNC; BOOL fWide;`.
+pub const DROPFILES_HEADER_LEN: usize = 20;
+
+/// `DROPEFFECT_COPY`.
+pub const DROPEFFECT_COPY: u32 = 1;
+
+/// The 4 byte value of the registered `Preferred DropEffect` format: copy, so
+/// pasting in Explorer copies the files instead of moving them.
+pub fn drop_effect_copy() -> [u8; 4] {
+    DROPEFFECT_COPY.to_le_bytes()
+}
+
+/// A built `CF_HDROP` buffer and how many paths went into it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DropFiles {
+    pub bytes: Vec<u8>,
+    pub count: usize,
+}
+
+/// A path that can be stored in a double NUL terminated list: not empty and
+/// without an embedded NUL (which would end the string early and corrupt the
+/// list).
+pub fn path_is_listable(path: &str) -> bool {
+    !path.is_empty() && !path.contains('\0')
+}
+
+/// The `CF_HDROP` buffer for `paths`: a `DROPFILES` header (`pFiles` = 20, zero
+/// point, `fNC` = 0, `fWide` = 1) followed by each path as NUL terminated UTF-16
+/// and one extra NUL ending the list. Unlistable paths (see
+/// [`path_is_listable`]) are left out, not an error: `count` says how many made
+/// it, and the caller decides what an empty list means. An empty list still
+/// has a valid structure (header and two NULs).
+///
+/// Paths are taken as `to_string_lossy`: the history stores them as UTF-8
+/// strings (see `FileRef`), so that is also what was captured. Any Unicode
+/// path, including non BMP characters (surrogate pairs), round trips.
+pub fn build_dropfiles(paths: &[PathBuf]) -> DropFiles {
+    let listed: Vec<std::borrow::Cow<'_, str>> = paths
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .filter(|s| path_is_listable(s))
+        .collect();
+    let units: usize = listed.iter().map(|s| s.len() + 1).sum(); // upper bound
+    let mut bytes = Vec::with_capacity(DROPFILES_HEADER_LEN + 2 * (units + 2));
+    bytes.extend_from_slice(&(DROPFILES_HEADER_LEN as u32).to_le_bytes()); // pFiles
+    bytes.extend_from_slice(&[0; 8]); // pt.x, pt.y
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // fNC
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // fWide
+    for s in &listed {
+        for u in s.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0, 0]);
+    }
+    // The list's own terminator. An empty list needs two NULs to be a valid
+    // double NUL list, a non empty one already ends with its last path's NUL.
+    bytes.extend_from_slice(&[0, 0]);
+    if listed.is_empty() {
+        bytes.extend_from_slice(&[0, 0]);
+    }
+    DropFiles {
+        bytes,
+        count: listed.len(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hash::hash_text;
     use crate::ingest::image::tests::{dibv5_bitfields, pic, pic_alpha, pic_gradient, png_of};
     use crate::ingest::image::{Rgba, decode_dib, decode_png};
+    use crate::platform::rules::split_dropfiles;
 
     // -- text ------------------------------------------------------------
 
@@ -398,5 +471,86 @@ mod tests {
         let from_png = decode_png(&png_of(&p)).unwrap();
         let d = build_dibv5(&from_png.pixels, from_png.width, from_png.height).unwrap();
         assert_eq!(decode_dib(&d).unwrap(), p);
+    }
+
+    // -- CF_HDROP ----------------------------------------------------------
+
+    fn paths(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
+    }
+
+    fn back(bytes: &[u8]) -> Vec<String> {
+        split_dropfiles(bytes)
+            .unwrap()
+            .into_iter()
+            .map(|u| String::from_utf16(&u).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn dropfiles_exact_bytes_for_one_path() {
+        let d = build_dropfiles(&paths(&["C:\\a"]));
+        assert_eq!(d.count, 1);
+        let mut expect = Vec::new();
+        expect.extend_from_slice(&[20, 0, 0, 0]); // pFiles
+        expect.extend_from_slice(&[0; 8]); // pt
+        expect.extend_from_slice(&[0, 0, 0, 0]); // fNC
+        expect.extend_from_slice(&[1, 0, 0, 0]); // fWide
+        for c in "C:\\a".encode_utf16() {
+            expect.extend_from_slice(&c.to_le_bytes());
+        }
+        expect.extend_from_slice(&[0, 0, 0, 0]); // path NUL, list NUL
+        assert_eq!(d.bytes, expect);
+    }
+
+    #[test]
+    fn dropfiles_round_trip_through_the_capture_parser() {
+        let list = [
+            r"C:\Users\me\one.txt",
+            r"D:\dir with spaces\two",
+            "E:\\\u{e9}\u{4e2d}\u{6587}.png",
+            "F:\\emoji \u{1F600}\\\u{20000}.txt",
+            r"\\server\share\x.bin",
+        ];
+        let d = build_dropfiles(&paths(&list));
+        assert_eq!(d.count, list.len());
+        assert_eq!(back(&d.bytes), list);
+    }
+
+    #[test]
+    fn dropfiles_empty_list_is_a_valid_double_nul_list() {
+        let d = build_dropfiles(&[]);
+        assert_eq!(d.count, 0);
+        assert_eq!(d.bytes.len(), 24);
+        assert_eq!(&d.bytes[20..], &[0, 0, 0, 0]);
+        assert_eq!(split_dropfiles(&d.bytes), Some(vec![]));
+    }
+
+    #[test]
+    fn dropfiles_skip_unlistable_paths() {
+        let d = build_dropfiles(&paths(&["", "C:\\ok", "C:\\bad\0name", "C:\\ok2"]));
+        assert_eq!(d.count, 2);
+        assert_eq!(back(&d.bytes), ["C:\\ok", "C:\\ok2"]);
+        let none = build_dropfiles(&paths(&["", "\0"]));
+        assert_eq!(none.count, 0);
+        assert_eq!(split_dropfiles(&none.bytes), Some(vec![]));
+    }
+
+    #[test]
+    fn dropfiles_handle_very_long_paths_and_many_paths() {
+        let long = format!("C:\\{}", "x".repeat(40_000));
+        let d = build_dropfiles(&paths(&[&long, "C:\\short"]));
+        assert_eq!(d.count, 2);
+        assert_eq!(back(&d.bytes), [long.as_str(), "C:\\short"]);
+        let many: Vec<String> = (0..5_000).map(|i| format!("C:\\f\\{i}.txt")).collect();
+        let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+        let d = build_dropfiles(&paths(&refs));
+        assert_eq!(back(&d.bytes), many);
+    }
+
+    #[test]
+    fn drop_effect_is_copy_as_a_dword() {
+        assert_eq!(drop_effect_copy(), [1, 0, 0, 0]);
+        assert_eq!(DROPEFFECT_COPY, 1);
     }
 }
