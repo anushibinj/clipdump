@@ -164,13 +164,8 @@ pub fn fill_dibv5(rgba: &[u8], width: u32, height: u32, out: &mut [u8]) -> Resul
         .chunks_exact_mut(stride)
         .zip(rgba.chunks_exact(stride).rev())
     {
-        for (d, s) in dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(4)) {
-            // RGBA bytes read as a LE u32 are 0xAABBGGRR; BGRA bytes are
-            // 0xAARRGGBB. Swap the two color bytes, keep green and alpha.
-            let v = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
-            let swapped = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-            d.copy_from_slice(&swapped.to_le_bytes());
-        }
+        // RGBA to BGRA: the red and blue bytes trade places, green and alpha stay.
+        crate::ingest::image::swap_red_blue(dst_row, src_row);
     }
     Ok(())
 }

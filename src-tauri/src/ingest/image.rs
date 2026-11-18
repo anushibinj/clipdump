@@ -298,6 +298,30 @@ fn fast_alpha(dib: &[u8], hdr: &DibHeader) -> Option<bool> {
     }
 }
 
+/// Copy 32 bit pixels with the first and third byte of each swapped (RGBA to BGRA
+/// and BGRA to RGBA are the same operation). `dst` and `src` have the same length,
+/// a multiple of 4. Four pixels (16 bytes) per step as one fixed size array
+/// shuffle, which the compiler turns into a single byte shuffle instruction: a 4K
+/// picture takes about 10 ms where the same loop pixel by pixel took 40 to 50.
+pub fn swap_red_blue(dst: &mut [u8], src: &[u8]) {
+    debug_assert_eq!(dst.len(), src.len());
+    let (mut d16, mut s16) = (dst.chunks_exact_mut(16), src.chunks_exact(16));
+    for (d, s) in (&mut d16).zip(&mut s16) {
+        let s: &[u8; 16] = s.try_into().expect("16 bytes");
+        d.copy_from_slice(&[
+            s[2], s[1], s[0], s[3], s[6], s[5], s[4], s[7], s[10], s[9], s[8], s[11], s[14], s[13],
+            s[12], s[15],
+        ]);
+    }
+    for (d, s) in d16
+        .into_remainder()
+        .chunks_exact_mut(4)
+        .zip(s16.remainder().chunks_exact(4))
+    {
+        d.copy_from_slice(&[s[2], s[1], s[0], s[3]]);
+    }
+}
+
 /// Straight conversion of the common bitmaps to RGBA, with no BMP wrapper and no
 /// second copy: rows are read bottom up (or top down when the height is negative)
 /// and each pixel's bytes are reordered. Returns `None` for anything it does not
@@ -323,27 +347,7 @@ pub fn decode_dib_fast(dib: &[u8]) -> Option<Rgba> {
         let sy = if hdr.top_down { y } else { h - 1 - y };
         let src_row = &pixels[sy * stride..sy * stride + w * src_px];
         match has_alpha {
-            // Four pixels (16 bytes) per step as one fixed size array shuffle, which
-            // the compiler turns into a single byte shuffle instruction: about 50 ms
-            // for a 4K picture with the byte by byte and the u32 forms, much less
-            // with this.
-            Some(true) => {
-                let (mut dst, mut src) = (dst_row.chunks_exact_mut(16), src_row.chunks_exact(16));
-                for (d, s) in (&mut dst).zip(&mut src) {
-                    let s: &[u8; 16] = s.try_into().expect("16 bytes");
-                    d.copy_from_slice(&[
-                        s[2], s[1], s[0], s[3], s[6], s[5], s[4], s[7], s[10], s[9], s[8], s[11],
-                        s[14], s[13], s[12], s[15],
-                    ]);
-                }
-                for (d, s) in dst
-                    .into_remainder()
-                    .chunks_exact_mut(4)
-                    .zip(src.remainder().chunks_exact(4))
-                {
-                    d.copy_from_slice(&[s[2], s[1], s[0], s[3]]);
-                }
-            }
+            Some(true) => swap_red_blue(dst_row, src_row),
             Some(false) => {
                 let (mut dst, mut src) = (dst_row.chunks_exact_mut(16), src_row.chunks_exact(16));
                 for (d, s) in (&mut dst).zip(&mut src) {
@@ -1389,6 +1393,24 @@ pub(crate) mod tests {
     fn small_pictures_are_not_resampled() {
         let p = pic_gradient(40, 30);
         assert_eq!(make_thumbnail(&p).unwrap(), p);
+    }
+
+    #[test]
+    fn swap_red_blue_matches_the_per_pixel_swap_for_every_length() {
+        for pixels in [0usize, 1, 2, 3, 4, 5, 7, 8, 9, 17, 1000] {
+            let src: Vec<u8> = (0..pixels * 4).map(|i| (i * 13 + 5) as u8).collect();
+            let naive: Vec<u8> = src
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0], p[3]])
+                .collect();
+            let mut dst = vec![0u8; src.len()];
+            swap_red_blue(&mut dst, &src);
+            assert_eq!(dst, naive, "{pixels} pixels");
+            // Swapping twice is the identity.
+            let mut back = vec![0u8; src.len()];
+            swap_red_blue(&mut back, &dst);
+            assert_eq!(back, src);
+        }
     }
 
     #[test]
