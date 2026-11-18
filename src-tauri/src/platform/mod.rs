@@ -213,6 +213,19 @@ pub fn lower_current_thread_priority_idle() -> Result<(), String> {
     }
 }
 
+/// Builds this platform's OCR engine; the OCR worker calls it on its own thread.
+/// Windows: `Windows.Media.Ocr`. Elsewhere: an engine that is never available.
+pub fn ocr_engine_factory() -> crate::ocr::EngineFactory {
+    #[cfg(windows)]
+    {
+        windows::ocr::factory()
+    }
+    #[cfg(not(windows))]
+    {
+        Box::new(|| Box::new(stub::UnavailableOcr))
+    }
+}
+
 /// Raw native handle of our own window, to avoid recording ourselves as the
 /// "previous" window when the bar is already focused.
 fn own_handle(w: &WebviewWindow) -> Option<isize> {

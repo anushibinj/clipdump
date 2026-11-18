@@ -6,6 +6,7 @@ use crossbeam_channel::Sender;
 
 use super::{CaptureContext, ClipboardWatcher, ClipboardWriter, IngestMsg, Paster};
 use crate::model::Payload;
+use crate::ocr::OcrEngine;
 
 /// Never produces clipboard updates on its own. Tests (and a future dev tool)
 /// can push messages through [`StubWatcher::inject`] to drive the pipeline.
@@ -50,6 +51,21 @@ impl Paster for StubPaster {
     }
 }
 
+/// The OCR engine of a platform without one: always unavailable, so image items
+/// are marked `Unavailable` and the rest of the app works as usual. (macOS Vision
+/// and Linux Tesseract are Phase 16.)
+pub struct UnavailableOcr;
+
+impl OcrEngine for UnavailableOcr {
+    fn recognize(&self, _rgba: &[u8], _w: u32, _h: u32) -> anyhow::Result<String> {
+        anyhow::bail!("OCR is not supported on this platform")
+    }
+
+    fn available(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +83,13 @@ mod tests {
         });
         assert!(w.inject(msg.clone()));
         assert_eq!(rx.try_recv().unwrap(), msg);
+    }
+
+    #[test]
+    fn the_stub_ocr_engine_is_unavailable() {
+        let e = UnavailableOcr;
+        assert!(!e.available());
+        assert!(e.recognize(&[0; 4], 1, 1).is_err());
     }
 
     #[test]
