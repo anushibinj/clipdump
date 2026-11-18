@@ -45,6 +45,12 @@ pub fn run() {
                         window::hide(win.app_handle());
                     }
                 }
+                // The bar is never destroyed, only hidden, so the next open is
+                // instant (Alt+F4, taskbar close, etc. all land here).
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    window::hide(win.app_handle());
+                }
                 _ => {}
             }
         })
