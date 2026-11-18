@@ -234,9 +234,23 @@ pub fn fix_unused_alpha(pixels: &mut [u8]) {
     }
 }
 
-/// Decode a `CF_DIB` or `CF_DIBV5` buffer: wrap it as BMP and let the `image`
-/// crate handle bit depths, palettes, bitfields and row order.
+/// Decode a `CF_DIB` or `CF_DIBV5` buffer. The two forms that real clipboards hold
+/// nearly always (32 bit BGRA with the standard masks, which is what Win+Shift+S,
+/// PrtSc and most apps put there, and plain 24 bit BGR) are converted straight
+/// into the RGBA buffer by [`decode_dib_fast`]; everything else (palettes, 16 bit,
+/// unusual masks, an odd header) is wrapped as BMP and left to the `image` crate,
+/// which handles bit depths, palettes, bitfields and row order.
 pub fn decode_dib(dib: &[u8]) -> Result<Rgba> {
+    if let Some(img) = decode_dib_fast(dib) {
+        return Ok(img);
+    }
+    decode_dib_generic(dib)
+}
+
+/// The general route: wrap the DIB as a BMP file and decode it with the `image`
+/// crate. About 100 ms for a 4K picture, most of it the crate's per pixel bitfield
+/// handling and one extra copy of the whole bitmap.
+pub fn decode_dib_generic(dib: &[u8]) -> Result<Rgba> {
     let (bmp, hdr) = dib_to_bmp(dib)?;
     let dec = image::codecs::bmp::BmpDecoder::new(Cursor::new(bmp)).context("bmp header")?;
     let mut img = finish(dec)?;
@@ -244,6 +258,138 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba> {
         fix_unused_alpha(&mut img.pixels);
     }
     Ok(img)
+}
+
+/// Channel layout of the 32 bit DIBs the fast path takes: B, G, R at bytes 0 to 2,
+/// and either a real alpha byte or none (opaque).
+fn fast_alpha(dib: &[u8], hdr: &DibHeader) -> Option<bool> {
+    const R: u32 = 0x00FF_0000;
+    const G: u32 = 0x0000_FF00;
+    const B: u32 = 0x0000_00FF;
+    const A: u32 = 0xFF00_0000;
+    match (hdr.size, hdr.compression) {
+        // V4 and V5 headers: masks inside the header. `BI_RGB` has none and means
+        // BGRA (see `dib_to_bmp`, which patches the same masks in).
+        (108 | 124, BI_RGB) => Some(true),
+        (108 | 124, BI_BITFIELDS) => {
+            let masks = [
+                le32(dib, 40).ok()?,
+                le32(dib, 44).ok()?,
+                le32(dib, 48).ok()?,
+            ];
+            let a = le32(dib, 52).ok()?;
+            (masks == [R, G, B]).then_some(())?;
+            match a {
+                A => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+        // A 40 byte header with the three masks after it (no alpha).
+        (40, BI_BITFIELDS) => {
+            let masks = [
+                le32(dib, 40).ok()?,
+                le32(dib, 44).ok()?,
+                le32(dib, 48).ok()?,
+            ];
+            (masks == [R, G, B]).then_some(false)
+        }
+        _ => None,
+    }
+}
+
+/// Straight conversion of the common bitmaps to RGBA, with no BMP wrapper and no
+/// second copy: rows are read bottom up (or top down when the height is negative)
+/// and each pixel's bytes are reordered. Returns `None` for anything it does not
+/// recognize or that looks damaged (too short), so the general route decides.
+/// Same results as [`decode_dib_generic`] for the forms it takes (a test compares
+/// them on every variant): a 32 bit bitmap whose alpha is zero everywhere is
+/// opaque, see [`fix_unused_alpha`]. About 15 ms for a 4K picture.
+pub fn decode_dib_fast(dib: &[u8]) -> Option<Rgba> {
+    let hdr = DibHeader::parse(dib).ok()?;
+    check_size(hdr.width, hdr.height).ok()?;
+    let (w, h) = (hdr.width as usize, hdr.height as usize);
+    let off = hdr.pixel_offset();
+    let (src_px, has_alpha) = match hdr.bit_count {
+        32 => (4usize, Some(fast_alpha(dib, &hdr)?)),
+        24 if hdr.compression == BI_RGB && hdr.size >= 40 => (3, None),
+        _ => return None,
+    };
+    let stride = (w * src_px * 8).div_ceil(32) * 4;
+    let pixels = dib.get(off..off.checked_add(stride.checked_mul(h)?)?)?;
+
+    let mut out = vec![0u8; w * h * 4];
+    for (y, dst_row) in out.chunks_exact_mut(w * 4).enumerate() {
+        let sy = if hdr.top_down { y } else { h - 1 - y };
+        let src_row = &pixels[sy * stride..sy * stride + w * src_px];
+        match has_alpha {
+            // Four pixels (16 bytes) per step as one fixed size array shuffle, which
+            // the compiler turns into a single byte shuffle instruction: about 50 ms
+            // for a 4K picture with the byte by byte and the u32 forms, much less
+            // with this.
+            Some(true) => {
+                let (mut dst, mut src) = (dst_row.chunks_exact_mut(16), src_row.chunks_exact(16));
+                for (d, s) in (&mut dst).zip(&mut src) {
+                    let s: &[u8; 16] = s.try_into().expect("16 bytes");
+                    d.copy_from_slice(&[
+                        s[2], s[1], s[0], s[3], s[6], s[5], s[4], s[7], s[10], s[9], s[8], s[11],
+                        s[14], s[13], s[12], s[15],
+                    ]);
+                }
+                for (d, s) in dst
+                    .into_remainder()
+                    .chunks_exact_mut(4)
+                    .zip(src.remainder().chunks_exact(4))
+                {
+                    d.copy_from_slice(&[s[2], s[1], s[0], s[3]]);
+                }
+            }
+            Some(false) => {
+                let (mut dst, mut src) = (dst_row.chunks_exact_mut(16), src_row.chunks_exact(16));
+                for (d, s) in (&mut dst).zip(&mut src) {
+                    let s: &[u8; 16] = s.try_into().expect("16 bytes");
+                    d.copy_from_slice(&[
+                        s[2], s[1], s[0], 0xFF, s[6], s[5], s[4], 0xFF, s[10], s[9], s[8], 0xFF,
+                        s[14], s[13], s[12], 0xFF,
+                    ]);
+                }
+                for (d, s) in dst
+                    .into_remainder()
+                    .chunks_exact_mut(4)
+                    .zip(src.remainder().chunks_exact(4))
+                {
+                    d.copy_from_slice(&[s[2], s[1], s[0], 0xFF]);
+                }
+            }
+            // 24 bit: four pixels (12 bytes) into 16 per step, then the rest.
+            None => {
+                let (mut dst, mut src) = (dst_row.chunks_exact_mut(16), src_row.chunks_exact(12));
+                for (d, s) in (&mut dst).zip(&mut src) {
+                    let s: &[u8; 12] = s.try_into().expect("12 bytes");
+                    d.copy_from_slice(&[
+                        s[2], s[1], s[0], 0xFF, s[5], s[4], s[3], 0xFF, s[8], s[7], s[6], 0xFF,
+                        s[11], s[10], s[9], 0xFF,
+                    ]);
+                }
+                for (d, s) in dst
+                    .into_remainder()
+                    .chunks_exact_mut(4)
+                    .zip(src.remainder().chunks_exact(3))
+                {
+                    d.copy_from_slice(&[s[2], s[1], s[0], 0xFF]);
+                }
+            }
+        }
+    }
+    let mut img = Rgba {
+        width: hdr.width,
+        height: hdr.height,
+        pixels: out,
+    };
+    if has_alpha == Some(true) {
+        fix_unused_alpha(&mut img.pixels);
+    }
+    Some(img)
 }
 
 /// Decode raw clipboard image bytes by their tag.
@@ -335,12 +481,84 @@ pub fn thumb_size(w: u32, h: u32) -> (u32, u32) {
     (tw, th)
 }
 
-/// Downscale for the list. `imageops::thumbnail` is a box style filter that is
-/// much faster than Lanczos and plenty good at 96 px.
+/// Biggest number of source pixels one thumbnail pixel may average for the fast
+/// path below to keep its sums in 32 bits (65 025 * this stays under 2^32).
+const BOX_MAX_CELL: u64 = 60_000;
+
+/// Area average ("box") downscale: every output pixel is the mean of the source
+/// pixels it covers, the cells tile the picture exactly, so every source pixel
+/// counts once. Colour is weighted by alpha, so a transparent pixel does not tint
+/// its neighbours (a fully opaque picture, the screenshot case, skips the
+/// weighting). One pass over the source with 32 bit sums: about 12 ms for a 4K
+/// picture where `imageops::thumbnail` took about 75 ms. `tw` and `th` must not
+/// exceed the source size (see [`thumb_size`]).
+fn box_downscale(img: &Rgba, tw: u32, th: u32) -> Rgba {
+    let (w, h) = (img.width as usize, img.height as usize);
+    let (tw, th) = (tw as usize, th as usize);
+    let xs: Vec<usize> = (0..=tw).map(|x| x * w / tw).collect();
+    let ys: Vec<usize> = (0..=th).map(|y| y * h / th).collect();
+    let opaque = img.pixels.chunks_exact(4).all(|p| p[3] == 0xFF);
+    let mut out = vec![0u8; tw * th * 4];
+    let mut acc = vec![[0u32; 4]; tw];
+    for ty in 0..th {
+        acc.iter_mut().for_each(|a| *a = [0; 4]);
+        for sy in ys[ty]..ys[ty + 1] {
+            let row = &img.pixels[sy * w * 4..(sy + 1) * w * 4];
+            for (tx, a) in acc.iter_mut().enumerate() {
+                let cell = &row[xs[tx] * 4..xs[tx + 1] * 4];
+                if opaque {
+                    for p in cell.chunks_exact(4) {
+                        a[0] += u32::from(p[0]);
+                        a[1] += u32::from(p[1]);
+                        a[2] += u32::from(p[2]);
+                    }
+                } else {
+                    for p in cell.chunks_exact(4) {
+                        let al = u32::from(p[3]);
+                        a[0] += u32::from(p[0]) * al;
+                        a[1] += u32::from(p[1]) * al;
+                        a[2] += u32::from(p[2]) * al;
+                        a[3] += al;
+                    }
+                }
+            }
+        }
+        let rows = (ys[ty + 1] - ys[ty]) as u32;
+        for (tx, a) in acc.iter().enumerate() {
+            let n = rows * (xs[tx + 1] - xs[tx]) as u32;
+            let o = (ty * tw + tx) * 4;
+            if opaque {
+                for c in 0..3 {
+                    out[o + c] = ((a[c] + n / 2) / n) as u8;
+                }
+                out[o + 3] = 0xFF;
+            } else if a[3] > 0 {
+                for c in 0..3 {
+                    out[o + c] = ((a[c] + a[3] / 2) / a[3]) as u8;
+                }
+                out[o + 3] = ((a[3] + n / 2) / n) as u8;
+            }
+            // else: fully transparent cell, stays 0 0 0 0
+        }
+    }
+    Rgba {
+        width: tw as u32,
+        height: th as u32,
+        pixels: out,
+    }
+}
+
+/// Downscale for the list. A box filter is plenty good at 96 px and much faster
+/// than Lanczos; [`box_downscale`] does it in one cheap pass, the `image` crate's
+/// own `thumbnail` handles the (absurd) pictures whose cells would overflow it.
 pub fn make_thumbnail(img: &Rgba) -> Result<Rgba> {
     let (tw, th) = thumb_size(img.width, img.height);
     if (tw, th) == (img.width, img.height) {
         return Ok(img.clone());
+    }
+    let cell = u64::from(img.width.div_ceil(tw)) * u64::from(img.height.div_ceil(th));
+    if cell <= BOX_MAX_CELL {
+        return Ok(box_downscale(img, tw, th));
     }
     // Borrow the pixels, no copy.
     let src = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(
@@ -386,6 +604,43 @@ pub fn thumbnail_webp(img: &Rgba) -> Result<Vec<u8>> {
 // The item
 // ---------------------------------------------------------------------------
 
+/// Pictures with fewer bytes of pixels than this are processed on one thread: a
+/// thread costs tens of microseconds, which is more than the whole encode of a
+/// small picture.
+const PARALLEL_MIN_BYTES: usize = 2 << 20;
+
+/// The three independent steps after the decode: the PNG for storage (only when
+/// `need_png`), the dedup hash and the thumbnail. The PNG encode is by far the
+/// slowest (about 150 ms of the roughly 190 ms a 4K picture takes), the hash and
+/// thumbnail together about 20 ms, so a big picture runs the encode on a second
+/// thread beside the other two: the item is ready after the slowest of them, not
+/// after their sum. The helper lowers its own priority like the ingest worker
+/// (priority belongs to a thread, not to the process). If the thread cannot be
+/// started the encode just runs here.
+fn stages(img: &Rgba, need_png: bool) -> (Option<Result<Vec<u8>>>, u128, Result<Vec<u8>>) {
+    if !need_png || img.pixels.len() < PARALLEL_MIN_BYTES {
+        let png = need_png.then(|| encode_png(img));
+        return (png, hash(img), thumbnail_webp(img));
+    }
+    std::thread::scope(|scope| {
+        let job = std::thread::Builder::new()
+            .name("ingest-png".into())
+            .spawn_scoped(scope, || {
+                let _ = crate::platform::lower_current_thread_priority();
+                encode_png(img)
+            });
+        let item_hash = hash(img);
+        let thumb = thumbnail_webp(img);
+        let png = match job {
+            Ok(j) => j
+                .join()
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("the PNG encoder panicked"))),
+            Err(_) => encode_png(img),
+        };
+        (Some(png), item_hash, thumb)
+    })
+}
+
 /// Build the finished item for a captured image: decode, hash, PNG, thumbnail.
 ///
 /// Speed shortcut: when the clipboard already holds a PNG (Chrome "Copy image",
@@ -402,11 +657,12 @@ pub fn build(
     use crate::platform::ImageFormat;
 
     let img = decode(&data)?;
-    let item_hash = hash(&img);
-    let thumb = thumbnail_webp(&img)?;
-    let png = match data.format {
-        ImageFormat::Png => data.bytes,
-        ImageFormat::Dibv5 | ImageFormat::Dib => encode_png(&img)?,
+    let (png, item_hash, thumb) = stages(&img, data.format != ImageFormat::Png);
+    let thumb = thumb?;
+    let png = match (data.format, png) {
+        (ImageFormat::Png, _) => data.bytes,
+        (_, Some(p)) => p?,
+        (_, None) => encode_png(&img)?,
     };
     Ok(super::IngestedItem {
         kind: ClipKind::Image,
@@ -878,6 +1134,255 @@ pub(crate) mod tests {
         let back = decode_any(&webp).unwrap();
         assert_eq!(back, t, "lossless WebP");
         assert_eq!(thumbnail_webp(&p).unwrap(), webp);
+    }
+
+    #[test]
+    fn box_downscale_is_the_exact_mean_of_each_cell() {
+        // 8x4 down to 2x2: cells of 4x2 pixels, values chosen so the means are exact.
+        let mut p = pic(8, 4);
+        p.width = 8;
+        p.height = 4;
+        p.pixels = (0..32u32)
+            .flat_map(|i| {
+                let (x, y) = (i % 8, i / 8);
+                let v = if x < 4 { 10 } else { 50 } + if y < 2 { 0 } else { 100 };
+                [v as u8, (v + 1) as u8, (v + 2) as u8, 255]
+            })
+            .collect();
+        let t = box_downscale(&p, 2, 2);
+        assert_eq!((t.width, t.height), (2, 2));
+        assert_eq!(
+            t.pixels,
+            [
+                10, 11, 12, 255, 50, 51, 52, 255, //
+                110, 111, 112, 255, 150, 151, 152, 255
+            ]
+        );
+    }
+
+    #[test]
+    fn box_downscale_covers_every_pixel_when_the_ratio_is_not_whole() {
+        // 7 wide into 3: cells of 2, 2 and 3 columns. A single opaque column at the
+        // far right must show up in the last cell only, and in none of the others.
+        let (w, h) = (7usize, 3usize);
+        let mut px = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for c in 0..4 {
+                px[(y * w + 6) * 4 + c] = 255;
+            }
+        }
+        let p = Rgba {
+            width: 7,
+            height: 3,
+            pixels: px,
+        };
+        let t = box_downscale(&p, 3, 1);
+        assert_eq!(&t.pixels[0..4], &[0, 0, 0, 0], "the first cell is empty");
+        // Last cell: three columns, one of them opaque white: white at 1/3 alpha.
+        assert_eq!(&t.pixels[8..12], &[255, 255, 255, 85]);
+    }
+
+    #[test]
+    fn box_downscale_does_not_tint_with_transparent_pixels() {
+        // Left half opaque red, right half fully transparent black: a cell over
+        // both is red at half alpha, not dark red.
+        let (w, h) = (4usize, 2usize);
+        let mut px = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..2 {
+                px[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let p = Rgba {
+            width: 4,
+            height: 2,
+            pixels: px,
+        };
+        let t = box_downscale(&p, 1, 1);
+        assert_eq!(t.pixels, [255, 0, 0, 128]);
+        // A cell with no alpha at all stays transparent.
+        let clear = Rgba {
+            width: 4,
+            height: 2,
+            pixels: vec![0; 32],
+        };
+        assert_eq!(box_downscale(&clear, 2, 1).pixels, [0; 8]);
+    }
+
+    #[test]
+    fn box_thumbnail_agrees_with_the_image_crates_within_rounding() {
+        // A smooth picture, where an area average and a sampled filter agree.
+        let (w, h) = (640u32, 360u32);
+        let p = Rgba {
+            width: w,
+            height: h,
+            pixels: (0..w * h)
+                .flat_map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    [
+                        (x * 255 / w) as u8,
+                        (y * 255 / h) as u8,
+                        ((x + y) * 255 / (w + h)) as u8,
+                        255,
+                    ]
+                })
+                .collect(),
+        };
+        let (tw, th) = thumb_size(p.width, p.height);
+        let ours = box_downscale(&p, tw, th);
+        let src = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(640, 360, &p.pixels[..])
+            .unwrap();
+        let theirs = image::imageops::thumbnail(&src, tw, th).into_raw();
+        let worst = ours
+            .pixels
+            .iter()
+            .zip(&theirs)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 6, "largest channel difference {worst}");
+    }
+
+    #[test]
+    fn a_pathological_cell_size_falls_back_to_the_image_crate() {
+        // 1 pixel wide and 70,000 tall: one thumbnail pixel would average 729 x 1
+        // pixels, fine; make the cell huge instead: 400 x 400 into 1x1 cannot occur
+        // (thumb_size keeps 96 rows), so test the threshold function directly.
+        let cell = |w: u32, h: u32| {
+            let (tw, th) = thumb_size(w, h);
+            u64::from(w.div_ceil(tw)) * u64::from(h.div_ceil(th))
+        };
+        assert!(cell(3840, 2160) < BOX_MAX_CELL);
+        assert!(cell(1, 50_000_000) > BOX_MAX_CELL);
+    }
+
+    #[test]
+    fn the_parallel_stages_give_the_same_answers_as_the_sequential_ones() {
+        // 1000 x 700 is 2.8 MB of pixels: over the threshold, so the PNG encode
+        // runs on its own thread. 200 x 100 stays on one.
+        for (w, h, threaded) in [(1000u32, 700u32, true), (200, 100, false)] {
+            let p = pic_gradient(w, h);
+            assert_eq!(p.pixels.len() >= PARALLEL_MIN_BYTES, threaded);
+            let (png, hsh, thumb) = stages(&p, true);
+            assert_eq!(png.unwrap().unwrap(), encode_png(&p).unwrap());
+            assert_eq!(hsh, hash(&p));
+            assert_eq!(thumb.unwrap(), thumbnail_webp(&p).unwrap());
+            // A PNG input needs no encode at all.
+            let (none, hsh2, _) = stages(&p, false);
+            assert!(none.is_none());
+            assert_eq!(hsh2, hsh);
+        }
+    }
+
+    #[test]
+    fn build_of_a_big_dib_matches_its_stages_and_dedups_with_the_png_form() {
+        use crate::platform::{ImageData, ImageFormat};
+        let p = pic_gradient(1000, 700);
+        let from_dib = build(
+            ImageData {
+                format: ImageFormat::Dibv5,
+                bytes: dibv5_bitfields(&p, false),
+            },
+            None,
+            1,
+        )
+        .unwrap();
+        let from_png = build(
+            ImageData {
+                format: ImageFormat::Png,
+                bytes: png_of(&p),
+            },
+            None,
+            2,
+        )
+        .unwrap();
+        assert_eq!(from_dib.hash, from_png.hash, "same picture, same item");
+        assert_eq!(from_dib.thumb, from_png.thumb);
+        assert_eq!(from_dib.png.as_deref(), Some(&encode_png(&p).unwrap()[..]));
+        assert_eq!(decode_png(from_dib.png.as_ref().unwrap()).unwrap(), p);
+    }
+
+    #[test]
+    fn the_fast_dib_path_gives_what_the_general_path_gives() {
+        type Make = fn(&Rgba, bool) -> Vec<u8>;
+        let variants: [(&str, Make, bool); 9] = [
+            ("24 bit", dib24, true),
+            ("32 bit, 40 byte header, BI_RGB", dib32_info, false),
+            ("32 bit, 40 byte header, masks", dib32_info_bitfields, true),
+            ("V5 bitfields", dibv5_bitfields, true),
+            ("V4 BI_RGB with alpha", dibv4_rgb_alpha, true),
+            ("16 bit 565", |p, t| dib16(p, t, true), false),
+            ("16 bit 555", |p, t| dib16(p, t, false), false),
+            ("8 bit", |p, t| dib8(p, t, 0), false),
+            ("4 bit", dib4, false),
+        ];
+        // The 16, 8 and 4 bit helpers only represent the four colours of `pic`.
+        let flat = [pic(1, 1), pic(5, 4), pic(7, 9), pic(33, 17)];
+        let pictures = [
+            pic_gradient(1, 1),
+            pic_gradient(2, 3),
+            pic_gradient(5, 4),
+            pic_gradient(7, 9),
+            pic_gradient(33, 17),
+            pic_alpha(8, 8),
+            pic_alpha(31, 5),
+        ];
+        for (name, make, takes_fast) in variants {
+            for top_down in [false, true] {
+                let set: &[Rgba] =
+                    if name.starts_with("16 bit") || name == "8 bit" || name == "4 bit" {
+                        &flat
+                    } else {
+                        &pictures
+                    };
+                for p in set {
+                    let dib = make(p, top_down);
+                    let fast = decode_dib_fast(&dib);
+                    assert_eq!(
+                        fast.is_some(),
+                        takes_fast,
+                        "{name}: the fast path is taken only for its own forms"
+                    );
+                    if let Some(f) = fast {
+                        let general = decode_dib_generic(&dib).unwrap();
+                        assert_eq!(
+                            f, general,
+                            "{name}, top_down {top_down}, {}x{}",
+                            p.width, p.height
+                        );
+                    }
+                }
+            }
+        }
+        // A 32 bit bitmap whose alpha byte is zero everywhere is opaque, in both.
+        let zero = Rgba {
+            width: 6,
+            height: 4,
+            pixels: [200u8, 100, 50, 0].repeat(24),
+        };
+        for d in [dibv5_bitfields(&zero, false), dibv4_rgb_alpha(&zero, true)] {
+            let fast = decode_dib_fast(&d).unwrap();
+            assert_eq!(fast, decode_dib_generic(&d).unwrap());
+            assert!(fast.pixels.chunks_exact(4).all(|p| p[3] == 0xFF));
+        }
+    }
+
+    #[test]
+    fn the_fast_dib_path_leaves_damaged_bitmaps_to_the_general_path() {
+        let p = pic_gradient(20, 10);
+        let d = dibv5_bitfields(&p, false);
+        assert!(
+            decode_dib_fast(&d[..d.len() - 1]).is_none(),
+            "one byte short"
+        );
+        assert!(decode_dib_fast(&d[..60]).is_none());
+        assert!(decode_dib_fast(&[]).is_none());
+        // Unusual masks (here: channels swapped) are the general path's business.
+        let mut odd = d.clone();
+        odd[40..44].copy_from_slice(&0x0000_00FFu32.to_le_bytes());
+        odd[48..52].copy_from_slice(&0x00FF_0000u32.to_le_bytes());
+        assert!(decode_dib_fast(&odd).is_none());
+        assert!(decode_dib(&odd).is_ok(), "and it still decodes");
     }
 
     #[test]
