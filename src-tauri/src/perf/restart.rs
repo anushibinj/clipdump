@@ -30,7 +30,7 @@ use crate::ingest::IngestPool;
 use crate::model::{ClipKind, OcrStatus};
 use crate::ocr::{OcrConfig, OcrEngine, OcrQueueHandle, OcrWorker};
 use crate::platform::{Captured, CapturedEvent, IngestMsg};
-use crate::search::{CachedPathChecker, ResultDto, SearchRequest, TypeFilter};
+use crate::search::{CachedPathChecker, MatchSource, ResultDto, SearchRequest, TypeFilter};
 use crate::settings::Settings;
 use crate::store::Store;
 
@@ -242,8 +242,18 @@ fn restart_keeps_items_pins_and_ocr_search() {
     let now = store.now_ms();
     let hits = answers(store, now);
     let word_hits = &hits.iter().find(|(q, _)| *q == OCR_WORD).unwrap().1;
-    assert_eq!(word_hits.len(), 14, "the OCR word finds every screenshot");
-    assert!(word_hits.iter().all(|r| r.kind == ClipKind::Image));
+    // The matcher also takes scattered letters in short texts, so other items can
+    // be listed; the ones matched through OCR text are the screenshots.
+    let by_ocr: Vec<_> = word_hits
+        .iter()
+        .filter(|r| r.match_source == MatchSource::Ocr)
+        .collect();
+    assert_eq!(
+        by_ocr.len(),
+        14,
+        "the OCR word finds every screenshot by its OCR text"
+    );
+    assert!(by_ocr.iter().all(|r| r.kind == ClipKind::Image));
 
     // 1. A kill: the folder as it is on disk while the app is still running.
     let crash = tmp.path().join("crash");
