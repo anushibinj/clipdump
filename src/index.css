@@ -87,4 +87,9 @@
     margin: 0;
     overflow: hidden;
   }
+  /* Thin native scrollbars: cheaper than a scroll-area for the long result list. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+  }
 }

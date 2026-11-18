@@ -127,3 +127,13 @@ describe("createLatest", () => {
     expect(applied).toEqual(["fast-new"]);
   });
 });
+
+describe("isDark", () => {
+  it("resolves the preference against the system setting", async () => {
+    const { isDark } = await import("./theme");
+    expect(isDark("system", true)).toBe(true);
+    expect(isDark("system", false)).toBe(false);
+    expect(isDark("dark", false)).toBe(true);
+    expect(isDark("light", true)).toBe(false);
+  });
+});
