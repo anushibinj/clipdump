@@ -19,6 +19,8 @@ pub mod model;
 #[allow(dead_code)]
 mod persist;
 mod platform;
+// The `clip` URI scheme for thumbnails and images (Phase 9).
+mod scheme;
 // Fuzzy search over the store (Phase 8). `pub` for the benchmark; the IPC command
 // (Phase 9) is its other caller.
 pub mod search;
@@ -68,6 +70,9 @@ pub fn run() {
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
         None,
     ));
+
+    // `clip://` serves thumbnails and images to the webview (see `scheme.rs`).
+    let builder = scheme::register(builder);
 
     builder
         // Keep `build.rs` (COMMANDS) and capabilities/default.json in step with this
