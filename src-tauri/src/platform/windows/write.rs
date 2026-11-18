@@ -37,12 +37,14 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
 };
 use ::windows::core::{PCWSTR, w};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 
-use super::read::{self, CF_DIBV5, CF_UNICODETEXT};
+use super::read::{self, CF_DIBV5, CF_HDROP, CF_UNICODETEXT};
 use crate::model::Payload;
 use crate::platform::ClipboardWriter;
-use crate::platform::clipfmt::{dibv5_len, fill_dibv5, unicode_text_units, write_units_le};
+use crate::platform::clipfmt::{
+    build_dropfiles, dibv5_len, drop_effect_copy, fill_dibv5, unicode_text_units, write_units_le,
+};
 
 pub struct WindowsWriter;
 
@@ -108,7 +110,25 @@ fn prepare(payload: &Payload) -> Result<Vec<Prepared>> {
                 },
             ])
         }
-        Payload::Files(_) => bail!("copying files is not implemented yet"),
+        Payload::Files(paths) => {
+            // `copy_item` already dropped the missing paths; the builder also
+            // leaves out anything that cannot go into a double NUL list. A list
+            // that ends up empty is an error, never an empty clipboard.
+            let list = build_dropfiles(paths);
+            ensure!(list.count > 0, "none of the files can be copied");
+            let effect_format = registered(&DROP_EFFECT_FORMAT, w!("Preferred DropEffect"))?;
+            Ok(vec![
+                Prepared {
+                    format: CF_HDROP,
+                    mem: OwnedGlobal::from_bytes(&list.bytes)?,
+                },
+                // Copy, so Explorer copies instead of moving the originals.
+                Prepared {
+                    format: effect_format,
+                    mem: OwnedGlobal::from_bytes(&drop_effect_copy())?,
+                },
+            ])
+        }
     }
 }
 
@@ -224,6 +244,9 @@ impl Drop for OwnedGlobal {
 /// The registered `PNG` format (what browsers, Office and most screenshot tools
 /// put on the clipboard next to the DIB).
 static PNG_FORMAT: AtomicU32 = AtomicU32::new(0);
+
+/// The registered `Preferred DropEffect` format (`CFSTR_PREFERREDDROPEFFECT`).
+static DROP_EFFECT_FORMAT: AtomicU32 = AtomicU32::new(0);
 
 /// Registered format id, looked up once and cached (the id is constant for the
 /// Windows session; registering again returns the same value, so a race here
