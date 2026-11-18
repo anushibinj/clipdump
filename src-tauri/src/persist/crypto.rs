@@ -30,6 +30,20 @@ pub const OVERHEAD: usize = NONCE_LEN + TAG_LEN;
 /// File name of the protected data key inside the data directory.
 pub const KEY_FILE: &str = "key.bin";
 
+/// Context of the errors that mean "`key.bin` exists but cannot give a key": the
+/// platform keystore refused it (DPAPI after a profile reset or a copy from another
+/// machine), it is the wrong size, or the file cannot be read. `persist::recovery`
+/// looks for it to decide that the history it protected is unreadable. A failure to
+/// CREATE a new key (disk full) does not carry it.
+#[derive(Debug)]
+pub struct KeyUnreadable;
+
+impl std::fmt::Display for KeyUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the data key in key.bin cannot be read")
+    }
+}
+
 /// Holds the cipher (and with it the key). The key schedule is wiped when this
 /// is dropped (`chacha20poly1305` is built with its `zeroize` feature).
 pub struct Crypto {
@@ -48,20 +62,23 @@ impl Crypto {
     /// Load `key.bin` from `dir`, or on first run generate a random key,
     /// protect it with `protector` and save it.
     ///
-    /// A `key.bin` that exists but cannot be unprotected is an error, never a
-    /// reason to silently generate a new key: that would make the existing
-    /// history permanently unreadable. The caller decides what to do (Phase 13
-    /// moves a history it cannot read aside and starts fresh).
+    /// A `key.bin` that exists but cannot be unprotected is an error (tagged
+    /// [`KeyUnreadable`]), never a reason to silently generate a new key: that
+    /// would make the existing history permanently unreadable. The caller decides
+    /// what to do (`persist::recovery` moves the history and the key aside, tells
+    /// the user, and only then lets a new key be made).
     pub fn load_or_create(dir: &Path, protector: &dyn KeyProtector) -> Result<Self> {
         let path = dir.join(KEY_FILE);
         match fs::read(&path) {
             Ok(blob) => {
                 let key = protector
                     .unprotect(&blob)
-                    .with_context(|| format!("cannot unprotect {}", path.display()))?;
+                    .with_context(|| format!("cannot unprotect {}", path.display()))
+                    .context(KeyUnreadable)?;
                 let key: Zeroizing<[u8; KEY_LEN]> =
                     Zeroizing::new(key.as_slice().try_into().map_err(|_| {
-                        anyhow::anyhow!("{} holds a key of the wrong size", KEY_FILE)
+                        anyhow::Error::msg(format!("{KEY_FILE} holds a key of the wrong size"))
+                            .context(KeyUnreadable)
                     })?);
                 Ok(Self::from_key(&key))
             }
@@ -73,7 +90,9 @@ impl Crypto {
                 write_atomic_synced(&path, &blob)?;
                 Ok(Self::from_key(&key))
             }
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => Err(e)
+                .with_context(|| format!("cannot read {}", path.display()))
+                .context(KeyUnreadable),
         }
     }
 

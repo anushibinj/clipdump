@@ -16,6 +16,80 @@ use crate::model::{ClipKind, OcrStatus};
 /// File name of the database inside the data directory.
 pub const DB_FILE: &str = "history.db";
 
+/// Marker error: `history.db` opens but its pages are inconsistent
+/// (`PRAGMA quick_check` said so). Together with SQLite's own "malformed" and
+/// "not a database" codes it is what `persist::recovery` treats as a damaged file.
+#[derive(Debug)]
+pub struct DatabaseDamaged;
+
+impl std::fmt::Display for DatabaseDamaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("history.db failed its integrity check")
+    }
+}
+
+impl std::error::Error for DatabaseDamaged {}
+
+/// Is `e` (or anything it wraps) a sign that the database FILE is damaged, as
+/// opposed to a busy, full or unreadable disk, which must never make anyone move
+/// the history aside?
+pub fn is_damage(e: &anyhow::Error) -> bool {
+    use rusqlite::ErrorCode::{DatabaseCorrupt, NotADatabase};
+    e.downcast_ref::<DatabaseDamaged>().is_some()
+        || e.chain().any(|c| {
+            matches!(
+                c.downcast_ref::<rusqlite::Error>(),
+                Some(rusqlite::Error::SqliteFailure(f, _))
+                    if matches!(f.code, DatabaseCorrupt | NotADatabase)
+            )
+        })
+}
+
+/// Databases up to this size get a `quick_check` before opening (a few
+/// milliseconds for a normal history); a bigger one is only probed (header and
+/// schema), so a huge file cannot make startup slow. Damage deeper inside it is
+/// met, and handled the same way, when the history is read.
+pub const QUICK_CHECK_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Look at an existing `history.db` before the writer touches it, through a
+/// READ ONLY connection. That matters: closing the last read/write connection of a
+/// damaged WAL database makes SQLite try a checkpoint and delete the `-wal`, and
+/// the point of moving a damaged history aside is to keep all of it. A read only
+/// connection changes nothing on disk.
+///
+/// A missing or empty file is fine (a first run). Damage returns an error that
+/// [`is_damage`] recognizes: SQLite's "not a database" or "malformed", or
+/// [`DatabaseDamaged`] from `PRAGMA quick_check(1)`, which walks every page once
+/// (cheaper than `integrity_check`: no index against table comparison).
+pub fn preflight(path: &Path) -> Result<()> {
+    let len = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return Ok(()),
+    };
+    if len == 0 {
+        return Ok(());
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("cannot open database {} for checking", path.display()))?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    if len > QUICK_CHECK_MAX_BYTES {
+        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+            r.get::<_, i64>(0)
+        })?;
+        return Ok(());
+    }
+    let verdict: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+    if verdict.eq_ignore_ascii_case("ok") {
+        Ok(())
+    } else {
+        // The verdict names pages and tables, never row content.
+        Err(anyhow::Error::new(DatabaseDamaged).context(format!("quick_check: {verdict}")))
+    }
+}
+
 /// Schema v1, verbatim from Section 3 of PLAN.md.
 const SCHEMA_V1: &str = "
 CREATE TABLE items (

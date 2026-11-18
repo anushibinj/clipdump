@@ -29,6 +29,7 @@ pub mod blobs;
 pub mod crypto;
 pub mod db;
 pub mod integrity;
+pub mod recovery;
 
 use std::fs;
 use std::path::Path;
@@ -166,6 +167,10 @@ impl Persist {
         let crypto = Arc::new(Crypto::load_or_create(dir, protector)?);
         let blobs = Arc::new(Blobs::new(dir, crypto.clone()));
         let db_path = dir.join(db::DB_FILE);
+        // Checked read only before the writer opens it, so a damaged file (and its
+        // WAL) reach `recovery` untouched. Damage is told apart from a busy or full
+        // disk by the error (`db::is_damage`).
+        db::preflight(&db_path)?;
         let writer_conn = db::open_writer(&db_path)?;
         // Before the writer thread exists, so nothing races with the cleanup.
         let integrity = integrity::run(&writer_conn, &blobs)?;

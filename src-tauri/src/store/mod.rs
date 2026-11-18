@@ -60,6 +60,7 @@ use crate::model::{ClipItem, ClipKind, FileRef, OcrStatus, Payload, fold_for_sea
 use crate::persist::blobs::hash_hex;
 use crate::persist::crypto::{Crypto, OVERHEAD};
 use crate::persist::db::MetaRow;
+use crate::persist::recovery::NoRowDecrypts;
 use crate::persist::{NewItem, Persist, WriteOp};
 use crate::search::{self, PathChecker, ResultDto, SearchRequest};
 use crate::settings::Settings;
@@ -311,6 +312,15 @@ impl Store {
             .load_all_meta(TEXT_IN_RAM_MAX + OVERHEAD)
             .context("cannot read the history")?;
         let decoded = decode_rows(&persist, rows);
+        // Rows exist and not one of them decrypts: this is not a few damaged rows
+        // (dropped one by one below, as ever), the whole file belongs to another
+        // key. Say so, and delete nothing: `persist::recovery` moves it aside.
+        if !decoded.is_empty() && decoded.iter().all(|(_, r)| r.is_err()) {
+            return Err(anyhow::Error::new(NoRowDecrypts).context(format!(
+                "none of the {} stored items can be read",
+                decoded.len()
+            )));
+        }
 
         let mut items = Items::default();
         // Rows come newest first; add oldest first so seq grows towards the top.

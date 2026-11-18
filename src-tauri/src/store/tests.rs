@@ -878,21 +878,65 @@ fn reload_after_restart_gives_identical_state() {
 fn unreadable_rows_are_dropped_at_startup_and_do_not_block_recopy() {
     let fx = Fx::new();
     fx.text("fine");
+    let bad = fx.text("will be damaged");
     fx.flush();
-    // A second store over the same data with a different key cannot decrypt.
     drop(fx.store);
     let dir = fx.dir;
-    std::fs::remove_file(dir.path().join("key.bin")).unwrap();
+    // One row's ciphertext is damaged (a flipped value, a bad sector).
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("history.db")).unwrap();
+        conn.execute(
+            "UPDATE items SET preview_enc = zeroblob(60) WHERE id = ?1",
+            [bad as i64],
+        )
+        .unwrap();
+    }
     let settings = fx.settings;
     let clock = fx.clock;
     let ocr = fx.ocr;
     let events = fx.events;
     let store = open_store(dir.path(), &settings, &clock, &ocr, &events);
-    assert_eq!(store.len(), 0, "undecryptable item dropped, no crash");
+    assert_eq!(store.len(), 1, "the damaged item dropped, the other kept");
     store.persist().flush().unwrap();
-    assert!(
-        store.persist().load_all_meta(0).unwrap().is_empty(),
+    assert_eq!(
+        store.persist().load_all_meta(0).unwrap().len(),
+        1,
         "and its row removed"
+    );
+}
+
+#[test]
+fn a_history_of_another_key_is_an_error_not_an_empty_store() {
+    // Every row fails to decrypt: not "a few damaged rows" but the wrong key for
+    // the whole file. The store says so (and deletes nothing) so that
+    // `persist::recovery` can move the file aside instead of silently emptying it.
+    let fx = Fx::new();
+    fx.text("one");
+    fx.text("two");
+    fx.flush();
+    drop(fx.store);
+    let dir = fx.dir;
+    std::fs::remove_file(dir.path().join("key.bin")).unwrap();
+    let persist = Arc::new(open(dir.path()));
+    let err = Store::open(
+        Arc::clone(&persist),
+        fx.settings,
+        fx.ocr.clone(),
+        None,
+        Arc::new(|| BASE),
+    )
+    .err()
+    .expect("the store must refuse");
+    assert_eq!(
+        crate::persist::recovery::classify(&err),
+        Some(crate::persist::recovery::Problem::WrongKey),
+        "{err:#}"
+    );
+    persist.flush().unwrap();
+    assert_eq!(
+        persist.load_all_meta(0).unwrap().len(),
+        2,
+        "no row was deleted on the way"
     );
 }
 
