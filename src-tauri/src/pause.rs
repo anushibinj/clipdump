@@ -8,13 +8,76 @@
 //! event (the caller emits it). The flag is never saved to `settings.json`: a
 //! restart always starts capturing, so a forgotten pause cannot silently lose
 //! clips for days.
+//!
+//! The tray shows the state three ways (check mark, icon, tooltip). The decision
+//! of what each shows is pure ([`TrayLook`]) and applied through [`TrayTarget`],
+//! so it is tested with a fake target; `tray.rs` is the real one.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Shows the pause state somewhere (the tray check item).
+/// Shows the pause state somewhere (the tray).
 pub trait PauseIndicator: Send + Sync {
     fn show(&self, paused: bool);
+}
+
+/// Which of the two tray icons to show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayIconKind {
+    Normal,
+    Paused,
+}
+
+/// Tooltip of the tray icon while capturing.
+pub const TOOLTIP_NORMAL: &str = "Clipdump";
+/// Tooltip of the tray icon while paused.
+pub const TOOLTIP_PAUSED: &str = "Clipdump (paused)";
+
+/// Everything the tray shows for one pause state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrayLook {
+    pub icon: TrayIconKind,
+    pub tooltip: &'static str,
+    /// The "Pause capture" check mark.
+    pub checked: bool,
+}
+
+impl TrayLook {
+    pub fn of(paused: bool) -> Self {
+        if paused {
+            Self {
+                icon: TrayIconKind::Paused,
+                tooltip: TOOLTIP_PAUSED,
+                checked: true,
+            }
+        } else {
+            Self {
+                icon: TrayIconKind::Normal,
+                tooltip: TOOLTIP_NORMAL,
+                checked: false,
+            }
+        }
+    }
+}
+
+/// The parts of the tray that change with the pause state.
+pub trait TrayTarget: Send + Sync {
+    fn set_checked(&self, checked: bool);
+    fn set_icon(&self, icon: TrayIconKind);
+    fn set_tooltip(&self, tooltip: &str);
+}
+
+/// A [`PauseIndicator`] that drives a [`TrayTarget`]: check mark, icon and
+/// tooltip always change together.
+pub struct TrayIndicator<T>(pub T);
+
+impl<T: TrayTarget> PauseIndicator for TrayIndicator<T> {
+    fn show(&self, paused: bool) {
+        let look = TrayLook::of(paused);
+        self.0.set_checked(look.checked);
+        self.0.set_icon(look.icon);
+        self.0.set_tooltip(look.tooltip);
+    }
 }
 
 #[derive(Default)]
@@ -33,7 +96,7 @@ impl Pause {
         self.flag.load(Ordering::Relaxed)
     }
 
-    /// Register the indicator (the tray item) and bring it to the current state.
+    /// Register the indicator (the tray) and bring it to the current state.
     pub fn set_indicator(&self, indicator: Box<dyn PauseIndicator>) {
         indicator.show(self.is_paused());
         *self.indicator.lock().unwrap_or_else(|e| e.into_inner()) = Some(indicator);
@@ -135,6 +198,80 @@ mod tests {
         assert!(p.toggle(), "tray: pause again");
         assert!(p.is_paused());
         assert_eq!(*log.lock().unwrap(), vec![false, true, false, true]);
+    }
+
+    /// Records every call to the tray, in order.
+    #[derive(Default)]
+    struct FakeTray(Arc<Mutex<Vec<String>>>);
+
+    impl TrayTarget for FakeTray {
+        fn set_checked(&self, checked: bool) {
+            self.0.lock().unwrap().push(format!("check {checked}"));
+        }
+        fn set_icon(&self, icon: TrayIconKind) {
+            self.0.lock().unwrap().push(format!("icon {icon:?}"));
+        }
+        fn set_tooltip(&self, tooltip: &str) {
+            self.0.lock().unwrap().push(format!("tip {tooltip}"));
+        }
+    }
+
+    fn with_tray() -> (Pause, Arc<Mutex<Vec<String>>>) {
+        let p = Pause::default();
+        let tray = FakeTray::default();
+        let log = Arc::clone(&tray.0);
+        p.set_indicator(Box::new(TrayIndicator(tray)));
+        (p, log)
+    }
+
+    #[test]
+    fn the_look_for_each_state() {
+        assert_eq!(
+            TrayLook::of(true),
+            TrayLook {
+                icon: TrayIconKind::Paused,
+                tooltip: "Clipdump (paused)",
+                checked: true
+            }
+        );
+        assert_eq!(
+            TrayLook::of(false),
+            TrayLook {
+                icon: TrayIconKind::Normal,
+                tooltip: "Clipdump",
+                checked: false
+            }
+        );
+    }
+
+    #[test]
+    fn pausing_switches_check_icon_and_tooltip_together() {
+        let (p, log) = with_tray();
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["check false", "icon Normal", "tip Clipdump"],
+            "initial sync"
+        );
+        log.lock().unwrap().clear();
+        assert!(p.set(true));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["check true", "icon Paused", "tip Clipdump (paused)"]
+        );
+        log.lock().unwrap().clear();
+        assert!(!p.toggle());
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["check false", "icon Normal", "tip Clipdump"]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_state_leaves_the_tray_alone() {
+        let (p, log) = with_tray();
+        log.lock().unwrap().clear();
+        assert!(!p.set(false));
+        assert!(log.lock().unwrap().is_empty());
     }
 
     #[test]

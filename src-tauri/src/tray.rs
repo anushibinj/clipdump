@@ -3,31 +3,67 @@
 
 use tauri::{
     App, AppHandle, Emitter, Manager, Wry,
+    image::Image,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
 
 use crate::events;
-use crate::pause::PauseIndicator;
+use crate::pause::{TrayIconKind, TrayIndicator, TrayLook, TrayTarget};
 use crate::state::AppState;
 use crate::window;
+
+// The two tray icons, rendered from icons-src/tray-*.svg by scripts/render-icons.mjs.
+const TRAY_NORMAL_PNG: &[u8] = include_bytes!("../icons/tray/tray-normal.png");
+const TRAY_PAUSED_PNG: &[u8] = include_bytes!("../icons/tray/tray-paused.png");
 
 const ID_SHOW: &str = "show";
 const ID_PAUSE: &str = "pause";
 const ID_SETTINGS: &str = "settings";
 const ID_QUIT: &str = "quit";
 
-/// The tray's "Pause capture" check item as the pause indicator: `set_settings`
-/// changes the flag and this keeps the check mark in step (`pause.rs`).
-struct TrayPause(CheckMenuItem<Wry>);
+/// The real tray as the pause indicator's target (`pause.rs` decides what to show):
+/// the "Pause capture" check item, the icon (both images are decoded once at
+/// startup, switching is a handle swap) and the tooltip. Tauri dispatches every
+/// call to the main thread, so any thread may call them.
+struct TrayPause {
+    check: CheckMenuItem<Wry>,
+    tray: TrayIcon<Wry>,
+    normal: Image<'static>,
+    paused: Image<'static>,
+}
 
-impl PauseIndicator for TrayPause {
-    fn show(&self, paused: bool) {
-        // Dispatched to the main thread by Tauri, so any thread may call it.
-        if let Err(e) = self.0.set_checked(paused) {
+impl TrayTarget for TrayPause {
+    fn set_checked(&self, checked: bool) {
+        if let Err(e) = self.check.set_checked(checked) {
             eprintln!("clipdump: could not update the tray check mark: {e}");
         }
     }
+
+    fn set_icon(&self, icon: TrayIconKind) {
+        let image = match icon {
+            TrayIconKind::Normal => &self.normal,
+            TrayIconKind::Paused => &self.paused,
+        };
+        if let Err(e) = self.tray.set_icon(Some(image.clone())) {
+            eprintln!("clipdump: could not update the tray icon: {e}");
+        }
+    }
+
+    fn set_tooltip(&self, tooltip: &str) {
+        if let Err(e) = self.tray.set_tooltip(Some(tooltip)) {
+            eprintln!("clipdump: could not update the tray tooltip: {e}");
+        }
+    }
+}
+
+/// Decode an embedded PNG into the RGBA image the tray wants.
+fn decode_icon(png: &[u8]) -> tauri::Result<Image<'static>> {
+    let rgba = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .map_err(|e| tauri::Error::InvalidIcon(std::io::Error::other(e)))?
+        .into_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok(Image::new_owned(rgba.into_raw(), w, h))
 }
 
 pub fn build(app: &App) -> tauri::Result<()> {
@@ -53,8 +89,17 @@ pub fn build(app: &App) -> tauri::Result<()> {
         ],
     )?;
 
-    let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("clipdump")
+    let normal = decode_icon(TRAY_NORMAL_PNG)?;
+    let paused_icon = decode_icon(TRAY_PAUSED_PNG)?;
+    let look = TrayLook::of(paused);
+    let first = match look.icon {
+        TrayIconKind::Normal => normal.clone(),
+        TrayIconKind::Paused => paused_icon.clone(),
+    };
+
+    let builder = TrayIconBuilder::with_id("main")
+        .icon(first)
+        .tooltip(look.tooltip)
         .menu(&menu)
         // Left click toggles the bar; the menu opens on right click only.
         .show_menu_on_left_click(false)
@@ -69,13 +114,17 @@ pub fn build(app: &App) -> tauri::Result<()> {
                 window::toggle(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    builder.build(app)?;
+    let tray = builder.build(app)?;
+    // Brings the check mark, icon and tooltip to the current state, and keeps
+    // them in step from here on.
     app.state::<AppState>()
         .pause
-        .set_indicator(Box::new(TrayPause(pause_item)));
+        .set_indicator(Box::new(TrayIndicator(TrayPause {
+            check: pause_item,
+            tray,
+            normal,
+            paused: paused_icon,
+        })));
     Ok(())
 }
 
