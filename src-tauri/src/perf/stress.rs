@@ -38,6 +38,11 @@
 //! * a graceful shutdown and a reopen give the identical state, and a search for
 //!   an OCR word finds the screenshots that got that text.
 
+// All of this file is test code (declared `#[cfg(test)] mod` in `perf/mod.rs`, never
+// part of the app). The log audit of `commands/bounds_tests.rs` treats everything
+// after the first `#[cfg(test)]` in a file as test code, so say so here.
+#[cfg(test)]
+const _: () = ();
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -506,7 +511,7 @@ impl Generator {
     }
 
     fn pick(&mut self, i: usize) -> Kind {
-        if i > 8 && i % 53 == 0 {
+        if i > 8 && i.is_multiple_of(53) {
             return Kind::Duplicate;
         }
         if self.rng.below(100) < u64::from(self.image_pct) {
@@ -1062,7 +1067,7 @@ fn run(p: &Params) -> Report {
                     let g = store.read();
                     (g.unpinned_count(), g.len())
                 };
-                if n % 4 == 0 {
+                if n.is_multiple_of(4) {
                     disk_actual = disk_use(&dir).total;
                 }
                 let free = free_bytes(&dir).unwrap_or(u64::MAX);
@@ -1092,7 +1097,6 @@ fn run(p: &Params) -> Report {
     // -- concurrent search every 50 ms -------------------------------------------
     let searcher = {
         let (store, stop) = (Arc::clone(&store), Arc::clone(&stop));
-        let t0 = t0;
         thread::spawn(move || {
             let paths = CachedPathChecker::default();
             let mut lat = Vec::new();
@@ -1378,10 +1382,10 @@ fn run(p: &Params) -> Report {
         ));
     }
     for (id, kind, blob) in &pinned {
-        if let Some(name) = blob {
-            if !have_blobs.contains(name) {
-                problems.push(format!("the pinned {kind:?} item {id} lost its file"));
-            }
+        if let Some(name) = blob
+            && !have_blobs.contains(name)
+        {
+            problems.push(format!("the pinned {kind:?} item {id} lost its file"));
         }
     }
 

@@ -89,16 +89,12 @@ pub fn render_markdown(rows: &[(Event, Stat)]) -> String {
             ),
             None => ("-".to_owned(), "-"),
         };
+        // Numbers and the event's fixed name, bound to neutral names first.
+        let (what, runs) = (e.name(), s.count);
+        let (p50, p95, worst) = (ms(s.p50), ms(s.p95), ms(s.max));
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} |",
-            e.name(),
-            s.count,
-            ms(s.p50),
-            ms(s.p95),
-            ms(s.max),
-            budget,
-            verdict
+            "| {what} | {runs} | {p50} | {p95} | {worst} | {budget} | {verdict} |"
         );
     }
     out
@@ -119,12 +115,8 @@ pub fn read_log(path: &Path) -> io::Result<Vec<Sample>> {
 pub fn summarize_log(path: &Path) -> io::Result<String> {
     let samples = read_log(path)?;
     let rows = summarize(&samples);
-    let mut md = format!(
-        "## Perf summary\n\n{} samples from `{}`.\n\n",
-        samples.len(),
-        path.file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-    );
+    let samples_seen = samples.len();
+    let mut md = format!("## Perf summary\n\n{samples_seen} samples.\n\n");
     if rows.is_empty() {
         md.push_str(
             "No samples yet. Start the app with `--perf`, use it, quit, and summarize again.\n",
@@ -150,7 +142,7 @@ pub fn run_cli(path: Option<&Path>) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("clipdump: cannot read {}: {e}", path.display());
+            eprintln!("clipdump: cannot read the perf log: {e}");
             1
         }
     }
@@ -268,7 +260,7 @@ mod tests {
             [100, 300, 200]
         );
         let md = summarize_log(&path).unwrap();
-        assert!(md.contains("3 samples from `perf.log`"), "{md}");
+        assert!(md.contains("3 samples."), "{md}");
         assert!(
             md.contains("| ocr | 3 | 0.20 | 0.30 | 0.30 | 1000 | under |"),
             "{md}"

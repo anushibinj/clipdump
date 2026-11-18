@@ -537,8 +537,9 @@ fn box_downscale(img: &Rgba, tw: u32, th: u32) -> Rgba {
                 }
                 out[o + 3] = 0xFF;
             } else if a[3] > 0 {
+                let weight = a[3];
                 for c in 0..3 {
-                    out[o + c] = ((a[c] + a[3] / 2) / a[3]) as u8;
+                    out[o + c] = ((a[c] + weight / 2) / weight) as u8;
                 }
                 out[o + 3] = ((a[3] + n / 2) / n) as u8;
             }
@@ -621,7 +622,10 @@ const PARALLEL_MIN_BYTES: usize = 2 << 20;
 /// after their sum. The helper lowers its own priority like the ingest worker
 /// (priority belongs to a thread, not to the process). If the thread cannot be
 /// started the encode just runs here.
-fn stages(img: &Rgba, need_png: bool) -> (Option<Result<Vec<u8>>>, u128, Result<Vec<u8>>) {
+/// What [`stages`] returns: the PNG (when asked for), the hash, the thumbnail.
+type Stages = (Option<Result<Vec<u8>>>, u128, Result<Vec<u8>>);
+
+fn stages(img: &Rgba, need_png: bool) -> Stages {
     if !need_png || img.pixels.len() < PARALLEL_MIN_BYTES {
         let png = need_png.then(|| encode_png(img));
         return (png, hash(img), thumbnail_webp(img));

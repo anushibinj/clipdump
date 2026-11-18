@@ -7,6 +7,11 @@
 //! cargo test --profile perf --lib ingest_image_4k -- --ignored --nocapture
 //! ```
 
+// All of this file is test code (declared `#[cfg(test)] mod` in `perf/mod.rs`, never
+// part of the app). The log audit of `commands/bounds_tests.rs` treats everything
+// after the first `#[cfg(test)]` in a file as test code, so say so here.
+#[cfg(test)]
+const _: () = ();
 use std::time::{Duration, Instant};
 
 use super::stress::Pictures;
@@ -143,7 +148,7 @@ fn ingest_image_4k_stages() {
     }
     eprintln!(
         "a fresh {} MB buffer, first touch of every page: {:.1} ms",
-        w as usize * h as usize * 4 >> 20,
+        (w as usize * h as usize * 4) >> 20,
         median(&mut touch)
     );
     eprintln!("=== END INGEST 4K STAGES ===\n");

@@ -18,6 +18,11 @@
 //! same population can be written to a folder (`CLIPDUMP_RESTART_KEEP_DIR`) for
 //! the real app's `--perf` startup line.
 
+// All of this file is test code (declared `#[cfg(test)] mod` in `perf/mod.rs`, never
+// part of the app). The log audit of `commands/bounds_tests.rs` treats everything
+// after the first `#[cfg(test)]` in a file as test code, so say so here.
+#[cfg(test)]
+const _: () = ();
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;

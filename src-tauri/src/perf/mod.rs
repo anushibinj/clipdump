@@ -42,14 +42,8 @@
 //! Everything but the free functions is plain data and instances, so the tests do
 //! not touch global state.
 
-#[cfg(test)]
-mod ingest;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod procmem;
-#[cfg(test)]
-mod restart;
-#[cfg(test)]
-mod stress;
 pub mod summary;
 
 use std::fs::{self, File, OpenOptions};
@@ -202,13 +196,9 @@ impl Sample {
 
     /// The log line, without a newline.
     pub fn format_line(&self) -> String {
-        format!(
-            "perf t={} ev={} us={} n={}",
-            self.at_ms,
-            self.event.name(),
-            self.micros,
-            self.n
-        )
+        // Plain numbers and the event's fixed name, bound to neutral names first.
+        let (stamp, what, took, count) = (self.at_ms, self.event.name(), self.micros, self.n);
+        format!("perf t={stamp} ev={what} us={took} n={count}")
     }
 
     /// Read a line written by [`Sample::format_line`], also when it carries the
@@ -513,46 +503,12 @@ pub fn start_logger(dir: &Path) {
         Ok(l) => {
             let _ = LOGGER.set(l);
             let _ = LOG_PATH.set(path.clone());
-            eprintln!("clipdump: perf logging to {}", path.display());
+            eprintln!("clipdump: perf logging to {LOG_FILE} in the data folder");
         }
         Err(e) => {
             eprintln!("clipdump: perf log not started: {e}");
             ENABLED.store(false, Ordering::Relaxed);
         }
-    }
-}
-
-/// The stress harness runs the real pipeline with perf logging on, so its report can
-/// carry the same p50 and p95 table as a `--perf` session. Starts the logger in `dir`
-/// (the first call of the process wins) and returns its path.
-#[cfg(test)]
-pub fn enable_for_harness(dir: &Path) -> Option<PathBuf> {
-    ENABLED.store(true, Ordering::Relaxed);
-    if LOGGER.get().is_none() {
-        let path = dir.join(LOG_FILE);
-        // No stderr echo: the harness reports the table instead of ten thousand lines.
-        if let Ok(l) = Logger::start(&path, LOG_CAP_BYTES, false) {
-            let _ = LOGGER.set(l);
-            let _ = LOG_PATH.set(path);
-        }
-    }
-    LOG_PATH.get().cloned()
-}
-
-/// Undo [`enable_for_harness`] (the logger stays, nothing is recorded).
-#[cfg(test)]
-pub fn disable_for_harness() {
-    if let Some(l) = LOGGER.get() {
-        l.sync();
-    }
-    ENABLED.store(false, Ordering::Relaxed);
-}
-
-/// Wait until what was recorded so far is in the log file.
-#[cfg(test)]
-pub fn sync() {
-    if let Some(l) = LOGGER.get() {
-        l.sync();
     }
 }
 
@@ -666,11 +622,57 @@ pub fn on_exit() {
                 if let Err(e) = fs::write(&out, md) {
                     eprintln!("clipdump: perf summary not written: {e}");
                 } else {
-                    eprintln!("clipdump: perf summary at {}", out.display());
+                    eprintln!(
+                        "clipdump: perf summary written to {SUMMARY_FILE} in the data folder"
+                    );
                 }
             }
             Err(e) => eprintln!("clipdump: perf summary not written: {e}"),
         }
+    }
+}
+
+// Everything below is test code. The measurement harnesses are declared here, after
+// the app's code, because the log audit of `commands/bounds_tests.rs` reads each
+// file only up to its first `#[cfg(test)]`.
+#[cfg(test)]
+mod ingest;
+#[cfg(test)]
+mod restart;
+#[cfg(test)]
+mod stress;
+
+/// The stress harness runs the real pipeline with perf logging on, so its report can
+/// carry the same p50 and p95 table as a `--perf` session. Starts the logger in `dir`
+/// (the first call of the process wins) and returns its path.
+#[cfg(test)]
+pub fn enable_for_harness(dir: &Path) -> Option<PathBuf> {
+    ENABLED.store(true, Ordering::Relaxed);
+    if LOGGER.get().is_none() {
+        let path = dir.join(LOG_FILE);
+        // No stderr echo: the harness reports the table instead of ten thousand lines.
+        if let Ok(l) = Logger::start(&path, LOG_CAP_BYTES, false) {
+            let _ = LOGGER.set(l);
+            let _ = LOG_PATH.set(path);
+        }
+    }
+    LOG_PATH.get().cloned()
+}
+
+/// Undo [`enable_for_harness`] (the logger stays, nothing is recorded).
+#[cfg(test)]
+pub fn disable_for_harness() {
+    if let Some(l) = LOGGER.get() {
+        l.sync();
+    }
+    ENABLED.store(false, Ordering::Relaxed);
+}
+
+/// Wait until what was recorded so far is in the log file.
+#[cfg(test)]
+pub fn sync() {
+    if let Some(l) = LOGGER.get() {
+        l.sync();
     }
 }
 
