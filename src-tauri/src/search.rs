@@ -19,13 +19,14 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use serde::Deserialize;
 
 use crate::model::{ClipItem, ClipKind};
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 /// Per thread reusable matching state.
 struct Scratch {
@@ -98,6 +99,31 @@ impl Query {
             })
             .collect();
         Some(Self { terms, positives })
+    }
+
+    /// Score `hay`: the summed nucleo score of every word and whether all
+    /// positive words matched contiguously. `None` when the item does not match
+    /// (a word is missing, or a `!negated` word is present).
+    ///
+    /// A plain word is tried as a substring first: that is memchr accelerated, and
+    /// when it hits there is no need for the much costlier fuzzy pass. nucleo
+    /// scores a contiguous placement with the same function, so the two scores
+    /// are comparable.
+    fn score(&self, hay: Utf32Str<'_>, m: &mut Matcher) -> Option<(u32, bool)> {
+        let mut total = 0u32;
+        let mut exact = self.positives > 0;
+        for t in &self.terms {
+            if let Some(twin) = &t.exact {
+                if let Some(s) = twin.score(hay, m) {
+                    total += u32::from(s);
+                    continue;
+                }
+                exact = false;
+            }
+            // `!negated` words score 0 when absent and `None` when present.
+            total += u32::from(t.atom.score(hay, m)?);
+        }
+        Some((total, exact))
     }
 }
 
@@ -172,6 +198,29 @@ pub const DEFAULT_LIMIT: usize = 50;
 /// scan that builds thousands of DTOs.
 pub const MAX_LIMIT: usize = 200;
 
+// -- ranking constants (all tuning lives here) --------------------------------
+//
+// nucleo scores a match in "points": about 16 per matched char, plus bonuses for
+// word starts, camelCase and consecutive chars, minus gap penalties. A good
+// 5 char match scores roughly 120 to 160; a scattered one 60 to 90. The boosts
+// below are small next to that, so they reorder results of similar quality but
+// never turn a bad match into the top hit.
+
+/// Recency boost for an item used right now, in nucleo points (about one and a
+/// half matched characters).
+pub const RECENCY_BOOST_MAX: f64 = 24.0;
+/// The recency boost halves every this many ms (3 days): something copied this
+/// morning clearly beats last week's copy, while a month old item keeps almost
+/// nothing. A decaying curve (not a bucket) so order stays smooth over time.
+pub const RECENCY_HALF_LIFE_MS: f64 = 3.0 * 86_400_000.0;
+/// Weight of `ln(1 + use_count)`. The plan ranks by that logarithm; the weight
+/// puts it on the nucleo point scale: used 10 times is worth about 19 points,
+/// 100 times about 37.
+pub const USE_COUNT_WEIGHT: f64 = 8.0;
+// Exact (contiguous, case insensitive per smart case) matches are not a score
+// bonus: they are a separate tier that always sorts above fuzzy-only matches, see
+// `Hit::cmp_rank`. That guarantees "exact beats fuzzy" whatever the boosts are.
+
 /// Everything a search needs besides the items.
 #[derive(Clone, Copy, Debug)]
 pub struct SearchRequest<'a> {
@@ -238,9 +287,92 @@ pub fn rank<'a>(
     let parsed = parse_query(req.query, req.filter);
     match Query::parse(parsed.text) {
         None => rank_recent(items, parsed.filter, limit),
-        // Added with the fuzzy ranking in the next commit.
-        Some(_) => Vec::new(),
+        Some(q) => with_scratch(|sc| rank_matches(items, &q, parsed.filter, limit, req.now_ms, sc)),
     }
+}
+
+/// A matching item during selection. Small and `Copy`-like on purpose: a
+/// search pushes one per matching item.
+struct Hit<'a> {
+    item: &'a Arc<ClipItem>,
+    /// Position in the newest first scan: the final, unique tie breaker.
+    order: u32,
+    exact: bool,
+    score: f64,
+}
+
+impl Hit<'_> {
+    /// `Less` means `self` ranks first: exact tier, then score (highest), then
+    /// newest. `order` is unique, so this is a total order and an unstable sort
+    /// still gives a stable, reproducible result.
+    fn cmp_rank(&self, other: &Self) -> Ordering {
+        other
+            .exact
+            .cmp(&self.exact)
+            .then_with(|| other.score.total_cmp(&self.score))
+            .then_with(|| self.order.cmp(&other.order))
+    }
+}
+
+/// The recency and use count boost of one item.
+fn boost(item: &ClipItem, now_ms: i64) -> f64 {
+    // A clock that ran backwards (or the store's stamps running a few ms ahead
+    // of it) must not give more than the maximum.
+    let age = (now_ms - item.last_used_at).max(0) as f64;
+    let recency = RECENCY_BOOST_MAX * (-age / RECENCY_HALF_LIFE_MS).exp2();
+    let uses = if item.use_count == 0 {
+        0.0
+    } else {
+        USE_COUNT_WEIGHT * f64::from(item.use_count).ln_1p()
+    };
+    recency + uses
+}
+
+/// A non empty query: score every item that passes the type filter, keep the
+/// best `limit`.
+fn rank_matches<'a>(
+    items: impl Iterator<Item = &'a Arc<ClipItem>>,
+    q: &Query,
+    filter: TypeFilter,
+    limit: usize,
+    now_ms: i64,
+    sc: &mut Scratch,
+) -> Vec<Ranked> {
+    let mut hits: Vec<Hit<'a>> = Vec::with_capacity(64);
+    for (order, item) in items.enumerate() {
+        if !filter.accepts(item.kind) {
+            continue;
+        }
+        let text: &str = &item.search_text;
+        // An image whose OCR has not run has no text. (A query of only negated
+        // words matches everything, so only skip when a word must match.)
+        if text.is_empty() && q.positives > 0 {
+            continue;
+        }
+        let hay = Utf32Str::new(text, &mut sc.chars);
+        let Some((fuzzy, exact)) = q.score(hay, &mut sc.matcher) else {
+            continue;
+        };
+        hits.push(Hit {
+            item,
+            order: order as u32,
+            exact,
+            score: f64::from(fuzzy) + boost(item, now_ms),
+        });
+    }
+    if hits.len() > limit {
+        // O(n) partition, then sort only the winners.
+        hits.select_nth_unstable_by(limit, Hit::cmp_rank);
+        hits.truncate(limit);
+    }
+    hits.sort_unstable_by(Hit::cmp_rank);
+    hits.into_iter()
+        .map(|h| Ranked {
+            item: Arc::clone(h.item),
+            exact: h.exact,
+            score: h.score,
+        })
+        .collect()
 }
 
 /// The empty query: pinned items first, then the rest, each group newest first.

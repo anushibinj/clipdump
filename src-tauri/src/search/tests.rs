@@ -258,3 +258,28 @@ fn pinned_items_alone_can_fill_the_limit() {
     req.limit = 3;
     assert_eq!(ids(&rank(items.iter(), &req)), [1, 2, 3]);
 }
+
+// -- fuzzy ranking (sanity here, the full set is in "ranking tests") ---------
+
+#[test]
+fn a_fuzzy_query_finds_and_an_unrelated_one_does_not() {
+    let items = [text(1, "the quick brown fox", 1), text(2, "lorem ipsum", 2)];
+    assert_eq!(ids(&ranked(&items, "qbf", TypeFilter::All)), [1]);
+    assert!(ranked(&items, "zzz", TypeFilter::All).is_empty());
+}
+
+#[test]
+fn exact_substring_beats_a_better_scoring_fuzzy_match() {
+    // Item 1 is a perfect word start fuzzy match and much more recent; item 2
+    // contains the query as a plain substring, mid word.
+    let items = [
+        text(1, "Config Parser Class", 1),
+        text(2, "xxcfgparxx", 50 * DAY),
+    ];
+    let r = ranked(&items, "cfgpar", TypeFilter::All);
+    assert_eq!(ids(&r), [2, 1], "both match, the exact one first");
+    assert!(r[0].is_exact() && !r[1].is_exact());
+    // Without a contiguous match the recent word start match is first anyway.
+    let r = ranked(&items, "cpc", TypeFilter::All);
+    assert_eq!(ids(&r), [1]);
+}
