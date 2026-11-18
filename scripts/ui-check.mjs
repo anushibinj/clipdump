@@ -2,6 +2,11 @@
 //
 //   node scripts/ui-check.mjs keys    keyboard flow assertions (exit code 1 on a failure)
 //   node scripts/ui-check.mjs perf    keystroke to rendered timings with 1,000 fake items
+//   node scripts/ui-check.mjs a11y    accessibility audit in light and dark: ARIA roles and names of the
+//                                     search view and settings, a live region for the result count,
+//                                     dialog semantics, a visible focus ring on every Tab stop, text
+//                                     contrast (WCAG AA) over every visible text of every state,
+//                                     prefers-reduced-motion, target sizes (exit code 1 on a failure)
 //   node scripts/ui-check.mjs shots   screenshots for docs/screenshots (needs --out DIR). The
 //                                     committed PNGs were palette-quantized with Pillow afterwards
 //                                     (96 colors, no dithering) to stay under 1 MB in total.
@@ -514,6 +519,359 @@ async function keys(browser, url) {
 }
 
 // ---------------------------------------------------------------------------
+// a11y
+// ---------------------------------------------------------------------------
+
+/** Runs in the page: contrast of every visible text under `root`, against what is behind it. */
+function contrastScan({ rootSelector, dark }) {
+  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  const cache = new Map();
+  // Any CSS color (oklch, color-mix, rgb) to [r, g, b, a] in sRGB, through a canvas pixel.
+  const rgba = (css) => {
+    if (cache.has(css)) return cache.get(css);
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = "#000";
+    ctx.fillStyle = css;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    const v = [r, g, b, a / 255];
+    cache.set(css, v);
+    return v;
+  };
+  const over = (top, under) => {
+    const a = top[3];
+    return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)).concat([1]);
+  };
+  const lum = ([r, g, b]) => {
+    const f = (c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // What is painted behind `el`: the nearest opaque background composited with the translucent
+  // ones above it, over the window backdrop (white in light, black in dark: the worst case for a
+  // translucent card on a transparent window).
+  const backdrop = dark ? [0, 0, 0, 1] : [255, 255, 255, 1];
+  const behind = (el) => {
+    const layers = [];
+    for (let n = el; n; n = n.parentElement) {
+      const bg = rgba(getComputedStyle(n).backgroundColor);
+      if (bg[3] > 0) layers.push(bg);
+      if (bg[3] === 1) break;
+    }
+    return layers.reduceRight((under, top) => over(top, under), backdrop);
+  };
+  const opacityOf = (el) => {
+    let o = 1;
+    for (let n = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+    return o;
+  };
+  const describe = (el) => {
+    const cls = typeof el.className === "string" ? el.className.split(/\s+/).slice(0, 3).join(".") : "";
+    return `${el.tagName.toLowerCase()}${cls ? "." + cls : ""}`;
+  };
+  const out = [];
+  const root = document.querySelector(rootSelector) ?? document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const seen = new Set();
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+    const text = t.textContent.trim();
+    const el = t.parentElement;
+    if (!text || !el || seen.has(el)) continue;
+    const box = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    if (box.width === 0 || box.height === 0 || cs.visibility === "hidden" || cs.display === "none") continue;
+    if (el.closest("[hidden], [aria-hidden='true'], .sr-only")) continue;
+    // A disabled control is exempt from the contrast requirement (WCAG 1.4.3).
+    if (el.closest(":disabled, [aria-disabled='true']")) continue;
+    seen.add(el);
+    let fg = rgba(cs.color);
+    const bg = behind(el);
+    const op = opacityOf(el);
+    fg = over([fg[0], fg[1], fg[2], fg[3] * op], bg);
+    const size = parseFloat(cs.fontSize);
+    const bold = Number(cs.fontWeight) >= 700;
+    const large = size >= 24 || (bold && size >= 18.66);
+    const need = large ? 3 : 4.5;
+    const r = ratio(fg, bg);
+    const where = el.closest("[role=option]") ? " in a row" : el.closest("footer") ? " in the footer" : "";
+    out.push({ what: `${describe(el)} "${text.slice(0, 28)}"${where} fg ${fg.slice(0, 3).map(Math.round)} bg ${bg.slice(0, 3).map(Math.round)}`, ratio: Math.round(r * 100) / 100, need, ok: r >= need });
+  }
+  // Placeholders of text inputs.
+  for (const input of root.querySelectorAll("input[placeholder]")) {
+    const box = input.getBoundingClientRect();
+    if (box.width === 0) continue;
+    const bg = behind(input);
+    const fg = over(rgba(getComputedStyle(input, "::placeholder").color), bg);
+    const r = ratio(fg, bg);
+    out.push({ what: `placeholder "${input.placeholder.slice(0, 28)}"`, ratio: Math.round(r * 100) / 100, need: 4.5, ok: r >= 4.5 });
+  }
+  return out;
+}
+
+async function a11y(browser, url) {
+  let failed = 0;
+  const check = (name, ok, detail = "") => {
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `  (${detail})`}`);
+    if (!ok) failed += 1;
+  };
+
+  for (const scheme of ["light", "dark"]) {
+    console.log(`\n== ${scheme} ==`);
+    const { page, ctx, problems } = await openPage(browser, url, { scheme });
+    const settle = (ms = 150) => page.waitForTimeout(ms);
+    const input = page.locator("input[cmdk-input]");
+    const dark = scheme === "dark";
+
+    // ---- page level ----------------------------------------------------------------
+    check("the document has a language and a title", await page.evaluate(() => !!document.documentElement.lang && !!document.title));
+
+    // ---- search view: combobox, listbox, options -----------------------------------------------
+    await input.fill("build");
+    await settle();
+    const aria = await page.evaluate(() => {
+      const i = document.querySelector("input[cmdk-input]");
+      const lb = document.querySelector('[role="listbox"]');
+      const active = i.getAttribute("aria-activedescendant");
+      const opt = active ? document.getElementById(active) : null;
+      return {
+        role: i.getAttribute("role"),
+        label: i.getAttribute("aria-label"),
+        controls: i.getAttribute("aria-controls"),
+        listboxId: lb?.id,
+        listboxName: lb?.getAttribute("aria-label") || lb?.getAttribute("aria-labelledby"),
+        expanded: i.getAttribute("aria-expanded"),
+        activeRole: opt?.getAttribute("role"),
+        activeSelected: opt?.getAttribute("aria-selected"),
+        unnamedOptions: [...document.querySelectorAll('[role="option"]')].filter((o) => !(o.getAttribute("aria-label") || o.innerText).trim()).length,
+        options: document.querySelectorAll('[role="option"]').length,
+      };
+    });
+    check("the input is a combobox with a name", aria.role === "combobox" && !!aria.label, JSON.stringify(aria));
+    check("the input controls the listbox", !!aria.controls && aria.controls === aria.listboxId, JSON.stringify(aria));
+    check("the listbox has a name", !!aria.listboxName);
+    check("aria-activedescendant points at the selected option", aria.activeRole === "option" && aria.activeSelected === "true");
+    check("every option has a name", aria.options > 0 && aria.unnamedOptions === 0, `${aria.unnamedOptions} of ${aria.options}`);
+    const before = await input.getAttribute("aria-activedescendant");
+    await page.keyboard.press("ArrowDown");
+    await settle(60);
+    check("ArrowDown moves aria-activedescendant", (await input.getAttribute("aria-activedescendant")) !== before);
+
+    // ---- live region for the result count -------------------------------------------------
+    const live = page.locator('[aria-live="polite"]').first();
+    const liveText = async () => (await live.count()) === 0 ? "" : (await live.innerText()).trim();
+    await input.fill("build");
+    await settle();
+    const t1 = await liveText();
+    await input.fill("zzzzqqq");
+    await settle();
+    const t2 = await liveText();
+    await input.fill("");
+    await settle();
+    const t3 = await liveText();
+    check("a polite live region announces the result count", /\d+ results?/.test(t1), JSON.stringify(t1));
+    check("the announcement follows the query", t1 !== t2 && /no results/i.test(t2) && t3 !== t2, JSON.stringify([t1, t2, t3]));
+
+    // ---- unnamed controls anywhere in the tree (search view) ---------------------------------
+    const unnamed = async () => {
+      const snap = await page.locator("body").ariaSnapshot();
+      return snap.split("\n").filter((l) => /^\s*- (button|checkbox|switch|combobox|textbox|spinbutton|link|radio|option|tab|menuitem)(\s*\[|\s*:|\s*$)/.test(l));
+    };
+    check("every control in the search view has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+
+    // ---- contrast: search states --------------------------------------------------------------
+    const scan = async (label) => {
+      const rows = await page.evaluate(contrastScan, { rootSelector: "main", dark });
+      const bad = rows.filter((r) => !r.ok);
+      check(`text contrast, ${label} (${rows.length} texts)`, bad.length === 0, bad.map((r) => `${r.what} ${r.ratio}<${r.need}`).slice(0, 4).join("; "));
+    };
+    await input.fill("");
+    await settle();
+    await scan("search, empty query");
+    await input.fill("build");
+    await settle();
+    await scan("search, with matches");
+    await input.fill("revenue");
+    await settle();
+    await scan("search, OCR match");
+    await input.fill("");
+    await page.keyboard.press("Alt+4");
+    await settle();
+    await scan("search, files with missing badge");
+    await page.keyboard.press("Tab");
+    await settle();
+    await scan("search, files preview");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Alt+3");
+    await page.keyboard.press("Tab");
+    await settle();
+    await scan("search, image preview");
+    await page.keyboard.press("Tab");
+    await input.fill("zzzzqqq");
+    await settle();
+    await scan("search, no matches");
+    await input.fill("");
+    await page.evaluate(() => (window.__clipMock.control.copyError = "clipboard writing is not supported on this platform"));
+    await page.keyboard.press("Control+Enter");
+    await settle();
+    await scan("search, error notice");
+    await page.evaluate(() => {
+      window.__clipMock.control.copyError = null;
+      window.__clipMock.control.recovery = "The history database was damaged and could not be opened. The old file was moved to history.corrupt-1700000000.db in C:\\Users\\me\\AppData\\Local\\clipdump, and a new empty history was started.";
+      window.__clipMock.emit("history:recovered");
+    });
+    await page.getByRole("button", { name: "Dismiss" }).first().click();
+    await settle(300);
+    await scan("search, recovery notice");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+Shift+Delete");
+    await settle();
+    await scan("search, clear confirmation");
+    await page.keyboard.press("Escape");
+
+    // ---- settings: dialog semantics, names, focus ring on every Tab stop --------------------------
+    await page.evaluate(() => window.__clipMock.reset());
+    await settle();
+    await page.keyboard.press("Control+,");
+    await settle(300);
+    const dlg = await page.evaluate(() => {
+      const d = document.querySelector('[role="dialog"]');
+      const name = d?.getAttribute("aria-label") || (d?.getAttribute("aria-labelledby") ? document.getElementById(d.getAttribute("aria-labelledby"))?.innerText : "");
+      return { has: !!d, name, modal: d?.getAttribute("aria-modal"), inside: !!d?.contains(document.activeElement) };
+    });
+    check("settings is a modal dialog named Settings", dlg.has && /^Settings$/i.test(dlg.name ?? "") && dlg.modal === "true", JSON.stringify(dlg));
+    check("focus is inside the settings dialog", dlg.inside);
+    check("every control in settings has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+    check("settings has headings", (await page.getByRole("heading", { name: "Settings" }).count()) === 1 && (await page.getByRole("heading", { level: 3 }).count()) >= 4);
+
+    const stops = [];
+    for (let i = 0; i < 60; i += 1) {
+      await page.keyboard.press("Tab");
+      const st = await page.evaluate(() => {
+        const e = document.activeElement;
+        if (!e || e === document.body) return null;
+        const cs = getComputedStyle(e);
+        const wrap = e.closest("[data-slot=command-input-wrapper]");
+        const w = wrap ? getComputedStyle(wrap) : null;
+        const ring = (c) => (c.outlineStyle !== "none" && parseFloat(c.outlineWidth) > 0) || (c.boxShadow && c.boxShadow !== "none");
+        return {
+          id: e.id || e.getAttribute("aria-label") || e.textContent?.trim().slice(0, 20) || e.tagName,
+          tag: e.tagName.toLowerCase(),
+          ring: ring(cs) || (w ? ring(w) : false),
+          inMain: !!e.closest("main"),
+        };
+      });
+      if (!st) break;
+      if (stops.length && stops[0].id === st.id && stops.length > 3) break;
+      stops.push(st);
+    }
+    check("Tab reaches the settings controls", stops.length >= 10, `${stops.length} stops`);
+    const noRing = stops.filter((s) => !s.ring);
+    check("every Tab stop in settings shows a focus ring", noRing.length === 0, noRing.map((s) => s.id).join(", "));
+    check("Tab stays inside the card", stops.every((s) => s.inMain));
+
+    // The ring colour itself must be visible against the card (WCAG 1.4.11, 3:1).
+    const ringRatio = await page.evaluate(
+      ({ dark }) => {
+        const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+        const px = (css) => {
+          ctx.clearRect(0, 0, 1, 1);
+          ctx.fillStyle = css;
+          ctx.fillRect(0, 0, 1, 1);
+          const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+          return [r, g, b, a / 255];
+        };
+        const rs = getComputedStyle(document.documentElement);
+        const ring = px(rs.getPropertyValue("--ring"));
+        const card = px(rs.getPropertyValue("--popover"));
+        const base = dark ? [0, 0, 0] : [255, 255, 255];
+        const bg = [0, 1, 2].map((i) => card[i] * card[3] + base[i] * (1 - card[3]));
+        const fg = [0, 1, 2].map((i) => ring[i] * ring[3] + bg[i] * (1 - ring[3]));
+        const lum = (c) => 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+        const f = (c) => ((c / 255) <= 0.03928 ? c / 255 / 12.92 : (((c / 255) + 0.055) / 1.055) ** 2.4);
+        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05);
+      },
+      { dark },
+    );
+    check("the focus ring colour has 3:1 against the card", ringRatio >= 3, ringRatio.toFixed(2));
+
+    await page.locator("main").focus();
+    await scan("settings, top");
+    await page.locator('[data-slot="scroll-area-viewport"]').evaluate((e) => (e.scrollTop = 99999));
+    await settle();
+    await scan("settings, bottom");
+    await page.evaluate(() => {
+      window.__clipMock.control.ocrUnavailable = true;
+      window.__clipMock.control.hotkeyStartupError = "That shortcut is taken by another app or reserved by Windows. Choose a different one.";
+    });
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+,");
+    await settle(300);
+    await scan("settings, hints and errors");
+    await page.evaluate(() => (window.__clipMock.control.loginItemError = true));
+    await page.locator("#autostart").click();
+    await settle(200);
+    check("a refused setting shows an alert banner", (await page.getByRole("alert").count()) >= 1);
+    await scan("settings, save error banner");
+
+    // ---- target sizes ----------------------------------------------------------------------------
+    const small = await page.evaluate(() => {
+      const bad = [];
+      const sel = 'button, [role="switch"], [role="radio"], input, select, a[href]';
+      for (const e of document.querySelectorAll(sel)) {
+        const b = e.getBoundingClientRect();
+        if (b.width === 0 || b.height === 0) continue;
+        if (e.closest(".sr-only")) continue;
+        if (b.width >= 24 && b.height >= 24) continue;
+        // A switch is also toggled by its visible label (label for=id), a 44 px high row.
+        const label = e.id ? document.querySelector(`label[for="${e.id}"]`) : null;
+        if (label) {
+          const lb = label.getBoundingClientRect();
+          if (lb.height >= 24 && lb.width >= 24) continue;
+        }
+        bad.push(`${e.tagName.toLowerCase()} ${e.getAttribute("aria-label") || e.id || e.textContent.trim().slice(0, 16)} ${Math.round(b.width)}x${Math.round(b.height)}`);
+      }
+      return bad;
+    });
+    check("every control is at least 24x24 px (or has a larger label)", small.length === 0, small.join(", "));
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => window.__clipMock.reset());
+
+    // ---- reduced motion --------------------------------------------------------------------------
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("Control+,");
+    await settle(300);
+    await page.locator("#auto-paste").click();
+    await page.waitForTimeout(40);
+    const motion = await page.evaluate(() => {
+      const long = [];
+      for (const e of document.querySelectorAll("*")) {
+        const cs = getComputedStyle(e);
+        const durations = cs.transitionDuration.split(",").concat(cs.animationDuration.split(",")).map((d) => parseFloat(d) * (d.includes("ms") ? 1 : 1000));
+        if (durations.some((d) => d > 1)) long.push(`${e.tagName.toLowerCase()} ${cs.transitionDuration}/${cs.animationDuration}`);
+      }
+      return { long: [...new Set(long)].slice(0, 5), running: document.getAnimations().length };
+    });
+    check("prefers-reduced-motion removes transitions and animations", motion.long.length === 0, motion.long.join(", "));
+    check("no animation is running with reduced motion", motion.running === 0, String(motion.running));
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const moving = await page.evaluate(() => [...document.querySelectorAll("*")].some((e) => parseFloat(getComputedStyle(e).transitionDuration) > 0));
+    check("without the preference the transitions are still there", moving);
+
+    check("no console errors or page errors", problems.length === 0, problems.slice(0, 3).join(" | "));
+    await ctx.close();
+  }
+  console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
+  return failed;
+}
+
+// ---------------------------------------------------------------------------
 // perf
 // ---------------------------------------------------------------------------
 
@@ -634,7 +992,7 @@ async function shots(browser, url) {
     await page.addStyleTag({ content: "html{background:#9aa3b5 !important}" });
     const input = page.locator("input[cmdk-input]");
     // Dark gets a few frames only, to keep docs/screenshots small.
-    const darkSet = ["02-text-search", "06-preview-image", "07-files-missing", "12-settings", "13-settings-bottom"];
+    const darkSet = ["02-text-search", "06-preview-image", "07-files-missing", "12-settings", "13-settings-bottom", "16-recovery-notice"];
     const shot = async (name) => {
       if (scheme === "dark" && !darkSet.includes(name)) return;
       await page.waitForTimeout(300);
@@ -686,6 +1044,16 @@ async function shots(browser, url) {
     await shot("13-settings-hotkey-error");
     await page.locator('[data-slot="scroll-area-viewport"]').evaluate((e) => (e.scrollTop = 99999));
     await shot("13-settings-bottom");
+    // The history was moved aside at startup: the notice stays until dismissed.
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      window.__clipMock.control.recovery =
+        "The history database was damaged and could not be opened. The old file was moved to history.corrupt-1700000000.db in C:\\Users\\you\\AppData\\Local\\clipdump, and a new empty history was started.";
+      window.__clipMock.emit("history:recovered");
+    });
+    await input.fill("");
+    await shot("16-recovery-notice");
     if (problems.length) console.log("console problems:", problems.slice(0, 3));
     await ctx.close();
   }
@@ -700,8 +1068,9 @@ let code = 1;
 try {
   if (mode === "keys") code = await keys(browser, server.url);
   else if (mode === "perf") code = await perf(browser, server.url);
+  else if (mode === "a11y") code = await a11y(browser, server.url);
   else if (mode === "shots") code = await shots(browser, server.url);
-  else console.log("usage: node scripts/ui-check.mjs keys|perf|shots [--url URL] [--out DIR]");
+  else console.log("usage: node scripts/ui-check.mjs keys|a11y|perf|shots [--url URL] [--out DIR]");
 } finally {
   await browser.close();
   await server.stop();
