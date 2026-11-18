@@ -32,7 +32,7 @@ use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::{Sender, TrySendError, bounded};
 
 use super::read::{self, Raw, RawText, RegisteredFormats};
-use crate::hash::hash_text;
+use crate::hash::{hash_path_bufs, hash_text};
 use crate::model::ClipKind;
 use crate::platform::rules::{
     ClipFormats, SkipInput, SkipReason, Source, choose_source, decide_skip, split_dropfiles,
@@ -336,6 +336,14 @@ impl WatchState {
                 self.bump(hash);
                 return;
             }
+        }
+
+        // File list echo of our own write: same.
+        if let Captured::Files(list) = &captured
+            && let Some(hash) = self.ctx.self_write.files_echo(now, hash_path_bufs(list))
+        {
+            self.bump(hash);
+            return;
         }
 
         self.send(IngestMsg::Captured(CapturedEvent {

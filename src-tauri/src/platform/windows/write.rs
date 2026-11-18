@@ -12,7 +12,7 @@ use crate::platform::ClipboardWriter;
 pub struct WindowsWriter;
 
 impl ClipboardWriter for WindowsWriter {
-    fn set(_payload: &Payload) -> anyhow::Result<()> {
+    fn set(_payload: &Payload, _armed: &dyn Fn()) -> anyhow::Result<()> {
         anyhow::bail!("copying to the clipboard is not implemented yet (todo Phase 11)")
     }
 }

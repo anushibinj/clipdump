@@ -104,8 +104,8 @@ pub fn get_preview(app: AppHandle, id: u64) -> Result<PreviewDto, String> {
 /// Copy an item back to the clipboard and hide the bar; with `paste`, also paste
 /// into the window that was focused before the bar opened.
 ///
-/// The clipboard write and the paste are Phase 11 stubs for now: this returns
-/// their error and changes nothing.
+/// A failed write returns its error and changes nothing. A write that worked
+/// but a paste that did not returns "copied, but auto-paste failed: ...".
 #[tauri::command(async)]
 pub fn copy_item(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
     let store = store(&app)?;
@@ -115,7 +115,8 @@ pub fn copy_item(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
         paths: &FsPathChecker,
         self_write: &state.self_write,
         prev_foreground: &state.prev_foreground,
-        now_ms: mono_ms(),
+        own_window: platform::own_window_handle(&app),
+        clock: mono_ms,
     };
     copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || window::hide(&app))
 }

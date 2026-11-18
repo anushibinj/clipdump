@@ -35,7 +35,7 @@ impl StubWatcher {
 pub struct StubWriter;
 
 impl ClipboardWriter for StubWriter {
-    fn set(_payload: &Payload) -> anyhow::Result<()> {
+    fn set(_payload: &Payload, _armed: &dyn Fn()) -> anyhow::Result<()> {
         anyhow::bail!("clipboard writing is not supported on this platform")
     }
 }
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn stub_writer_and_paster_report_unsupported() {
-        assert!(StubWriter::set(&Payload::Text("x".into())).is_err());
+        assert!(StubWriter::set(&Payload::Text("x".into()), &|| {}).is_err());
         assert!(StubPaster::paste_into(None).is_err());
     }
 }

@@ -53,12 +53,23 @@ pub fn hash_paths<S: AsRef<str>>(paths: &[S]) -> u128 {
     h.digest128()
 }
 
+/// [`hash_paths`] of paths as the capture and ingest side see them: each path
+/// as its (lossy) UTF-8 string. The copy path hashes the list it writes with
+/// this, so the watcher can recognise the echo.
+pub fn hash_path_bufs(paths: &[std::path::PathBuf]) -> u128 {
+    let strings: Vec<std::borrow::Cow<'_, str>> =
+        paths.iter().map(|p| p.to_string_lossy()).collect();
+    hash_paths(&strings)
+}
+
 fn find_crlf(b: &[u8]) -> Option<usize> {
     b.windows(2).position(|w| w == b"\r\n")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
@@ -92,6 +103,12 @@ mod tests {
         let mut other = px.clone();
         other[5] = 8;
         assert_ne!(hash_image(3, 2, &px), hash_image(3, 2, &other));
+    }
+
+    #[test]
+    fn path_buf_hash_equals_the_string_hash() {
+        let bufs = [PathBuf::from("C:\\b"), PathBuf::from("C:\\a")];
+        assert_eq!(hash_path_bufs(&bufs), hash_paths(&["C:\\a", "C:\\b"]));
     }
 
     #[test]

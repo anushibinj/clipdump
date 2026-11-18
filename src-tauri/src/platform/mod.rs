@@ -119,12 +119,20 @@ pub trait ClipboardWatcher {
         Self: Sized;
 }
 
-/// Puts an item on the clipboard (Phase 11 implements it for Windows).
+/// Puts an item on the clipboard.
 pub trait ClipboardWriter {
-    fn set(payload: &Payload) -> anyhow::Result<()>;
+    /// Write `payload` (every format of it in one clipboard session).
+    ///
+    /// `armed` must be called once, after the bytes are built and right before
+    /// the clipboard is touched: it tells the self-write guard that the echo
+    /// may arrive from now on. (Building a big image takes tens of
+    /// milliseconds; stamping the guard before that would eat into its
+    /// 150 ms window.) Not called when the write fails before reaching the
+    /// clipboard.
+    fn set(payload: &Payload, armed: &dyn Fn()) -> anyhow::Result<()>;
 }
 
-/// Pastes into another window (Phase 11 implements it for Windows).
+/// Pastes into another window.
 pub trait Paster {
     /// `target` is the raw handle recorded by [`remember_foreground`].
     fn paste_into(target: Option<isize>) -> anyhow::Result<()>;
@@ -137,14 +145,16 @@ pub type Watcher = windows::watcher::WindowsWatcher;
 #[cfg(not(windows))]
 pub type Watcher = stub::StubWatcher;
 
-/// The clipboard writer of this platform. Windows: a Phase 11 stub that fails
-/// until the Win32 code lands. Elsewhere: fails with "not supported".
+/// The clipboard writer of this platform. Windows: `CF_UNICODETEXT`, `CF_DIBV5`
+/// plus `PNG`, `CF_HDROP` plus `Preferred DropEffect`. Elsewhere: fails with
+/// "not supported".
 #[cfg(windows)]
 pub type Writer = windows::write::WindowsWriter;
 #[cfg(not(windows))]
 pub type Writer = stub::StubWriter;
 
-/// The auto-paster of this platform (same status as [`Writer`]).
+/// The auto-paster of this platform. Windows: focus the previous window and
+/// send Ctrl+V. Elsewhere: fails with "not supported".
 #[cfg(windows)]
 pub type PasterImpl = windows::paste::WindowsPaster;
 #[cfg(not(windows))]
@@ -252,6 +262,12 @@ fn own_handle(w: &WebviewWindow) -> Option<isize> {
         let _ = w;
         None
     }
+}
+
+/// Raw native handle of the bar (`None` where the platform has no handles).
+pub fn own_window_handle(app: &AppHandle) -> Option<isize> {
+    app.get_webview_window(crate::window::LABEL)
+        .and_then(|w| own_handle(&w))
 }
 
 /// Store the foreground window in `AppState` unless it is the bar itself.

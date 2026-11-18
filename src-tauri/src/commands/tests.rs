@@ -2,6 +2,7 @@
 //! over a temp directory (no Tauri runtime).
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
@@ -301,6 +302,18 @@ thread_local! {
     static PASTED: RefCell<Vec<Option<isize>>> = const { RefCell::new(Vec::new()) };
     static FAIL_WRITE: Cell<bool> = const { Cell::new(false) };
     static FAIL_PASTE: Cell<bool> = const { Cell::new(false) };
+    /// Runs inside `FakeWriter::set` right after it armed the guard: where the
+    /// real echo could arrive before `set` returns.
+    static DURING_WRITE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    /// Fake monotonic clock: every reading is 100 ms after the previous one.
+    static CLOCK: Cell<u64> = const { Cell::new(900) };
+}
+
+fn tick() -> u64 {
+    CLOCK.with(|c| {
+        c.set(c.get() + 100);
+        c.get()
+    })
 }
 
 /// Each test runs on its own thread, so the thread locals are per test.
@@ -308,10 +321,16 @@ struct FakeWriter;
 struct FakePaster;
 
 impl ClipboardWriter for FakeWriter {
-    fn set(payload: &Payload) -> anyhow::Result<()> {
+    fn set(payload: &Payload, armed: &dyn Fn()) -> anyhow::Result<()> {
         if FAIL_WRITE.get() {
             anyhow::bail!("clipboard is locked");
         }
+        armed();
+        DURING_WRITE.with(|d| {
+            if let Some(f) = &*d.borrow() {
+                f();
+            }
+        });
         WRITTEN.with(|w| w.borrow_mut().push(payload.clone()));
         Ok(())
     }
@@ -328,15 +347,17 @@ impl Paster for FakePaster {
 }
 
 struct CopyFx {
-    guard: SelfWriteGuard,
+    guard: Arc<SelfWriteGuard>,
     prev: AtomicIsize,
+    own: Option<isize>,
 }
 
 impl CopyFx {
     fn new(prev: isize) -> Self {
         Self {
-            guard: SelfWriteGuard::default(),
+            guard: Arc::new(SelfWriteGuard::default()),
             prev: AtomicIsize::new(prev),
+            own: None,
         }
     }
 
@@ -352,7 +373,8 @@ impl CopyFx {
             paths,
             self_write: &self.guard,
             prev_foreground: &self.prev,
-            now_ms: 1_000,
+            own_window: self.own,
+            clock: tick,
         };
         let hidden = Cell::new(false);
         let r = copy_item_with::<FakeWriter, FakePaster>(&env, id, paste, || hidden.set(true));
@@ -384,8 +406,14 @@ fn copying_text_writes_marks_used_hides_and_notes_the_write() {
     assert_eq!(fx.ids(), vec![a, b], "the copied item moved to the top");
     assert_eq!(fx.store.get(a).unwrap().use_count, 1);
     // The guard knows the hash, so the watcher treats the echo as a bump.
+    // Stamped twice (before and after the write): 1,000 and 1,100.
     let hash = fx.store.get(a).unwrap().hash;
-    assert_eq!(cfx.guard.text_echo(1_100, hash), Some(hash));
+    assert_eq!(cfx.guard.text_echo(1_200, hash), Some(hash));
+    assert_eq!(
+        cfx.guard.text_echo(1_600, hash),
+        None,
+        "500 ms from the second stamp"
+    );
     // No paste was asked for: the saved window is kept.
     assert!(pasted().is_empty());
     assert_eq!(cfx.prev.load(Ordering::Relaxed), 77);
@@ -407,6 +435,122 @@ fn copying_an_image_builds_a_png_payload_and_arms_the_image_guard() {
         other => panic!("{other:?}"),
     }
     assert!(cfx.guard.image_echo(1_050).is_some());
+}
+
+#[test]
+fn the_guard_is_armed_before_the_write_returns_and_refreshed_after() {
+    let fx = Fx::new();
+    let id = fx.image(4, 100);
+    fx.flush();
+    let cfx = CopyFx::new(0);
+    // An echo that arrives while `set` is still running must already be known.
+    let during = Rc::new(Cell::new(None));
+    let (g, d) = (Arc::clone(&cfx.guard), Rc::clone(&during));
+    DURING_WRITE.set(Some(Box::new(move || d.set(g.image_echo(1_001)))));
+    let hash = fx.store.get(id).unwrap().hash;
+    assert_eq!(cfx.copy(&fx, &all_exist(), id, false).0, Ok(()));
+    assert_eq!(
+        during.get(),
+        Some(hash),
+        "armed at 1,000 before the clipboard opens"
+    );
+    // Refreshed when the write was done (the clock read 1,100): the 150 ms
+    // window runs from there, not from the start of the write.
+    assert_eq!(cfx.guard.image_echo(1_249), Some(hash));
+    assert_eq!(cfx.guard.image_echo(1_250), None);
+}
+
+#[test]
+fn a_failed_write_does_not_arm_the_guard() {
+    let fx = Fx::new();
+    let id = fx.text("never written");
+    FAIL_WRITE.set(true);
+    let cfx = CopyFx::new(0);
+    assert!(cfx.copy(&fx, &all_exist(), id, false).0.is_err());
+    let hash = fx.store.get(id).unwrap().hash;
+    assert_eq!(cfx.guard.text_echo(1_000, hash), None);
+}
+
+#[test]
+fn the_written_text_echo_is_recognised_and_only_moves_the_item() {
+    use crate::hash::hash_text;
+    use crate::ingest::ItemSink;
+    use crate::platform::clipfmt::unicode_text_units;
+
+    let fx = Fx::new();
+    let a = fx.text("line one\nline two");
+    fx.advance(10);
+    let b = fx.text("other");
+    let cfx = CopyFx::new(0);
+    assert_eq!(cfx.copy(&fx, &all_exist(), a, false).0, Ok(()));
+
+    // What the watcher does with the clipboard update that follows: read the
+    // text back (CRLF, as the writer builds it), hash it, ask the guard.
+    let units = unicode_text_units("line one\nline two");
+    let read_back = String::from_utf16_lossy(&units[..units.len() - 1]);
+    assert!(read_back.contains("\r\n"));
+    let bump = cfx.guard.text_echo(1_100, hash_text(&read_back));
+    assert_eq!(bump, Some(fx.store.get(a).unwrap().hash));
+    ItemSink::bump(&*fx.store, bump.unwrap());
+
+    assert_eq!(fx.ids(), vec![a, b], "still the top item, no duplicate");
+    assert_eq!(fx.store.len(), 2);
+    assert_eq!(fx.store.get(a).unwrap().use_count, 1, "one copy, one use");
+}
+
+#[test]
+fn the_files_echo_hash_is_what_ingest_would_compute() {
+    use crate::hash::hash_path_bufs;
+    use crate::ingest::files;
+
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b \u{1F600}.txt");
+    std::fs::write(&a, b"a").unwrap();
+    std::fs::write(&b, b"b").unwrap();
+    let list = vec![a, b];
+    assert_eq!(
+        files::build(&list, None, 0).unwrap().hash,
+        hash_path_bufs(&list)
+    );
+}
+
+#[test]
+fn a_files_copy_with_missing_paths_echoes_as_the_shorter_list() {
+    use crate::hash::hash_path_bufs;
+    use crate::ingest::ItemSink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = ["one.txt", "two.txt", "three.txt"]
+        .iter()
+        .map(|n| dir.path().join(n))
+        .collect();
+    paths[0..2]
+        .iter()
+        .for_each(|p| std::fs::write(p, b"x").unwrap());
+    let fx = Fx::new();
+    let ingested = crate::ingest::files::build(&paths, None, fx.now()).unwrap();
+    let item_hash = ingested.hash;
+    let id = match fx.store.insert(ingested) {
+        crate::store::Inserted::New(id) | crate::store::Inserted::Bumped(id) => id,
+    };
+    let cfx = CopyFx::new(0);
+    // Real existence checks: three.txt was never created.
+    assert_eq!(
+        cfx.copy(&fx, &crate::search::FsPathChecker, id, false).0,
+        Ok(())
+    );
+    match &written()[0] {
+        Payload::Files(list) => assert_eq!(list, &paths[0..2]),
+        other => panic!("{other:?}"),
+    }
+    // The watcher reads back the two files: not the item's hash, but the guard
+    // knows, and says which item to bump.
+    let echoed = hash_path_bufs(&paths[0..2]);
+    assert_ne!(echoed, item_hash);
+    assert_eq!(cfx.guard.files_echo(1_100, echoed), Some(item_hash));
+    ItemSink::bump(&*fx.store, item_hash);
+    assert_eq!(fx.store.len(), 1, "no second item for the shorter list");
 }
 
 #[test]
@@ -460,9 +604,32 @@ fn paste_takes_the_saved_window_once() {
     assert_eq!(cfx.copy(&fx, &all_exist(), id, true).0, Ok(()));
     assert_eq!(pasted(), vec![Some(1234)]);
     assert_eq!(cfx.prev.load(Ordering::Relaxed), 0, "taken");
-    // A second paste has no window to go to.
+    // A second paste has no window to go to: the item is copied, nothing is sent.
     assert_eq!(cfx.copy(&fx, &all_exist(), id, true).0, Ok(()));
-    assert_eq!(pasted(), vec![Some(1234), None]);
+    assert_eq!(pasted(), vec![Some(1234)]);
+    assert_eq!(written().len(), 2, "but it was copied again");
+}
+
+#[test]
+fn the_bar_itself_is_never_a_paste_target() {
+    let fx = Fx::new();
+    let id = fx.text("x");
+    let mut cfx = CopyFx::new(555);
+    cfx.own = Some(555);
+    let (r, hidden) = cfx.copy(&fx, &all_exist(), id, true);
+    assert_eq!(r, Ok(()), "plain copy, no error");
+    assert!(hidden);
+    assert!(pasted().is_empty());
+    assert_eq!(written().len(), 1);
+}
+
+#[test]
+fn no_paste_when_not_asked_for() {
+    let fx = Fx::new();
+    let id = fx.text("x");
+    let cfx = CopyFx::new(42);
+    assert_eq!(cfx.copy(&fx, &all_exist(), id, false).0, Ok(()));
+    assert!(pasted().is_empty());
 }
 
 #[test]
@@ -490,8 +657,11 @@ fn copying_an_unknown_id_is_a_plain_error() {
     assert!(written().is_empty());
 }
 
+/// Linux and macOS have no clipboard backend: the copy fails with the stub's
+/// message and changes nothing (the bar stays open and shows it).
+#[cfg(not(windows))]
 #[test]
-fn the_platform_writer_is_a_stub_that_fails_until_phase_11() {
+fn without_a_clipboard_backend_copy_fails_and_changes_nothing() {
     let fx = Fx::new();
     let id = fx.text("keep");
     let cfx = CopyFx::new(0);
@@ -500,7 +670,8 @@ fn the_platform_writer_is_a_stub_that_fails_until_phase_11() {
         paths: &all_exist(),
         self_write: &cfx.guard,
         prev_foreground: &cfx.prev,
-        now_ms: 0,
+        own_window: None,
+        clock: || 0,
     };
     let r = copy_item_with::<crate::platform::Writer, crate::platform::PasterImpl>(
         &env,
@@ -508,7 +679,10 @@ fn the_platform_writer_is_a_stub_that_fails_until_phase_11() {
         false,
         || panic!("must not hide"),
     );
-    assert!(r.is_err());
+    assert_eq!(
+        r,
+        Err("clipboard writing is not supported on this platform".to_owned())
+    );
     assert_eq!(fx.store.get(id).unwrap().use_count, 0);
 }
 
