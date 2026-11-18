@@ -81,6 +81,156 @@ opt-level = 3
 [profile.bench.package.criterion]
 opt-level = 3
 
+# Phase 14 measurements (docs/perf.md): `cargo build --profile perf` and
+# `cargo test --profile perf ... -- --ignored` (the stress run). The shipping
+# profile above is fat LTO with one codegen unit, which costs minutes and many
+# gigabytes for all of Tauri, so this one is the release profile without LTO, with
+# 16 codegen units and no debug info. The code under test (this package) and the
+# crates on the measured paths (image and PNG, SQLite, the cipher, the matcher,
+# hashing, rayon, channels) are optimized like release; the windowing stack
+# (Tauri, GTK, webkit bindings) is not, because no measurement runs inside it.
+# Shipping numbers are therefore equal or better (LTO only helps), except the
+# window figures, which are about the platform anyway. Never used for a release.
+[profile.perf]
+inherits = "release"
+opt-level = 3
+lto = "off"
+codegen-units = 16
+debug = false
+strip = true
+
+[profile.perf.package."*"]
+opt-level = 0
+
+[profile.perf.package.image]
+opt-level = 3
+
+[profile.perf.package.png]
+opt-level = 3
+
+[profile.perf.package.flate2]
+opt-level = 3
+
+[profile.perf.package."miniz_oxide@0.8.9"]
+opt-level = 3
+
+[profile.perf.package."miniz_oxide@0.9.1"]
+opt-level = 3
+
+[profile.perf.package.fdeflate]
+opt-level = 3
+
+[profile.perf.package.crc32fast]
+opt-level = 3
+
+[profile.perf.package.adler2]
+opt-level = 3
+
+[profile.perf.package.image-webp]
+opt-level = 3
+
+[profile.perf.package.byteorder-lite]
+opt-level = 3
+
+[profile.perf.package.bytemuck]
+opt-level = 3
+
+[profile.perf.package.zune-core]
+opt-level = 3
+
+[profile.perf.package.zune-jpeg]
+opt-level = 3
+
+[profile.perf.package.chacha20]
+opt-level = 3
+
+[profile.perf.package.poly1305]
+opt-level = 3
+
+[profile.perf.package.cipher]
+opt-level = 3
+
+[profile.perf.package.chacha20poly1305]
+opt-level = 3
+
+[profile.perf.package.aead]
+opt-level = 3
+
+[profile.perf.package.universal-hash]
+opt-level = 3
+
+[profile.perf.package.rusqlite]
+opt-level = 3
+
+[profile.perf.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.perf.package.xxhash-rust]
+opt-level = 3
+
+[profile.perf.package.nucleo-matcher]
+opt-level = 3
+
+[profile.perf.package.memchr]
+opt-level = 3
+
+[profile.perf.package.rayon]
+opt-level = 3
+
+[profile.perf.package.rayon-core]
+opt-level = 3
+
+[profile.perf.package.crossbeam-channel]
+opt-level = 3
+
+[profile.perf.package.crossbeam-deque]
+opt-level = 3
+
+[profile.perf.package.crossbeam-epoch]
+opt-level = 3
+
+[profile.perf.package.crossbeam-utils]
+opt-level = 3
+
+[profile.perf.package."parking_lot@0.12.5"]
+opt-level = 3
+
+[profile.perf.package."parking_lot@0.13.0"]
+opt-level = 3
+
+[profile.perf.package."parking_lot_core@0.9.12"]
+opt-level = 3
+
+[profile.perf.package."parking_lot_core@0.10.0"]
+opt-level = 3
+
+[profile.perf.package.lru]
+opt-level = 3
+
+[profile.perf.package."hashbrown@0.12.3"]
+opt-level = 3
+
+[profile.perf.package."hashbrown@0.17.1"]
+opt-level = 3
+
+[profile.perf.package.serde_json]
+opt-level = 3
+
+[profile.perf.package.serde]
+opt-level = 3
+
+[profile.perf.package.itoa]
+opt-level = 3
+
+[profile.perf.package.zerocopy]
+opt-level = 3
+
+[profile.perf.package.zeroize]
+opt-level = 3
+
+[profile.perf.package.tempfile]
+opt-level = 3
+
 [[bench]]
 name = "search_bench"
 harness = false
@@ -107,6 +257,7 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
@@ -116,6 +267,10 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# Free disk space of the stress run (statvfs); Windows uses GetDiskFreeSpaceExW.
+libc = "0.2"
 
 [dev-dependencies]
 # Search benchmark only (Phase 8). `cargo_bench_support` is just the `cargo bench`
