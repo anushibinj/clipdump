@@ -4,7 +4,7 @@
 //! and never allocates.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Manager};
@@ -42,6 +42,10 @@ pub struct AppState {
     /// Raw handle (HWND on Windows, 0 elsewhere) of the window that had focus
     /// before the bar opened. `copy_item` takes it for auto-paste.
     pub prev_foreground: AtomicIsize,
+    /// The physical size last applied to the bar, width in the high 32 bits and
+    /// height in the low 32 (0 before the first show). `window.rs` only sets the
+    /// size when the target monitor's scale makes it differ.
+    pub bar_size: AtomicU64,
     /// File existence checks for search rows and previews, cached for 2 seconds
     /// so typing never repeats a `stat` (see `search::paths`).
     pub paths: Arc<CachedPathChecker>,
