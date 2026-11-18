@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, FolderOpen, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,13 +8,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { bytesToGb, bytesToMb, formatBytes, gbToBytes, mbToBytes } from "@/lib/bytes";
-import type { SettingsDto, StatsDto } from "@/lib/ipc";
+import { captureChord, chordParts } from "@/lib/hotkey";
+import { errorMessage, openDataFolder, type SettingsDto, type StatsDto } from "@/lib/ipc";
 import type { ThemePref } from "@/lib/theme";
-
-/** Shown next to every control the backend cannot store yet (Phase 12 adds the fields). */
-const LATER = "Saved in a later update";
 
 interface SettingsViewProps {
   settings: SettingsDto | null;
@@ -70,19 +67,17 @@ function SwitchRow({
   label,
   hint,
   checked,
-  disabled,
   onChange,
 }: {
   id: string;
   label: string;
   hint?: string;
   checked: boolean;
-  disabled?: boolean;
   onChange: (value: boolean) => void;
 }) {
   return (
-    <Row label={label} hint={disabled ? LATER : hint} htmlFor={id}>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    <Row label={label} hint={hint} htmlFor={id}>
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
     </Row>
   );
 }
@@ -135,6 +130,121 @@ function NumberRow({
       />
       <span className="w-12 text-xs text-muted-foreground">{unit}</span>
     </Row>
+  );
+}
+
+/** A chord as key caps. */
+function Chord({ chord }: { chord: string }) {
+  return (
+    <KbdGroup>
+      {chordParts(chord).map((p) => (
+        <Kbd key={p}>{p}</Kbd>
+      ))}
+    </KbdGroup>
+  );
+}
+
+/**
+ * The hotkey row. "Change" starts recording: the next chord is captured with a
+ * window level key listener (capture phase, so the settings view's own Esc and
+ * Ctrl+, handling never sees these keys), shown live as key caps, and sent to
+ * the backend, which registers it. Esc cancels. A refusal (another app owns the
+ * chord) is shown right here and the old hotkey stays.
+ */
+function HotkeyRow({
+  chord,
+  startupError,
+  onChange,
+}: {
+  chord: string;
+  /** Why the saved hotkey is not active (it was taken at startup), or null. */
+  startupError: string | null;
+  /** Resolves to an error message, or null when the new hotkey is active. */
+  onChange: (chord: string) => Promise<string | null>;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [held, setHeld] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!recording) return;
+    const stop = () => {
+      setRecording(false);
+      setHeld([]);
+      button.current?.focus();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      const c = captureChord(e);
+      if (c.type === "cancel") {
+        setError(null);
+        stop();
+      } else if (c.type === "pending") {
+        setHeld(c.mods);
+      } else if (c.type === "invalid") {
+        setHeld(c.mods);
+        setError(c.reason);
+      } else {
+        stop();
+        setError(null);
+        void onChange(c.chord).then(setError);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [recording, onChange]);
+
+  const shownError = error ?? startupError;
+  return (
+    <div>
+      <Row label="Hotkey" hint="Shows and hides the bar from anywhere.">
+        {recording ? (
+          <span className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="hotkey-recording">
+            {held.length > 0 ? <Chord chord={held.join("+")} /> : "Press the new shortcut"}
+          </span>
+        ) : (
+          <span data-testid="hotkey-chord">
+            <Chord chord={chord} />
+          </span>
+        )}
+        <Button
+          ref={button}
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setError(null);
+            setHeld([]);
+            setRecording((r) => !r);
+          }}
+          onBlur={() => setRecording(false)}
+        >
+          {recording ? "Cancel" : "Change"}
+        </Button>
+      </Row>
+      {recording && (
+        <p className="pb-2 text-xs text-muted-foreground">
+          Hold Ctrl, Alt or Win with a key, then release. <Kbd>Esc</Kbd> cancels.
+        </p>
+      )}
+      {shownError && (
+        <p role="alert" data-testid="hotkey-error" className="pb-2 text-xs text-destructive">
+          {shownError}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -211,15 +321,17 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 
 /**
  * Settings, shown in place of the list (Ctrl+, or the tray). Controls apply at
- * once through `onSave`; numbers commit on blur or Enter. A control whose field
- * the backend does not have yet stays visible but disabled with a short note
- * (hotkey, auto-paste, start at login: Phase 12; data folder: no command yet).
+ * once through `onSave` (the backend validates, applies and saves them); numbers
+ * commit on blur or Enter. Every control has a backend. The theme is the one
+ * setting that stays in the webview (localStorage): it is needed before the
+ * first paint.
  */
 export function SettingsView({ settings, stats, onSave, themePref, onThemeChange, onClose }: SettingsViewProps) {
   const [error, setError] = useState<string | null>(null);
   const save = async (patch: Partial<SettingsDto>) => {
     setError(await onSave(patch));
   };
+  const saveHotkey = (hotkey: string) => onSave({ hotkey });
   const ocrProblem = stats !== null && (stats.ocrEngine === "unavailable" || stats.ocrUnavailable > 0);
 
   return (
@@ -245,16 +357,11 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <Section title="General">
-            <Row label="Hotkey" hint={LATER}>
-              <KbdGroup>
-                <Kbd>Ctrl</Kbd>
-                <Kbd>Shift</Kbd>
-                <Kbd>Space</Kbd>
-              </KbdGroup>
-              <Button type="button" variant="outline" size="sm" disabled>
-                Change
-              </Button>
-            </Row>
+            <HotkeyRow
+              chord={settings.hotkey}
+              startupError={stats?.hotkeyError ?? null}
+              onChange={saveHotkey}
+            />
             <SwitchRow
               id="auto-paste"
               label="Paste on Enter"
@@ -265,11 +372,17 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
             <SwitchRow
               id="pinned-bar"
               label="Pinned bar"
-              hint="Keep the bar visible; it does not hide when you click elsewhere."
+              hint="Keep the bar visible; it does not hide when you click elsewhere or after a copy."
               checked={settings.pinnedBar}
               onChange={(v) => void save({ pinnedBar: v })}
             />
-            <SwitchRow id="autostart" label="Start at login" checked={false} disabled onChange={() => {}} />
+            <SwitchRow
+              id="autostart"
+              label="Start at login"
+              hint="Starts in the tray when you sign in to Windows."
+              checked={settings.startAtLogin}
+              onChange={(v) => void save({ startAtLogin: v })}
+            />
             <Row label="Theme" htmlFor="theme">
               <ToggleGroup
                 id="theme"
@@ -384,17 +497,14 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
 
           <Section title="Data">
             <Row label="Data folder" hint="Where the encrypted history lives.">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  {/* A disabled button gets no pointer events, so the span carries the tooltip. */}
-                  <span tabIndex={0}>
-                    <Button type="button" variant="outline" size="sm" disabled>
-                      <FolderOpen aria-hidden /> Open
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>Not available yet</TooltipContent>
-              </Tooltip>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => openDataFolder().then(() => setError(null), (e: unknown) => setError(errorMessage(e)))}
+              >
+                <FolderOpen aria-hidden /> Open
+              </Button>
             </Row>
             {stats && (
               <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-3" aria-label="Statistics">

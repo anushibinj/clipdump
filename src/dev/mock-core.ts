@@ -41,6 +41,8 @@ const DEFAULT_SETTINGS = {
   autoPasteOnEnter: false,
   pinnedBar: false,
   paused: false,
+  hotkey: "Ctrl+Shift+Space",
+  startAtLogin: true,
 };
 let settings = { ...DEFAULT_SETTINGS };
 
@@ -55,6 +57,14 @@ const control = {
   copyError: null as string | null,
   /** `get_stats` reports an OCR engine without a language. */
   ocrUnavailable: false,
+  /** Chords "another app owns": `set_settings` refuses them like the real registrar does. */
+  takenHotkeys: ["Super+L", "Ctrl+Alt+Delete"] as string[],
+  /** `set_settings` refuses to change the login item. */
+  loginItemError: false,
+  /** `get_stats` reports the hotkey as not registered at startup. */
+  hotkeyStartupError: null as string | null,
+  /** `open_data_folder` rejects with this message when set. */
+  openFolderError: null as string | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,6 +206,7 @@ function stats() {
       ? "No OCR language is installed. Add one in Windows Settings > Time & language > Language & region, then restart Clipdump."
       : "",
     keyProtector: "dpapi",
+    hotkeyError: control.hotkeyStartupError,
   };
 }
 
@@ -248,11 +259,26 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       if (next.maxTextBytes < 1024 || next.maxImageBytes < 1024) {
         throw "the text and image size limits must be at least 1 KB";
       }
+      if (next.hotkey !== settings.hotkey) {
+        if (!/^(Ctrl|Alt|Shift|Super)(\+(Ctrl|Alt|Shift|Super))*\+[A-Za-z0-9]+$/.test(next.hotkey)) {
+          throw "Use Ctrl, Alt or Win together with another key.";
+        }
+        if (control.takenHotkeys.includes(next.hotkey)) {
+          throw "That shortcut is taken by another app or reserved by Windows. Choose a different one.";
+        }
+        control.hotkeyStartupError = null;
+      }
+      if (next.startAtLogin !== settings.startAtLogin && control.loginItemError) {
+        throw "could not change the start at login setting";
+      }
       settings = { ...next };
       return { ...settings };
     }
     case "get_stats":
       return stats();
+    case "open_data_folder":
+      if (control.openFolderError) throw control.openFolderError;
+      return null;
     case "hide_bar":
       setTimeout(() => emit("bar:hidden"), 0);
       return null;
@@ -305,6 +331,10 @@ const hooks = {
     control.delayByQuery = {};
     control.copyError = null;
     control.ocrUnavailable = false;
+    control.takenHotkeys = ["Super+L", "Ctrl+Alt+Delete"];
+    control.loginItemError = false;
+    control.hotkeyStartupError = null;
+    control.openFolderError = null;
     load(200);
     changed();
   },

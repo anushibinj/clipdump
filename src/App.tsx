@@ -25,6 +25,7 @@ import {
   onBarHidden,
   onBarShown,
   onHistoryChanged,
+  onSettingsChanged,
   onSettingsOpen,
   setSettings as saveSettingsDto,
   togglePin,
@@ -249,6 +250,8 @@ function App() {
           loadStats();
         }),
         onSettingsOpen(() => setView("settings")),
+        // The tray toggled Pause capture (the bar can stay visible in pinned mode).
+        onSettingsChanged(() => loadSettings()),
       );
     } catch {
       // No event bus (plain browser without the mock): the UI still works, it just never refreshes by itself.
