@@ -25,9 +25,9 @@ use crate::platform::rules::{ClipFormats, exe_file_name};
 // Predefined clipboard format ids (winuser.h). Plain numbers keep the `Ole`
 // feature of the windows crate out of the build.
 const CF_DIB: u32 = 8;
-const CF_UNICODETEXT: u32 = 13;
-const CF_HDROP: u32 = 15;
-const CF_DIBV5: u32 = 17;
+pub(super) const CF_UNICODETEXT: u32 = 13;
+pub(super) const CF_HDROP: u32 = 15;
+pub(super) const CF_DIBV5: u32 = 17;
 
 /// `OpenClipboard` fails while another process holds it. Retry briefly.
 const OPEN_ATTEMPTS: u32 = 5;

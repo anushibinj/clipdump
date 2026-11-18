@@ -53,6 +53,22 @@ pub fn unicode_text_units(text: &str) -> Vec<u16> {
     out
 }
 
+/// Copy UTF-16 code units into `out` as little endian bytes (the in memory
+/// layout of `CF_UNICODETEXT`), so the Windows layer can fill global memory
+/// without an intermediate byte buffer. `out` must be exactly twice as long.
+pub fn write_units_le(units: &[u16], out: &mut [u8]) -> Result<()> {
+    ensure!(
+        out.len() == units.len() * 2,
+        "output buffer has {} bytes, expected {}",
+        out.len(),
+        units.len() * 2
+    );
+    for (dst, u) in out.chunks_exact_mut(2).zip(units) {
+        dst.copy_from_slice(&u.to_le_bytes());
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // CF_DIBV5
 // ---------------------------------------------------------------------------
@@ -269,6 +285,14 @@ mod tests {
     }
 
     #[test]
+    fn text_units_are_written_little_endian() {
+        let mut out = [0u8; 6];
+        write_units_le(&[0x0041, 0xD83D, 0], &mut out).unwrap();
+        assert_eq!(out, [0x41, 0x00, 0x3D, 0xD8, 0, 0]);
+        assert!(write_units_le(&[1, 2], &mut [0u8; 3]).is_err());
+    }
+
+    #[test]
     fn text_lf_becomes_crlf() {
         assert_eq!(unicode_text_units("a\nb\n"), with_nul(u("a\r\nb\r\n")));
         assert_eq!(unicode_text_units("\n"), with_nul(u("\r\n")));
@@ -342,7 +366,7 @@ mod tests {
     fn dibv5_header_of_a_1x1_image_is_exact() {
         let d = build_dibv5(&[10, 20, 30, 40], 1, 1).unwrap();
         assert_eq!(d.len(), 124 + 4);
-        let mut expect = vec![0u8; 124];
+        let mut expect = [0u8; 124];
         expect[0..4].copy_from_slice(&124u32.to_le_bytes());
         expect[4..8].copy_from_slice(&1u32.to_le_bytes());
         expect[8..12].copy_from_slice(&1u32.to_le_bytes());
