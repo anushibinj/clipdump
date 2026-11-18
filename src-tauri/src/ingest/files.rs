@@ -63,6 +63,18 @@ pub fn preview(files: &[FileRef]) -> String {
     text::preview(&joined)
 }
 
+/// What fuzzy search matches for a file list: the full paths (which contain the
+/// names) one per line, capped at the usual search length. The store rebuilds it
+/// from the stored list at startup, so it must stay a pure function of `files`.
+pub fn search_text(files: &[FileRef]) -> String {
+    let all_paths = files
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    text::search_slice(&all_paths).to_string()
+}
+
 /// Extensions the build can decode (png, bmp, jpeg, webp features).
 pub fn is_image_path(path: &str) -> bool {
     let ext = match path.rsplit_once('.') {
@@ -97,17 +109,12 @@ pub fn build(
     }
     let files = collect(paths);
     let hash = hash_paths(&files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>());
-    let all_paths = files
-        .iter()
-        .map(|f| f.path.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     Some(IngestedItem {
         kind: ClipKind::Files,
         hash,
         preview: preview(&files),
         // Paths (which contain the names) so both can be searched.
-        search_text: text::search_slice(&all_paths).to_string(),
+        search_text: search_text(&files),
         text: None,
         png: None,
         thumb: thumbnail(&files, THUMB_MAX_FILE_BYTES),
