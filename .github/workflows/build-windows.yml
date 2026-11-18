@@ -1,0 +1,105 @@
+name: build-windows
+
+# Builds the NSIS installer on Windows. A `v*` tag push also drafts a GitHub release
+# with the installer attached; a manual run only uploads the installer as a workflow
+# artifact. Steps and caveats: docs/packaging.md.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # package.json has no "packageManager" field, so the pnpm major is given here
+      # (lockfileVersion 9.0 is read by pnpm 9 and 10). With a "packageManager" field,
+      # drop `version` and the action reads the field.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check that the versions and the changelog agree
+        run: pnpm check:version
+
+      - name: Check that the tag is the version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: node scripts/check-version.mjs "$GITHUB_REF_NAME"
+
+      - name: Type check
+        run: pnpm tsc --noEmit
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build the installer
+        run: pnpm tauri build
+
+      - name: Installer size
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe
+          if (-not $files) { throw "no NSIS installer was produced" }
+          foreach ($f in $files) {
+            $mb = [math]::Round($f.Length / 1MB, 2)
+            "$($f.Name): $($f.Length) bytes ($mb MB), budget 12 MB" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipdump-windows-installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clipdump-windows-installer
+          path: installer
+
+      # A draft, so the notes and the unsigned installer can be looked at before it is
+      # published. Copy the matching section of CHANGELOG.md into the notes.
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: installer/*.exe
