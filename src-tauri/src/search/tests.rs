@@ -543,3 +543,467 @@ fn existence_is_checked_only_for_returned_file_items() {
     let _ = run(&[text(3, "x", 1)], "x", &fs);
     assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
 }
+
+// -- ranking tests (step 7) --------------------------------------------------------
+
+/// A checker for tests that do not care about files.
+struct NoFiles;
+
+impl PathChecker for NoFiles {
+    fn exists(&self, _: &str) -> bool {
+        true
+    }
+}
+
+fn dtos(items: &[Arc<ClipItem>], query: &str, filter: TypeFilter) -> Vec<ResultDto> {
+    search(
+        items.iter(),
+        &SearchRequest::new(query, filter, NOW),
+        &NoFiles,
+    )
+}
+
+#[test]
+fn every_word_must_match_and_negated_words_exclude() {
+    let items = [
+        text(1, "alpha beta gamma", 1),
+        text(2, "alpha only", 2),
+        text(3, "beta only", 3),
+    ];
+    assert_eq!(ids(&ranked(&items, "alpha beta", TypeFilter::All)), [1]);
+    assert_eq!(ids(&ranked(&items, "alpha !beta", TypeFilter::All)), [2]);
+    // `^` anchors at the start of the text, `$` at its end.
+    assert_eq!(ids(&ranked(&items, "^beta", TypeFilter::All)), [3]);
+    assert_eq!(ids(&ranked(&items, "only$", TypeFilter::All)), [2, 3]);
+}
+
+#[test]
+fn exact_beats_fuzzy_even_when_the_fuzzy_item_is_newer_and_used_more() {
+    let fuzzy = with(text(1, "Quick Brown Fox", 1), |i| i.use_count = 500);
+    let exact = text(2, "a qbf b", 80 * DAY);
+    // Both match "qbf": the first fuzzily (word starts), the second contiguously.
+    let r = ranked(&[fuzzy, exact], "qbf", TypeFilter::All);
+    assert_eq!(ids(&r), [2, 1]);
+    assert!(r[0].is_exact() && !r[1].is_exact());
+}
+
+#[test]
+fn among_exact_matches_a_word_start_scores_higher() {
+    let items = [text(1, "xxfooxx", 5), text(2, "foo bar", 5)];
+    let r = ranked(&items, "foo", TypeFilter::All);
+    assert_eq!(ids(&r), [2, 1]);
+    assert!(r.iter().all(Ranked::is_exact));
+}
+
+#[test]
+fn all_words_contiguous_is_exact_but_one_scattered_word_is_not() {
+    let items = [text(1, "foo bar", 1), text(2, "fxoxo bar", 2)];
+    let r = ranked(&items, "foo bar", TypeFilter::All);
+    assert_eq!(ids(&r), [1, 2]);
+    assert!(r[0].is_exact());
+    assert!(!r[1].is_exact(), "'foo' only matches fuzzily in item 2");
+}
+
+#[test]
+fn newer_items_rank_higher_when_the_match_is_equal() {
+    // Listed oldest first on purpose: order comes from the boost, not the input.
+    let items = [
+        text(1, "meeting notes", 30 * DAY),
+        text(2, "meeting notes", DAY),
+    ];
+    assert_eq!(ids(&ranked(&items, "meeting", TypeFilter::All)), [2, 1]);
+}
+
+#[test]
+fn the_recency_boost_decays_with_age() {
+    let at = |age: i64| boost(&text(1, "x", age), NOW);
+    assert!((at(0) - RECENCY_BOOST_MAX).abs() < 1e-9);
+    assert!((at(RECENCY_HALF_LIFE_MS as i64) - RECENCY_BOOST_MAX / 2.0).abs() < 1e-9);
+    let mut last = f64::MAX;
+    for days in [0, 1, 2, 5, 10, 30, 90, 365] {
+        let b = at(days * DAY);
+        assert!(b < last, "monotonic decay, day {days}");
+        assert!(b > 0.0);
+        last = b;
+    }
+    assert!(at(365 * DAY) < 1e-6, "a year old item gets nothing");
+}
+
+#[test]
+fn use_count_boosts_with_a_logarithm() {
+    let used = |n: u32| boost(&with(text(1, "x", 100 * DAY), |i| i.use_count = n), NOW);
+    let base = used(0);
+    assert!((used(1) - base - USE_COUNT_WEIGHT * 2f64.ln()).abs() < 1e-9);
+    assert!((used(9) - base - USE_COUNT_WEIGHT * 10f64.ln()).abs() < 1e-9);
+    assert!(used(100) > used(10) && used(10) > used(1));
+    // Diminishing returns: the second hundred uses add less than the first ten.
+    assert!(used(200) - used(100) < used(10) - used(0));
+}
+
+#[test]
+fn use_count_orders_otherwise_equal_items() {
+    let items = [
+        text(1, "release notes", DAY),
+        with(text(2, "release notes", DAY), |i| i.use_count = 12),
+    ];
+    assert_eq!(ids(&ranked(&items, "release", TypeFilter::All)), [2, 1]);
+}
+
+#[test]
+fn a_stale_now_changes_the_boost_but_never_breaks_ranking() {
+    // A is fresh and never used; B is a month old but used a lot.
+    let a = text(1, "deploy script", 0);
+    let b = with(text(2, "deploy script", 30 * DAY), |i| i.use_count = 9);
+    let items = [a, b];
+    let rank_at = |now: i64| {
+        rank(
+            items.iter(),
+            &SearchRequest::new("deploy", TypeFilter::All, now),
+        )
+    };
+
+    // Now: the fresh item's recency (24) beats ~18 points of use count.
+    assert_eq!(ids(&rank_at(NOW)), [1, 2]);
+    // Two months later nothing is recent; use count decides.
+    let later = rank_at(NOW + 60 * DAY);
+    assert_eq!(ids(&later), [2, 1]);
+    assert!(later.iter().all(|r| r.score().is_finite()));
+    // The scores of the same item fall as `now` moves away from it.
+    assert!(rank_at(NOW)[0].score() > rank_at(NOW + 60 * DAY)[1].score());
+    // A clock behind the item (the store stamps can run ahead of it) is clamped
+    // to the maximum boost, not extrapolated.
+    let behind = rank_at(NOW - 10 * DAY);
+    let at_zero = rank_at(NOW);
+    assert!((behind[0].score() - at_zero[0].score()).abs() < 1e-9);
+    // Extreme values do not overflow or produce NaN.
+    for now in [i64::MIN / 4, 0, i64::MAX / 4] {
+        let r = rank_at(now);
+        assert_eq!(r.len(), 2);
+        assert!(r.iter().all(|r| r.score().is_finite()));
+    }
+}
+
+#[test]
+fn smart_case_lowercase_ignores_case_and_uppercase_respects_it() {
+    let items = [
+        text(1, "see the README file", 1),
+        text(2, "see the readme file", 2),
+        text(3, "Readme.md", 3),
+    ];
+    assert_eq!(ids(&ranked(&items, "readme", TypeFilter::All)).len(), 3);
+    assert_eq!(ids(&ranked(&items, "README", TypeFilter::All)), [1]);
+    assert_eq!(ids(&ranked(&items, "Readme", TypeFilter::All)), [3]);
+}
+
+#[test]
+fn smart_normalization_folds_accents_only_for_plain_queries() {
+    let items = [
+        text(1, "visit the caf\u{e9} today", 1),
+        text(2, "visit the cafe", 2),
+    ];
+    // A plain query finds both.
+    let mut found = ids(&ranked(&items, "cafe", TypeFilter::All));
+    found.sort_unstable();
+    assert_eq!(found, [1, 2]);
+    // An accented query asks for the accent.
+    assert_eq!(ids(&ranked(&items, "caf\u{e9}", TypeFilter::All)), [1]);
+}
+
+#[test]
+fn type_filter_and_prefixes_restrict_the_results() {
+    let items = [
+        text(1, "invoice notes", 1),
+        image(2, "invoice total 42", 2),
+        files(3, &["/billing/invoice.pdf"], 3),
+    ];
+    assert_eq!(ids(&ranked(&items, "invoice", TypeFilter::All)).len(), 3);
+    assert_eq!(ids(&ranked(&items, "invoice", TypeFilter::Text)), [1]);
+    assert_eq!(ids(&ranked(&items, "invoice", TypeFilter::Images)), [2]);
+    assert_eq!(ids(&ranked(&items, "invoice", TypeFilter::Files)), [3]);
+    // Typed prefixes are stripped from the query and win over the UI filter.
+    assert_eq!(ids(&ranked(&items, "img:invoice", TypeFilter::All)), [2]);
+    assert_eq!(ids(&ranked(&items, "img: invoice", TypeFilter::Files)), [2]);
+    assert_eq!(ids(&ranked(&items, "file:invoice", TypeFilter::Text)), [3]);
+    assert_eq!(ids(&ranked(&items, "txt:invoice", TypeFilter::Images)), [1]);
+    // The prefix word itself is not part of the search.
+    assert!(ranked(&items, "txt:total", TypeFilter::All).is_empty());
+}
+
+#[test]
+fn images_match_through_their_ocr_text_and_pending_ones_do_not() {
+    let items = [image(1, "", 1), image(2, "meeting agenda", 2)];
+    let r = dtos(&items, "agenda", TypeFilter::All);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].id, 2);
+    assert_eq!(r[0].match_source, MatchSource::Ocr);
+    assert!(r[0].snippet.as_deref().unwrap().contains("agenda"));
+    // Pending images still show in the empty query.
+    assert_eq!(dtos(&items, "", TypeFilter::All).len(), 2);
+}
+
+#[test]
+fn match_source_follows_the_kind() {
+    let items = [
+        text(1, "budget text", 1),
+        image(2, "budget scan", 2),
+        files(3, &["/x/budget.xlsx"], 3),
+    ];
+    let r = dtos(&items, "budget", TypeFilter::All);
+    let src = |id| r.iter().find(|d| d.id == id).unwrap().match_source;
+    assert_eq!(src(1), MatchSource::Text);
+    assert_eq!(src(2), MatchSource::Ocr);
+    assert_eq!(src(3), MatchSource::File);
+}
+
+#[test]
+fn indices_are_character_positions_not_bytes() {
+    // "caf\u{e9} na\u{ef}ve" has 2 byte chars before the match.
+    let items = [text(1, "caf\u{e9} na\u{ef}ve r\u{e9}sum\u{e9} target", 1)];
+    let d = &dtos(&items, "target", TypeFilter::All)[0];
+    let preview: Vec<char> = d.preview.chars().collect();
+    let hl: String = d
+        .match_indices
+        .iter()
+        .map(|&i| preview[i as usize])
+        .collect();
+    assert_eq!(hl, "target");
+    // Byte offsets would be 3 higher (three 2 byte chars before the match).
+    assert_eq!(d.match_indices.first(), Some(&18));
+    assert_eq!(d.match_indices.len(), 6);
+}
+
+#[test]
+fn indices_count_code_points_not_grapheme_clusters() {
+    // 'a' + combining acute is one grapheme but two chars; a CJK prefix is
+    // three bytes per char. Highlighting is by char, so "bc" is at 2 and 3.
+    let items = [
+        text(1, "a\u{301}bc", 1),
+        text(2, "\u{4f60}\u{597d} hello", 2),
+    ];
+    let r = dtos(&items, "bc", TypeFilter::All);
+    assert_eq!(r[0].match_indices, [2, 3]);
+    let r = dtos(&items, "hello", TypeFilter::All);
+    assert_eq!(r[0].match_indices, [3, 4, 5, 6, 7]);
+}
+
+#[test]
+fn ocr_snippet_indices_are_character_positions_in_the_snippet() {
+    let ocr = format!(
+        "{}caf\u{e9} \u{4f60}\u{597d} the zebra crossing is ahead {}",
+        "bonjour ".repeat(30),
+        "au revoir ".repeat(30)
+    );
+    let d = &dtos(&[image(1, &ocr, 1)], "zebra", TypeFilter::All)[0];
+    let snip: Vec<char> = d.snippet.as_deref().unwrap().chars().collect();
+    let hl: String = d.match_indices.iter().map(|&i| snip[i as usize]).collect();
+    assert_eq!(hl, "zebra");
+}
+
+#[test]
+fn a_text_match_beyond_the_preview_gets_a_snippet() {
+    let long = format!("{} needle in the haystack", "padding ".repeat(80));
+    let item = with(text(1, &long, 1), |i| {
+        i.preview = Arc::from(&long[..300]);
+    });
+    let d = &dtos(&[item], "needle", TypeFilter::All)[0];
+    assert_eq!(d.match_source, MatchSource::Text);
+    let snip = d
+        .snippet
+        .as_deref()
+        .expect("the preview does not show the match");
+    assert!(snip.contains("needle"));
+    assert!(snip.chars().count() <= SNIPPET_CHARS);
+    let chars: Vec<char> = snip.chars().collect();
+    let hl: String = d.match_indices.iter().map(|&i| chars[i as usize]).collect();
+    assert_eq!(hl, "needle");
+}
+
+#[test]
+fn every_index_lies_inside_the_string_it_refers_to() {
+    let items = [
+        text(1, "caf\u{e9} \u{1f600} na\u{ef}ve a\u{301}bc", 1),
+        image(
+            2,
+            &format!("{}tail \u{4f60}\u{597d} end", "word ".repeat(100)),
+            2,
+        ),
+        files(3, &["C:\\Users\\me\\r\u{e9}sum\u{e9}.pdf"], 3),
+        text(4, &"abc ".repeat(200), 4),
+    ];
+    for q in [
+        "a",
+        "c",
+        "caf\u{e9}",
+        "abc",
+        "tail",
+        "end",
+        "r\u{e9}sum\u{e9}",
+        "w d",
+        "x",
+        "\u{4f60}",
+    ] {
+        for d in dtos(&items, q, TypeFilter::All) {
+            let shown = d.snippet.as_deref().unwrap_or(&d.preview);
+            let len = shown.chars().count() as u32;
+            assert!(
+                d.match_indices.iter().all(|&i| i < len),
+                "{q:?} on {}: {:?} vs {len}",
+                d.id,
+                d.match_indices
+            );
+            let mut sorted = d.match_indices.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted, d.match_indices, "sorted and unique");
+        }
+    }
+}
+
+#[test]
+fn the_empty_query_has_no_indices_and_no_snippet() {
+    let items = [text(1, "hello", 1), image(2, "ocr words", 2)];
+    for d in dtos(&items, "", TypeFilter::All) {
+        assert!(d.match_indices.is_empty());
+        assert_eq!(d.snippet, None);
+    }
+}
+
+#[test]
+fn at_most_the_limit_is_returned_and_the_best_come_first() {
+    let items: Vec<_> = (0..120)
+        .map(|i| text(i + 1, "common phrase", (i as i64) * 1000))
+        .collect();
+    assert_eq!(
+        ranked(&items, "common", TypeFilter::All).len(),
+        DEFAULT_LIMIT
+    );
+    assert_eq!(DEFAULT_LIMIT, 50);
+    let mut req = SearchRequest::new("common", TypeFilter::All, NOW);
+    req.limit = 7;
+    assert_eq!(ids(&rank(items.iter(), &req)), [1, 2, 3, 4, 5, 6, 7]);
+    req.limit = 0;
+    assert!(rank(items.iter(), &req).is_empty());
+    req.limit = 1_000_000;
+    assert_eq!(rank(items.iter(), &req).len(), MAX_LIMIT.min(120));
+    // The empty query obeys the limit too.
+    assert_eq!(ranked(&items, "", TypeFilter::All).len(), DEFAULT_LIMIT);
+}
+
+#[test]
+fn the_limit_keeps_the_best_matches_not_the_first_ones() {
+    // 60 weak (fuzzy) matches, newest first, then one exact match, oldest.
+    let mut items: Vec<_> = (0..60)
+        .map(|i| text(i + 1, "quick brown fox", i as i64))
+        .collect();
+    items.push(text(99, "...qbf...", 30 * DAY));
+    let r = ranked(&items, "qbf", TypeFilter::All);
+    assert_eq!(r.len(), DEFAULT_LIMIT);
+    assert_eq!(r[0].item().id, 99, "the exact match survives the cut");
+}
+
+#[test]
+fn ordering_is_stable_and_ties_put_the_newer_item_first() {
+    // Identical text and age: only the input (newest first) order differs.
+    let items: Vec<_> = (1..=100).map(|i| text(i, "same words here", DAY)).collect();
+    let first = ids(&ranked(&items, "same", TypeFilter::All));
+    assert_eq!(first, (1..=50).collect::<Vec<u64>>());
+    for _ in 0..20 {
+        assert_eq!(ids(&ranked(&items, "same", TypeFilter::All)), first);
+    }
+    // A limit that cuts through a tie keeps the earlier (newer) items.
+    let mut req = SearchRequest::new("same", TypeFilter::All, NOW);
+    req.limit = 10;
+    assert_eq!(
+        ids(&rank(items.iter(), &req)),
+        (1..=10).collect::<Vec<u64>>()
+    );
+}
+
+#[test]
+fn degenerate_inputs_do_not_panic() {
+    let long = "a".repeat(10_000);
+    let items = [
+        text(1, &long, 1),
+        text(2, "", 2),
+        text(3, &"\u{4f60}".repeat(10_000), 3),
+    ];
+    for q in [
+        "aaaaab",
+        "a",
+        "!a",
+        "'",
+        "^$",
+        "\\",
+        "\u{4f60}\u{4f60}",
+        "a b c d e f g h",
+        "\u{0}",
+    ] {
+        let _ = dtos(&items, q, TypeFilter::All);
+    }
+    // A query longer than every text.
+    assert!(ranked(&items, &"z".repeat(20_000), TypeFilter::All).is_empty());
+}
+
+// -- size gate of the fuzzy stage -------------------------------------------------
+
+#[test]
+fn scattered_letter_matches_are_limited_to_short_texts() {
+    let short = "quick brown fox";
+    // Same scattered letters, but inside a text over the gate.
+    let long = format!("{short} {}", "lorem ipsum dolor sit amet ".repeat(30));
+    assert!(long.len() > FUZZY_MAX_BYTES);
+    let items = [text(1, short, 1), text(2, &long, 2)];
+    assert_eq!(ids(&ranked(&items, "qbf", TypeFilter::All)), [1]);
+    // A contiguous word is found in the long text too.
+    assert_eq!(ids(&ranked(&items, "ipsum", TypeFilter::All)), [2]);
+    // And so is a contiguous word right at the end of a long text.
+    let tail = format!("{} needle", "padding ".repeat(100));
+    assert_eq!(
+        ids(&ranked(&[text(3, &tail, 3)], "needle", TypeFilter::All)),
+        [3]
+    );
+}
+
+#[test]
+fn accent_folding_only_applies_to_short_texts() {
+    let long = format!("caf\u{e9} {}", "word ".repeat(100));
+    assert!(long.len() > FUZZY_MAX_BYTES);
+    let items = [text(1, "caf\u{e9}", 1), text(2, &long, 2)];
+    let mut found = ids(&ranked(&items, "cafe", TypeFilter::All));
+    found.sort_unstable();
+    assert_eq!(found, [1], "the long text needs the exact spelling");
+    let mut found = ids(&ranked(&items, "caf\u{e9}", TypeFilter::All));
+    found.sort_unstable();
+    assert_eq!(found, [1, 2]);
+}
+
+#[test]
+fn the_lowercase_twin_follows_the_search_text() {
+    let mut i = (*text(1, "Hello WORLD", 1)).clone();
+    assert_eq!(&*i.search_lower, "hello world");
+    i.set_search_text(Arc::from("Changed TEXT"));
+    assert_eq!(&*i.search_lower, "changed text");
+    // Already lowercase ASCII shares the allocation instead of copying.
+    let lower: Arc<str> = Arc::from("already lower");
+    assert!(Arc::ptr_eq(&fold_for_search(&lower), &lower));
+    // Non ASCII goes through Unicode lowercasing.
+    assert_eq!(&*fold_for_search(&Arc::from("\u{c9}COLE")), "\u{e9}cole");
+}
+
+#[test]
+fn the_byte_search_and_nucleo_agree_on_what_matches() {
+    // Plain words use the byte search, anchored ones use nucleo; a mixed query
+    // must apply both.
+    let items = [text(1, "alpha beta", 1), text(2, "beta alpha", 2)];
+    assert_eq!(ids(&ranked(&items, "^alpha beta", TypeFilter::All)), [1]);
+    assert_eq!(ids(&ranked(&items, "alpha beta$", TypeFilter::All)), [1]);
+    assert_eq!(
+        ids(&ranked(&items, "'alpha !gamma", TypeFilter::All)),
+        [1, 2]
+    );
+    assert_eq!(ids(&ranked(&items, "'alp", TypeFilter::All)), [1, 2]);
+    assert!(
+        ranked(&items, "'alq", TypeFilter::All).is_empty(),
+        "a quoted word has no fuzzy fallback"
+    );
+}

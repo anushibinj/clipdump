@@ -962,3 +962,60 @@ fn cold_start_with_1000_items_report() {
     // accidentally quadratic load. The 300 ms budget is checked on Windows.
     assert!(times.iter().all(|t| t.as_secs() < 30));
 }
+
+// -- search through the store (Phase 8) ------------------------------------------
+
+#[test]
+fn store_search_finds_text_ocr_and_files_and_survives_a_restart() {
+    use crate::search::{MatchSource, PathChecker, SearchRequest, TypeFilter};
+
+    struct Gone;
+    impl PathChecker for Gone {
+        fn exists(&self, _: &str) -> bool {
+            false
+        }
+    }
+    let run = |fx: &Fx, q: &str| {
+        fx.store
+            .search(&SearchRequest::new(q, TypeFilter::All, fx.now()), &Gone)
+    };
+
+    let fx = Fx::new();
+    let txt = fx.text("quarterly budget meeting notes");
+    let img = fx.image(1, 100);
+    fx.store
+        .set_ocr_text(img, Some("invoice total 42 euro".into()), OcrStatus::Done);
+    let files = match fx.store.insert(fake_files(1, fx.now())) {
+        Inserted::New(id) | Inserted::Bumped(id) => id,
+    };
+    let fx = fx.reopen();
+
+    let r = run(&fx, "budget");
+    assert_eq!(r.iter().map(|d| d.id).collect::<Vec<_>>(), [txt]);
+    assert_eq!(r[0].match_source, MatchSource::Text);
+
+    // The lowercase twin is rebuilt from the stored OCR text at load, and a
+    // capitalized query still finds it (smart case: "Invoice" is case sensitive,
+    // so it must not).
+    assert_eq!(
+        &*fx.store.get(img).unwrap().search_lower,
+        "invoice total 42 euro"
+    );
+    assert!(run(&fx, "Invoice").is_empty());
+
+    let r = run(&fx, "invoice");
+    assert_eq!(r.iter().map(|d| d.id).collect::<Vec<_>>(), [img]);
+    assert_eq!(r[0].match_source, MatchSource::Ocr);
+    assert!(r[0].snippet.as_deref().unwrap().contains("invoice"));
+    assert!(r[0].has_thumb);
+
+    let r = run(&fx, "file1");
+    assert_eq!(r.iter().map(|d| d.id).collect::<Vec<_>>(), [files]);
+    assert_eq!((r[0].file_count, r[0].missing_files), (3, 3));
+
+    // Empty query: all three, newest first.
+    assert_eq!(run(&fx, "").len(), 3);
+    // Searching holds no lock afterwards: a write goes through.
+    fx.text("another one");
+    assert_eq!(run(&fx, "another").len(), 1);
+}
