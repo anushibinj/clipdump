@@ -9,6 +9,8 @@ mod windows;
 // the tests use them, hence the allow.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod rules;
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod self_write;
 
 // Dev/test only key protector. Compiled on every non-Windows target and in test
 // builds on Windows; never selected by `default_key_protector` on Windows.
