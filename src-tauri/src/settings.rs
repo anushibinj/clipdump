@@ -17,6 +17,7 @@
 //! The file uses snake_case keys and is NOT encrypted (PLAN Section 3).
 
 pub mod file;
+pub mod saver;
 
 
 use serde::{Deserialize, Serialize};
