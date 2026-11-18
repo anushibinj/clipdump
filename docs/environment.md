@@ -86,8 +86,13 @@ rustup show        # default host should be x86_64-pc-windows-msvc
    `cargo clippy --target x86_64-pc-windows-gnu`) from `src-tauri`. Run it after every change to
    `platform/windows/*`, the Tauri setup, or `Cargo.toml`. Treat a failure here as a blocker for the
    phase.
-5. **Frontend**: `pnpm install`, `pnpm tsc --noEmit`, `pnpm build` all run on Linux. Visual checks of
-   the React UI can use `pnpm dev` with a mocked `ipc.ts` if needed.
+5. **Frontend**: `pnpm install`, `pnpm tsc --noEmit`, `pnpm build` and `pnpm test` (vitest, pure
+   logic only) all run on Linux. The UI also runs in a plain browser against a fake backend:
+   `pnpm dev:mock` (Vite mode `mock`, see `src/dev`; the mode aliases `@tauri-apps/api/core` and
+   `/event` to the fake, so nothing of it is in a production build). The preinstalled Playwright
+   drives it: `node scripts/ui-check.mjs keys|perf|shots` (documented at the top of the script; run
+   it from a scratch directory, not the repo root). `perf` numbers are relative (Chromium on Linux,
+   JavaScript mock), never a Windows figure.
 6. **Tauri on Linux**: `cargo check` and `cargo test` of the Tauri crate work natively because the
    webkit2gtk-4.1 stack is installed. `pnpm tauri dev` needs a display (use `xvfb-run` if a smoke
    test is wanted); the Linux build is not a product target and is not used to judge Windows

@@ -443,3 +443,136 @@ images and with `fetch`, and is refused for commands outside the capability.
       a restart returns to the defaults.
 - [ ] The tray "Pause capture" check mark does not follow `set_settings({ paused })`
       yet (the menu item is not wired back); the pause itself works.
+
+## Phase 10: UI (shadcn look)
+
+Phase 10 adds the whole search UI (`src/App.tsx`, `src/components`, `src/hooks`)
+and one small backend addition: result rows now carry `lineCount` (the "n lines"
+badge). What was verified in the Linux container: type check, production build,
+vitest (highlight splitting with non-ASCII, relative time, bytes, shortcut table,
+request-counter staleness), a Playwright keyboard flow against a fake backend
+(`node scripts/ui-check.mjs keys`, 57 checks), light and dark screenshots
+(`docs/screenshots/`, drawn by Chromium), a relative keystroke timing, and the
+real Tauri app under Xvfb (WebKitGTK) with a seeded history: second launch and
+the global hotkey show the bar, typing finds an OCR match with the highlighted
+snippet, emoji highlights land on the right characters, `clip://` thumbnails
+load, Tab shows the preview, `Ctrl+,` opens settings, `Esc` hides the bar and
+`Ctrl+Enter` shows the backend error as an inline message. WebKitGTK is not
+WebView2, so everything below still needs a Windows run.
+
+### Rendering in WebView2
+- [ ] `pnpm tauri dev`, press the hotkey: a rounded card with a soft shadow, no
+      black or white corners, no rectangular frame around it (window transparency
+      works), on both a light and a dark wallpaper.
+- [ ] `backdrop-blur` only blurs what is behind the card inside the webview, so
+      over the desktop the card is simply 95% opaque. Check it still reads well
+      over a busy wallpaper and a white window behind it.
+- [ ] The native shadow (`shadow: true`) and the CSS shadow do not double up into
+      a hard dark halo. If they do, set `shadow` to false in `tauri.conf.json`.
+- [ ] DPI 100, 125, 150 and 200 percent: text is crisp, the 8 px margin around
+      the card is kept, about eight text rows fit, thumbnails are sharp. Move the
+      bar between two monitors of different scale and open it on each.
+- [ ] Geist loads from the bundle (no network): disconnect the network and
+      reload, the font is unchanged.
+
+### Focus and show
+- [ ] Hotkey: the input has the caret at once, with no click. Type a query, `Esc`,
+      press the hotkey again: the old query is selected and typing replaces it.
+      Repeat 20 times quickly; focus must never be lost.
+- [ ] Tray "Settings" shows the bar with the settings view; `Esc` goes back to
+      search, `Esc` again hides the bar. After the bar hides while settings or
+      the preview was open, the next open starts on the plain search view.
+- [ ] Click outside the bar: it hides (unless "Pinned bar" is on, then it stays
+      and the hotkey only focuses it).
+- [ ] Clicking a filter, a hint or an empty spot in the card does not take the
+      caret out of the input.
+
+### Thumbnails and images through `clip.localhost`
+- [ ] Copy a few screenshots: rows show a 40 px thumbnail, the Tab preview shows
+      the full picture over the thumbnail, no broken image icons. DevTools Network:
+      the URLs are `http://clip.localhost/thumb/<id>?v=<createdAt>` and
+      `.../blob/<id>?v=...` and a second view comes from the cache.
+- [ ] A file item that is an image (copy a PNG in Explorer) shows its thumbnail.
+- [ ] Delete the newest screenshot, restart, copy another one: the new row must
+      not show the old picture (the `?v=` cache buster).
+
+### Search rows
+- [ ] A word that is only inside a screenshot finds it: "OCR" badge, a subtitle
+      with the word highlighted, the preview pane shows the OCR text.
+- [ ] Highlights are right for text with accents, CJK and emoji (copy
+      `caf` plus an e acute, a Japanese sentence and a rocket emoji, search a word
+      after each).
+- [ ] A multi-line copy shows "n lines" (a code block, an email); a single line
+      does not.
+- [ ] A very long single line with the match far to the right: the row starts
+      near the match with a leading ellipsis, the match is visible.
+- [ ] Rename a copied file in Explorer, retype one character: the row gets the
+      red "missing" badge (this is the Phase 8 missing-files check, now visible).
+- [ ] The first nine rows show `Ctrl 1` to `Ctrl 9`; with the preview open the
+      hints disappear (narrow list), nothing overflows.
+- [ ] Pinned items are on top with an empty query and show the pin icon.
+
+### Keyboard (inside the bar)
+- [ ] `Ctrl+Enter` and `Enter` both copy and hide the bar (auto-paste on Enter
+      arrives with the setting in Phase 12). Until Phase 11, both show "Could not
+      copy: ..." in the footer, the bar stays open and keeps working.
+- [ ] `Ctrl+1` to `Ctrl+9`, `Ctrl+P`, `Ctrl+Delete`, `Shift+Delete`: act on the
+      right row. After a delete the next row is selected.
+- [ ] `Ctrl+Shift+Delete`: the footer asks to press again (with the count of
+      unpinned items), expires after 3 seconds, `Esc` cancels it, a second press
+      inside the window clears and keeps pinned items.
+- [ ] `Alt+1` to `Alt+4` switch the filter. Windows must not move focus to a menu
+      or beep on Alt+digit. A typed `img:`, `file:`, `txt:` prefix wins.
+- [ ] `Tab` toggles the preview and never moves focus out of the input.
+- [ ] `Ctrl+,` toggles settings. `Esc` order: confirmation, settings, preview, hide.
+- [ ] Global conflicts: the global `Ctrl+Shift+Space` still works while the bar
+      is focused (it toggles the bar); no other program that registers `Alt+digit`
+      or `Ctrl+,` globally steals them (PowerToys, AutoHotkey, IDE overlays).
+- [ ] WebView2 built in accelerator keys: `Ctrl+P` must not open the print
+      dialog, `F5` or `Ctrl+R` do not reload the page. If one does, set
+      `AreBrowserAcceleratorKeysEnabled` to false (Rust side) and note it.
+- [ ] Holding `Ctrl+Delete` deletes one item per press, not a page of them.
+
+### IME
+- [ ] With a Japanese or Chinese IME: composing in the search box shows the
+      candidate window at the caret, results follow the composed text, `Enter`
+      that confirms a candidate does NOT copy the selected row, and the shortcuts
+      work again right after the composition ends.
+
+### Light, dark and theme
+- [ ] Settings, Theme: System follows Windows (switch Windows light/dark while
+      the bar is open and while it is hidden), Light and Dark force a palette
+      and the choice is still there after a restart (stored in the webview's
+      localStorage; Phase 12 may move it into settings.json).
+- [ ] Dark mode: selected row, "missing" badge, highlights and Kbd chips have
+      enough contrast.
+
+### Settings
+- [ ] Every control applies at once. Lower "Keep at most" to 3: the list shrinks
+      and the count badge updates. "Pause capture" shows the "Paused" badge and
+      stops capture; the tray check mark does not follow yet (known, Phase 12).
+- [ ] Enter a limit below 1 KB for the text or image size: an inline error from
+      the backend appears and the field returns to the stored value.
+- [ ] Ignored apps: add `notepad.exe`, copy in Notepad: nothing is captured.
+- [ ] Disabled on purpose, with the note "Saved in a later update": hotkey,
+      Paste on Enter, Start at login. "Open data folder" is disabled with a
+      tooltip (no backend command yet).
+- [ ] The stats show items, pinned, disk use, RAM cache and the key protector
+      (`dpapi`); with no OCR language installed the OCR hint explains how to add one.
+
+### Real keystroke latency (budget: under 16 ms, PLAN section 4)
+- [ ] With about 1,000 items (use the Phase 14 stress script once it exists, or
+      copy a lot), open DevTools, Performance, record while typing a 10 letter
+      word at normal speed. Each keystroke's "Event: input" to the end of the
+      resulting frame should stay under 16 ms; note the worst. The task shows
+      `search` IPC, a React commit of the rows and one paint.
+- [ ] Quick console measurement (paste in DevTools, then type): 
+      `new PerformanceObserver(l => l.getEntries().forEach(e => e.name === "keydown" && console.log(e.duration.toFixed(1)))).observe({type: "event", durationThreshold: 16, buffered: true})`
+      lists every key press slower than 16 ms.
+- [ ] Reference from the Linux container (Chromium, production build, JavaScript
+      fake backend, 1,000 fake items; relative only, not the Windows number):
+      input event to rows in the DOM p50 about 2.5 to 4.7 ms and p95 about 7 to
+      12 ms; the fake search alone is 0.3 ms. With a 4x CPU slowdown p50 was
+      about 11 to 17 ms and p95 32 to 50 ms, so a slow PC is the thing to watch.
+      If Windows is over budget, the first knobs are the result `limit` in
+      `useSearch.ts` (50 rows) and the rows' `content-visibility`.
