@@ -286,13 +286,14 @@ function IgnoredApps({ apps, onChange }: { apps: string[]; onChange: (apps: stri
         <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Ignored apps">
           {apps.map((a) => (
             <li key={a}>
-              <Badge variant="secondary" className="gap-1 pr-1 font-mono text-[11px] font-normal">
+              <Badge variant="secondary" className="gap-0.5 pr-0.5 font-mono text-[11px] font-normal">
                 {a}
                 <button
                   type="button"
                   aria-label={`Stop ignoring ${a}`}
                   onClick={() => onChange(apps.filter((x) => x !== a))}
-                  className="rounded-full p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                  // 24 px hit area around the 12 px icon (WCAG 2.5.8).
+                  className="-my-1 flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
                 >
                   <X className="size-3" aria-hidden />
                 </button>
@@ -347,7 +348,7 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
       </header>
 
       {error && (
-        <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
+        <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-xs text-red-700 dark:text-destructive">
           {error}
         </p>
       )}

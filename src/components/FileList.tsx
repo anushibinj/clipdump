@@ -39,7 +39,7 @@ export function FileList({ files, totalFiles, truncated, totalSize }: FileListPr
               {!f.exists ? (
                 <Badge
                   variant="outline"
-                  className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
+                  className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-red-700 dark:text-destructive"
                 >
                   missing
                 </Badge>

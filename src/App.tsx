@@ -307,6 +307,15 @@ function App() {
       </footer>
     );
 
+  // Announced politely by screen readers whenever it changes: the answer to "did my typing find
+  // anything", which sighted users get from the list itself. Nothing before the first search.
+  const resultCount = !s.ready
+    ? ""
+    : s.results.length === 0
+      ? "No results"
+      : `${s.results.length} ${s.results.length === 1 ? "result" : "results"}`;
+  const inSettings = view === "settings";
+
   return (
     <TooltipProvider>
       {/* 8 px padding leaves room for the native window shadow and the card shadow. */}
@@ -314,9 +323,17 @@ function App() {
         <main
           ref={mainRef}
           tabIndex={-1}
+          // Settings replaces the list inside the same card: a modal dialog for assistive tech
+          // (the card is the focus target, Esc leaves). The search view is the main landmark.
+          role={inSettings ? "dialog" : undefined}
+          aria-modal={inSettings ? true : undefined}
+          aria-label={inSettings ? "Settings" : undefined}
           onKeyDownCapture={view === "settings" ? onKeyDownCapture : undefined}
           className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
         >
+          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {inSettings ? "" : resultCount}
+          </div>
           {view === "settings" ? (
             <div className="flex h-full flex-col">
               <div className="min-h-0 flex-1">

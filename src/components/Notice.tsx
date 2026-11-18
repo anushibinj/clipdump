@@ -38,7 +38,8 @@ export function Notice({ kind, message, onDismiss, wrap = false }: NoticeProps) 
         // Do not take focus from the search input.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onDismiss}
-        className="shrink-0 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+        // A 24 px hit area (WCAG 2.5.8) around the 12 px icon, without making the footer taller.
+        className="-my-1 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <X className="size-3" aria-hidden />
       </button>

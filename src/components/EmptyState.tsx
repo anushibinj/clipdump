@@ -38,8 +38,8 @@ export function EmptyState({ query, filter, totalItems, error }: EmptyStateProps
     hint = "Try fewer letters, or img:, file:, txt: to pick a kind.";
   }
   return (
+    // No live region role here: the result count announcement (App.tsx) already says "No results".
     <div
-      role="status"
       className="flex h-full min-h-40 flex-col items-center justify-center gap-1.5 px-6 text-center"
     >
       <Icon className="mb-1 size-8 text-muted-foreground/60" strokeWidth={1.5} aria-hidden />

@@ -215,7 +215,7 @@ export const ResultItem = memo(function ResultItem({
         {r.missingFiles > 0 && (
           <Badge
             variant="outline"
-            className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
+            className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] font-medium text-red-700 dark:text-destructive"
           >
             {missingLabel(r)}
           </Badge>
@@ -231,7 +231,7 @@ export const ResultItem = memo(function ResultItem({
         </span>
         <span className="hidden w-[46px] justify-end @min-[460px]:flex">
           {index < 9 && (
-            <Kbd className="group-data-[selected=true]/row:bg-foreground/10">Ctrl {index + 1}</Kbd>
+            <Kbd className="group-data-[selected=true]/row:bg-foreground/10 group-data-[selected=true]/row:text-foreground/80">Ctrl {index + 1}</Kbd>
           )}
         </span>
       </div>
