@@ -200,6 +200,19 @@ pub fn lower_current_thread_priority() -> Result<(), String> {
     }
 }
 
+/// Lowest priority for the calling thread (`THREAD_PRIORITY_IDLE` on Windows):
+/// the OCR worker only gets CPU that nothing else wants. Elsewhere a no-op.
+pub fn lower_current_thread_priority_idle() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::priority::set_current_idle()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
 /// Raw native handle of our own window, to avoid recording ourselves as the
 /// "previous" window when the bar is already focused.
 fn own_handle(w: &WebviewWindow) -> Option<isize> {
