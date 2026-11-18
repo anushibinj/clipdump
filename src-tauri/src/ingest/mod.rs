@@ -1,8 +1,7 @@
 //! Ingest pipeline: turns raw clipboard captures into finished items.
 //!
-//! Transitional state: the types below (Phase 5 steps 2 to 6) are in place, the
-//! thread pool replaces the placeholder consumer at the end of Phase 5. Nothing
-//! outside this module may rely on the placeholder.
+//! A small pool of worker threads (below normal priority) reads [`IngestMsg`]s
+//! from the capture channel and hands finished items to an [`ItemSink`].
 //!
 //! Item flow: `IngestMsg` -> (worker thread) -> [`IngestedItem`] -> [`ItemSink`].
 //! Everything that is slow (image decode, PNG and WebP encode, file stat calls)
@@ -14,9 +13,17 @@ pub mod image;
 pub mod sink;
 pub mod text;
 
+use std::io;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::Result;
+use crossbeam_channel::Receiver;
 
 use crate::model::{ClipKind, FileRef, OcrStatus};
+use crate::platform::{Captured, CapturedEvent, IngestMsg};
 
 /// A fully processed clipboard item, everything the store needs to build its
 /// in-memory `ClipItem` (Phase 6) and the persist `NewItem`. Plain owned data
@@ -91,76 +98,281 @@ impl OcrQueue for NoopOcrQueue {
 }
 
 /// Shared handle type used by the pool and the sinks.
-#[allow(dead_code)] // used by the pool in a later commit of this phase
 pub type SharedSink = Arc<dyn ItemSink>;
 
-use std::thread::JoinHandle;
+/// Worker threads. Two is enough: image work is the only heavy part, and a
+/// second thread keeps text and file items from queueing behind a 4K screenshot.
+pub const WORKERS: usize = 2;
 
-use crossbeam_channel::Receiver;
+/// Unix milliseconds now.
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
-use crate::platform::{Captured, IngestMsg};
+/// Turn one capture into a finished item. `Ok(None)` means there is nothing to
+/// keep (empty text, empty file list). All the slow work happens in here, so
+/// only call it from an ingest worker.
+pub fn process(ev: CapturedEvent, created_at: i64) -> Result<Option<IngestedItem>> {
+    let CapturedEvent {
+        captured,
+        source_app,
+    } = ev;
+    Ok(match captured {
+        Captured::Text(t) => text::build(&t, source_app, created_at),
+        Captured::Image(data) => Some(image::build(data, source_app, created_at)?),
+        Captured::Files(paths) => files::build(&paths, source_app, created_at),
+    })
+}
 
-/// One line of description per message. Never includes clipboard content, only
-/// the kind and the size.
-fn describe(msg: &IngestMsg) -> String {
-    match msg {
-        IngestMsg::Captured(ev) => {
-            let src = ev.source_app.as_deref().unwrap_or("unknown app");
-            match &ev.captured {
-                Captured::Text(t) => format!("text, {} bytes, from {src}", t.len()),
-                Captured::Image(i) => {
-                    format!("image {:?}, {} bytes, from {src}", i.format, i.bytes.len())
-                }
-                Captured::Files(f) => format!("files, {} paths, from {src}", f.len()),
-            }
-        }
-        IngestMsg::Bump { hash } => format!("bump existing item {hash:032x}"),
+/// One line per item for the log. Never includes clipboard content.
+fn describe(item: &IngestedItem) -> String {
+    let src = item.source_app.as_deref().unwrap_or("unknown app");
+    match item.kind {
+        ClipKind::Text => format!("text, {} bytes, from {src}", item.byte_size),
+        ClipKind::Image => format!(
+            "image {}x{}, {} bytes png, from {src}",
+            item.width, item.height, item.byte_size
+        ),
+        ClipKind::Files => format!(
+            "files, {} paths, from {src}",
+            item.files.as_ref().map_or(0, Vec::len)
+        ),
     }
 }
 
-/// PLACEHOLDER consumer (replaced in Phase 5): logs each message and drops it.
-/// Ends when every sender is gone.
-pub fn spawn_placeholder_consumer(rx: Receiver<IngestMsg>) -> std::io::Result<JoinHandle<()>> {
-    std::thread::Builder::new()
-        .name("ingest-placeholder".into())
-        .spawn(move || {
-            for msg in rx {
-                eprintln!("clipdump: captured {}", describe(&msg));
+fn handle(msg: IngestMsg, sink: &dyn ItemSink) {
+    match msg {
+        IngestMsg::Bump { hash } => sink.bump(hash),
+        IngestMsg::Captured(ev) => {
+            // Stamp on dequeue: the channel is FIFO, so this keeps copy order
+            // even when a fast text item overtakes a slow screenshot.
+            let created_at = now_ms();
+            let started = Instant::now();
+            match process(ev, created_at) {
+                Ok(Some(item)) => {
+                    eprintln!(
+                        "clipdump: ingested {} in {} ms",
+                        describe(&item),
+                        started.elapsed().as_millis()
+                    );
+                    sink.submit(item);
+                }
+                Ok(None) => {}
+                // Errors never include clipboard bytes.
+                Err(e) => eprintln!("clipdump: ingest skipped an item: {e:#}"),
             }
-        })
+        }
+    }
+}
+
+/// The ingest worker pool. Workers end when every sender of the capture channel
+/// is gone and the queue is drained.
+pub struct IngestPool {
+    workers: Vec<JoinHandle<()>>,
+}
+
+impl IngestPool {
+    /// Start [`WORKERS`] threads consuming `rx`. If a thread cannot be
+    /// spawned, the ones already started keep running and the error is returned
+    /// only when none could start.
+    pub fn start(rx: Receiver<IngestMsg>, sink: SharedSink) -> io::Result<Self> {
+        let mut workers = Vec::with_capacity(WORKERS);
+        let mut last_err = None;
+        for n in 0..WORKERS {
+            let rx = rx.clone();
+            let sink = Arc::clone(&sink);
+            let spawned = std::thread::Builder::new()
+                .name(format!("ingest-{n}"))
+                .spawn(move || {
+                    // Ingest must never compete with typing or the hotkey.
+                    if let Err(e) = crate::platform::lower_current_thread_priority() {
+                        eprintln!("clipdump: could not lower ingest thread priority: {e}");
+                    }
+                    for msg in rx {
+                        // A bug in one decoder must not take the worker down.
+                        // (With `panic = "abort"` in release this cannot
+                        // trigger; it protects dev builds and tests.)
+                        let r = catch_unwind(AssertUnwindSafe(|| handle(msg, &*sink)));
+                        if r.is_err() {
+                            eprintln!("clipdump: ingest worker recovered from a panic");
+                        }
+                    }
+                });
+            match spawned {
+                Ok(h) => workers.push(h),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        match (workers.is_empty(), last_err) {
+            (true, Some(e)) => Err(e),
+            _ => Ok(Self { workers }),
+        }
+    }
+
+    /// Wait for the workers to finish. They finish once all senders are
+    /// dropped, so drop those first. Used by tests and by shutdown.
+    #[allow(dead_code)] // production shutdown (Phase 13) calls it
+    pub fn join(self) {
+        for w in self.workers {
+            let _ = w.join();
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::platform::{CapturedEvent, ImageData, ImageFormat};
+    use crate::platform::{ImageData, ImageFormat};
+    use std::sync::Mutex;
 
-    #[test]
-    fn describe_never_leaks_content() {
-        let text = IngestMsg::Captured(CapturedEvent {
-            captured: Captured::Text("super secret".into()),
+    /// Collects everything it is given.
+    #[derive(Default)]
+    pub struct CollectSink {
+        pub items: Mutex<Vec<IngestedItem>>,
+        pub bumps: Mutex<Vec<u128>>,
+    }
+
+    impl ItemSink for CollectSink {
+        fn submit(&self, item: IngestedItem) {
+            self.items.lock().unwrap().push(item);
+        }
+        fn bump(&self, hash: u128) {
+            self.bumps.lock().unwrap().push(hash);
+        }
+    }
+
+    fn text_ev(t: &str) -> IngestMsg {
+        IngestMsg::Captured(CapturedEvent {
+            captured: Captured::Text(t.into()),
             source_app: Some("notepad.exe".into()),
-        });
-        let d = describe(&text);
-        assert!(d.contains("12 bytes") && d.contains("notepad.exe"));
-        assert!(!d.contains("secret"));
-
-        let img = IngestMsg::Captured(CapturedEvent {
-            captured: Captured::Image(ImageData {
-                format: ImageFormat::Dib,
-                bytes: vec![0; 5],
-            }),
-            source_app: None,
-        });
-        assert!(describe(&img).contains("Dib, 5 bytes"));
+        })
     }
 
     #[test]
-    fn consumer_drains_and_stops_when_senders_drop() {
-        let (tx, rx) = crossbeam_channel::bounded(4);
-        let h = spawn_placeholder_consumer(rx).unwrap();
-        tx.send(IngestMsg::Bump { hash: 1 }).unwrap();
+    fn process_handles_all_three_kinds_and_empties() {
+        let t = process(
+            CapturedEvent {
+                captured: Captured::Text("hi".into()),
+                source_app: Some("a.exe".into()),
+            },
+            9,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((t.kind, t.created_at), (ClipKind::Text, 9));
+        assert_eq!(t.source_app.as_deref(), Some("a.exe"));
+
+        let p = image::tests::pic_gradient(30, 20);
+        let i = process(
+            CapturedEvent {
+                captured: Captured::Image(ImageData {
+                    format: ImageFormat::Dib,
+                    bytes: image::tests::dib24(&p, true),
+                }),
+                source_app: None,
+            },
+            9,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((i.kind, i.width, i.height), (ClipKind::Image, 30, 20));
+
+        let f = process(
+            CapturedEvent {
+                captured: Captured::Files(vec!["/nope/x.txt".into()]),
+                source_app: None,
+            },
+            9,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(f.kind, ClipKind::Files);
+
+        for empty in [Captured::Text(String::new()), Captured::Files(vec![])] {
+            let ev = CapturedEvent {
+                captured: empty,
+                source_app: None,
+            };
+            assert!(process(ev, 0).unwrap().is_none());
+        }
+        let bad = CapturedEvent {
+            captured: Captured::Image(ImageData {
+                format: ImageFormat::Png,
+                bytes: vec![1, 2, 3],
+            }),
+            source_app: None,
+        };
+        assert!(process(bad, 0).is_err());
+    }
+
+    #[test]
+    fn describe_never_leaks_content() {
+        let it = text::build("super secret", Some("notepad.exe".into()), 0).unwrap();
+        let d = describe(&it);
+        assert!(d.contains("12 bytes") && d.contains("notepad.exe"));
+        assert!(!d.contains("secret"));
+    }
+
+    #[test]
+    fn pool_processes_everything_bumps_and_survives_bad_items() {
+        let (tx, rx) = crossbeam_channel::bounded(16);
+        let sink = Arc::new(CollectSink::default());
+        let pool = IngestPool::start(rx, sink.clone()).unwrap();
+
+        tx.send(text_ev("one")).unwrap();
+        tx.send(IngestMsg::Bump { hash: 77 }).unwrap();
+        // A broken image in the middle must not stop later items.
+        tx.send(IngestMsg::Captured(CapturedEvent {
+            captured: Captured::Image(ImageData {
+                format: ImageFormat::Dibv5,
+                bytes: vec![0; 7],
+            }),
+            source_app: None,
+        }))
+        .unwrap();
+        let p = image::tests::pic_gradient(64, 48);
+        tx.send(IngestMsg::Captured(CapturedEvent {
+            captured: Captured::Image(ImageData {
+                format: ImageFormat::Dibv5,
+                bytes: image::tests::dibv5_bitfields(&p, false),
+            }),
+            source_app: Some("snip.exe".into()),
+        }))
+        .unwrap();
+        tx.send(text_ev("two")).unwrap();
         drop(tx);
-        h.join().unwrap();
+        pool.join();
+
+        let mut items = sink.items.lock().unwrap().clone();
+        items.sort_by_key(|i| i.kind.code());
+        assert_eq!(items.len(), 3, "bad image dropped, the rest delivered");
+        assert_eq!(items.iter().filter(|i| i.kind == ClipKind::Text).count(), 2);
+        let img = items.iter().find(|i| i.kind == ClipKind::Image).unwrap();
+        assert_eq!(img.source_app.as_deref(), Some("snip.exe"));
+        assert_eq!(*sink.bumps.lock().unwrap(), vec![77]);
+    }
+
+    #[test]
+    fn pool_stops_when_senders_drop() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let pool = IngestPool::start(rx, Arc::new(CollectSink::default())).unwrap();
+        drop(tx);
+        pool.join();
+    }
+
+    #[test]
+    fn same_text_with_crlf_and_lf_is_the_same_hash_through_the_pool() {
+        let (tx, rx) = crossbeam_channel::bounded(4);
+        let sink = Arc::new(CollectSink::default());
+        let pool = IngestPool::start(rx, sink.clone()).unwrap();
+        tx.send(text_ev("a\r\nb")).unwrap();
+        tx.send(text_ev("a\nb")).unwrap();
+        drop(tx);
+        pool.join();
+        let items = sink.items.lock().unwrap();
+        assert_eq!(items[0].hash, items[1].hash);
     }
 }

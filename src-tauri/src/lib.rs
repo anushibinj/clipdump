@@ -1,8 +1,8 @@
 mod autostart;
-// Canonical content hashes; first real consumer is the Phase 5 ingest pipeline.
-#[allow(dead_code)]
+// Canonical content hashes (text, image pixels, file lists), used by ingest and
+// the capture self-write guard.
 mod hash;
-// Placeholder consumer of the capture channel, replaced by the Phase 5 pipeline.
+// Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
 // Persistence value types; the full ClipItem arrives in Phase 6.
 #[allow(dead_code)]
@@ -101,13 +101,12 @@ pub fn run() {
 /// memory without limit; the watcher drops (and logs) instead of blocking.
 const INGEST_QUEUE: usize = 64;
 
-/// Start the clipboard watcher and the placeholder ingest consumer. A failure
-/// here must not stop the app (the bar and tray still work), so it only logs.
+/// Start the ingest pool and the clipboard watcher. A failure here must not stop
+/// the app (the bar and tray still work), so it only logs.
 fn start_capture(app: &tauri::App) {
     let (tx, rx) = crossbeam_channel::bounded(INGEST_QUEUE);
-    // PLACEHOLDER (Phase 5 replaces it with the real ingest pipeline).
-    if let Err(e) = ingest::spawn_placeholder_consumer(rx) {
-        eprintln!("clipdump: could not start the ingest consumer: {e}");
+    if let Err(e) = start_ingest(app, rx) {
+        eprintln!("clipdump: ingest unavailable, clipboard capture is off: {e:#}");
         return;
     }
     let ctx = app.state::<AppState>().capture_context();
@@ -118,4 +117,35 @@ fn start_capture(app: &tauri::App) {
         }
         Err(e) => eprintln!("clipdump: clipboard capture unavailable: {e:#}"),
     }
+}
+
+/// Open the history database and start the ingest workers.
+///
+/// PLACEHOLDER wiring: the sink writes straight to `Persist`. Phase 6 replaces
+/// `PlaceholderPersistSink` with the in-memory store (which owns the same
+/// `Persist`) and plugs the Phase 7 OCR queue in place of `NoopOcrQueue`.
+fn start_ingest(
+    app: &tauri::App,
+    rx: crossbeam_channel::Receiver<platform::IngestMsg>,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use ingest::{NoopOcrQueue, changed::HistoryChanged, sink::PlaceholderPersistSink};
+
+    // %LOCALAPPDATA%\clipdump (Section 3).
+    let dir = app
+        .path()
+        .local_data_dir()
+        .context("no local data directory")?
+        .join("clipdump");
+    let persist = std::sync::Arc::new(persist::Persist::open(&dir).context("open history")?);
+    let changed = HistoryChanged::for_app(app.handle().clone())?;
+    let sink = PlaceholderPersistSink::new(
+        std::sync::Arc::clone(&persist),
+        std::sync::Arc::new(NoopOcrQueue),
+        Some(changed),
+    )?;
+    ingest::IngestPool::start(rx, std::sync::Arc::new(sink))?;
+    // Keep the database open for the life of the app. Phase 13 flushes it on quit.
+    app.manage(persist);
+    Ok(())
 }
