@@ -67,3 +67,32 @@ pub struct FileRef {
     pub size: u64,
     pub is_dir: bool,
 }
+
+/// What the app asks the OS clipboard to hold when copying an item back
+/// (Phase 11). Minimal on purpose: Phase 11 may extend it, the variants map 1:1
+/// to [`ClipKind`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Payload {
+    /// Plain text, written as `CF_UNICODETEXT`.
+    Text(String),
+    /// Lossless PNG bytes plus the pixel size, so the writer can build
+    /// `CF_DIBV5` and the registered `PNG` format without probing the PNG.
+    Image {
+        png: std::sync::Arc<[u8]>,
+        width: u32,
+        height: u32,
+    },
+    /// Existing paths, written as `CF_HDROP`. Missing paths are skipped by the
+    /// writer.
+    Files(Vec<std::path::PathBuf>),
+}
+
+impl Payload {
+    pub fn kind(&self) -> ClipKind {
+        match self {
+            Self::Text(_) => ClipKind::Text,
+            Self::Image { .. } => ClipKind::Image,
+            Self::Files(_) => ClipKind::Files,
+        }
+    }
+}
