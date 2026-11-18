@@ -129,7 +129,10 @@ pub trait Paster {
     fn paste_into(target: Option<isize>) -> anyhow::Result<()>;
 }
 
-/// The clipboard watcher of this platform. Elsewhere than Windows: an inert stub.
+/// The clipboard watcher of this platform. Windows: a message-only window
+/// listening with `AddClipboardFormatListener`. Elsewhere: an inert stub.
+#[cfg(windows)]
+pub type Watcher = windows::watcher::WindowsWatcher;
 #[cfg(not(windows))]
 pub type Watcher = stub::StubWatcher;
 
