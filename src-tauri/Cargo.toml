@@ -36,6 +36,12 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp", 
 parking_lot = "0.13"
 lru = "0.19"
 rayon = "1.12"
+# Fuzzy matcher (Phase 8). The default `unicode-segmentation` feature is off on
+# purpose: with it nucleo collapses every grapheme cluster to its first code point,
+# so match indices would count grapheme clusters, but the frontend highlights by
+# character (code point) position. Without it each `char` is one position, which is
+# also a little faster. Case folding and Latin normalization stay on.
+nucleo-matcher = { version = "0.3.1", default-features = false, features = ["unicode-casefold", "unicode-normalization"] }
 
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -74,4 +80,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [dev-dependencies]
+# Search benchmark only (Phase 8). `cargo_bench_support` is just the `cargo bench`
+# argument handling; the HTML reports, plotters and rayon defaults are left out.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"
