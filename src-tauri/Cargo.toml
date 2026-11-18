@@ -33,3 +33,4 @@ strip = true
 # Desktop-only plugins (the product is a desktop tray app).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"

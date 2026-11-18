@@ -2,7 +2,8 @@ mod state;
 mod window;
 
 use state::AppState;
-use tauri::Manager;
+#[cfg(desktop)]
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,10 +16,33 @@ pub fn run() {
         window::show(app);
     }));
 
+    // Global hotkey (default Ctrl+Shift+Space). The handler runs on the plugin's
+    // event thread and only flips window visibility: no disk, no allocation
+    // beyond what Tauri does to show a window.
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    window::toggle(app);
+                }
+            })
+            .build(),
+    );
+
     builder
         .manage(AppState::default())
         .setup(|app| {
-            let _ = app.state::<AppState>();
+            #[cfg(desktop)]
+            {
+                let hotkey =
+                    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
+                // Registration can fail if another app owns the chord. Do not
+                // crash: the tray still works. Phase 12 surfaces this in settings.
+                if let Err(e) = app.global_shortcut().register(hotkey) {
+                    eprintln!("clipdump: could not register hotkey: {e}");
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
