@@ -22,6 +22,37 @@ pub fn hash_text(text: &str) -> u128 {
     h.digest128()
 }
 
+/// xxh3-128 of a decoded picture: its size and its RGBA pixels (8 bits per
+/// channel, straight alpha, rows top to bottom).
+///
+/// Hashing pixels instead of the clipboard bytes makes the same picture dedup
+/// across PNG, `CF_DIBV5` and `CF_DIB`. The size is mixed in first because two
+/// pictures with the same pixel bytes but different row lengths differ. The
+/// `img` tag keeps image hashes from ever colliding with text hashes.
+pub fn hash_image(width: u32, height: u32, rgba: &[u8]) -> u128 {
+    let mut h = Xxh3::new();
+    h.update(b"img\0");
+    h.update(&width.to_le_bytes());
+    h.update(&height.to_le_bytes());
+    h.update(rgba);
+    h.digest128()
+}
+
+/// xxh3-128 of a copied file list. Paths are sorted first, so the order the
+/// source app put them on the clipboard in does not matter, and separated by a
+/// NUL (never valid inside a path) so `["ab", "c"]` differs from `["a", "bc"]`.
+pub fn hash_paths<S: AsRef<str>>(paths: &[S]) -> u128 {
+    let mut sorted: Vec<&str> = paths.iter().map(|p| p.as_ref()).collect();
+    sorted.sort_unstable();
+    let mut h = Xxh3::new();
+    h.update(b"files\0");
+    for p in sorted {
+        h.update(p.as_bytes());
+        h.update(&[0]);
+    }
+    h.digest128()
+}
+
 fn find_crlf(b: &[u8]) -> Option<usize> {
     b.windows(2).position(|w| w == b"\r\n")
 }
@@ -50,5 +81,23 @@ mod tests {
     fn empty_and_trailing_crlf() {
         assert_eq!(hash_text("x\r\n"), hash_text("x\n"));
         assert_eq!(hash_text(""), hash_text(""));
+    }
+
+    #[test]
+    fn image_hash_depends_on_size_and_pixels() {
+        let px = vec![7u8; 4 * 6];
+        assert_eq!(hash_image(3, 2, &px), hash_image(3, 2, &px));
+        assert_ne!(hash_image(3, 2, &px), hash_image(2, 3, &px));
+        assert_ne!(hash_image(6, 1, &px), hash_image(3, 2, &px));
+        let mut other = px.clone();
+        other[5] = 8;
+        assert_ne!(hash_image(3, 2, &px), hash_image(3, 2, &other));
+    }
+
+    #[test]
+    fn path_hash_ignores_order_and_respects_boundaries() {
+        assert_eq!(hash_paths(&["b", "a"]), hash_paths(&["a", "b"]));
+        assert_ne!(hash_paths(&["ab", "c"]), hash_paths(&["a", "bc"]));
+        assert_ne!(hash_paths(&["a"]), hash_text("a"));
     }
 }
