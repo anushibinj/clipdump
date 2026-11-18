@@ -1,0 +1,294 @@
+//! SQLite access: connections, pragmas, schema migrations and queries.
+//!
+//! Every function here deals in already encrypted bytes (`*_enc` columns); the
+//! owner of the [`crate::persist::crypto::Crypto`] decides when to encrypt and
+//! decrypt. That keeps SQL free of crypto and lets the writer thread encrypt in
+//! one place.
+
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use rusqlite::{Connection, OpenFlags};
+
+use crate::model::{ClipKind, OcrStatus};
+
+/// File name of the database inside the data directory.
+pub const DB_FILE: &str = "history.db";
+
+/// Schema v1, verbatim from Section 3 of PLAN.md.
+const SCHEMA_V1: &str = "
+CREATE TABLE items (
+  id            INTEGER PRIMARY KEY,
+  hash          BLOB NOT NULL UNIQUE,   -- xxh3-128 of normalized content
+  kind          INTEGER NOT NULL,       -- 0 text, 1 image, 2 files
+  created_at    INTEGER NOT NULL,       -- unix ms
+  last_used_at  INTEGER NOT NULL,
+  use_count     INTEGER NOT NULL DEFAULT 0,
+  pinned        INTEGER NOT NULL DEFAULT 0,
+  preview_enc   BLOB NOT NULL,          -- encrypted short preview
+  text_enc      BLOB,                   -- encrypted full text (text items)
+  ocr_enc       BLOB,                   -- encrypted OCR text (image items)
+  ocr_status    INTEGER NOT NULL DEFAULT 0, -- 0 pending, 1 done, 2 failed, 3 unavailable
+  files_enc     BLOB,                   -- encrypted JSON [{path,size,is_dir}]
+  blob_hash     TEXT,                   -- image blob file name
+  width         INTEGER, height INTEGER,
+  byte_size     INTEGER NOT NULL,
+  source_app    TEXT                    -- exe name of clipboard owner
+);
+CREATE INDEX idx_items_created ON items(created_at);
+CREATE INDEX idx_items_pinned ON items(pinned);
+";
+
+/// Ordered migrations. `PRAGMA user_version` is the number already applied, so
+/// to change the schema append a script here; never edit an old one.
+const MIGRATIONS: &[&str] = &[SCHEMA_V1];
+
+/// A full `items` row, with every sensitive column still encrypted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemRow {
+    pub id: i64,
+    /// xxh3-128 of the normalized content, big endian.
+    pub hash: [u8; 16],
+    pub kind: ClipKind,
+    pub created_at: i64,
+    pub last_used_at: i64,
+    pub use_count: u32,
+    pub pinned: bool,
+    pub preview_enc: Vec<u8>,
+    pub text_enc: Option<Vec<u8>>,
+    pub ocr_enc: Option<Vec<u8>>,
+    pub ocr_status: OcrStatus,
+    pub files_enc: Option<Vec<u8>>,
+    pub blob_hash: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub byte_size: u64,
+    pub source_app: Option<String>,
+}
+
+/// What startup needs from a row. Same as [`ItemRow`] except for the text.
+///
+/// Speed note: `text_enc` can be megabytes per item. To keep the cold start
+/// under budget, `load_all_meta` returns it only when it is at most the given
+/// size limit (the "keep full text in RAM" threshold). For larger texts
+/// `has_text` is true and the caller fetches it with [`load_text`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetaRow {
+    pub id: i64,
+    pub hash: [u8; 16],
+    pub kind: ClipKind,
+    pub created_at: i64,
+    pub last_used_at: i64,
+    pub use_count: u32,
+    pub pinned: bool,
+    pub preview_enc: Vec<u8>,
+    pub has_text: bool,
+    pub text_enc: Option<Vec<u8>>,
+    pub ocr_enc: Option<Vec<u8>>,
+    pub ocr_status: OcrStatus,
+    pub files_enc: Option<Vec<u8>>,
+    pub blob_hash: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub byte_size: u64,
+    pub source_app: Option<String>,
+}
+
+/// Open the read/write connection used by the single writer thread (and by
+/// startup integrity checks). Creates the file and applies migrations.
+pub fn open_writer(path: &Path) -> Result<Connection> {
+    let mut conn = Connection::open(path)
+        .with_context(|| format!("cannot open database {}", path.display()))?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    apply_pragmas(&conn)?;
+    migrate(&mut conn)?;
+    Ok(conn)
+}
+
+/// Open a read only connection for lookups on caller threads. In WAL mode a
+/// reader never blocks the writer and sees every committed transaction. The
+/// database must already exist (the writer connection creates it).
+pub fn open_reader(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("cannot open database {} for reading", path.display()))?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(conn)
+}
+
+fn apply_pragmas(conn: &Connection) -> Result<()> {
+    // WAL: appends instead of rewriting pages, readers never block the writer.
+    let mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        bail!("could not enable WAL mode (got {mode})");
+    }
+    // NORMAL: no fsync per commit. A power cut can lose the last few
+    // transactions (never corrupt the file), which is the right trade for a
+    // clipboard history where speed is the top requirement.
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // Keep temp tables and sort buffers off disk (they could hold plaintext
+    // ordering data and disk is slow).
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(())
+}
+
+/// Bring the database up to the latest schema using `PRAGMA user_version`.
+pub fn migrate(conn: &mut Connection) -> Result<()> {
+    migrate_with(conn, MIGRATIONS)
+}
+
+/// [`migrate`] with an explicit migration list, so tests can exercise upgrades.
+pub(crate) fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<()> {
+    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let current = usize::try_from(current).map_err(|_| anyhow!("negative user_version"))?;
+    if current > migrations.len() {
+        bail!(
+            "history.db has schema version {current}, but this build only knows up to {}",
+            migrations.len()
+        );
+    }
+    for (i, script) in migrations.iter().enumerate().skip(current) {
+        // One transaction per migration: either fully applied with its version
+        // bump, or not at all.
+        let tx = conn.transaction()?;
+        tx.execute_batch(script)
+            .with_context(|| format!("migration to version {} failed", i + 1))?;
+        // PRAGMA arguments cannot be bound parameters; `i + 1` is our own integer.
+        tx.execute_batch(&format!("PRAGMA user_version = {}", i + 1))?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Value conversion helpers
+// ---------------------------------------------------------------------------
+
+fn to_i64(v: u64) -> i64 {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+fn hash_from(v: Vec<u8>) -> rusqlite::Result<[u8; 16]> {
+    <[u8; 16]>::try_from(v.as_slice()).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Blob,
+            "hash is not 16 bytes".into(),
+        )
+    })
+}
+
+fn bad_code(col: usize, what: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        col,
+        rusqlite::types::Type::Integer,
+        format!("unknown {what} code").into(),
+    )
+}
+
+// QUERIES-MARKER
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub fn memory() -> Connection {
+        let dir = tempfile::tempdir().unwrap();
+        // Leak the dir on purpose: tests are short lived and the connection
+        // needs the file for its whole life.
+        let path = dir.keep().join(DB_FILE);
+        open_writer(&path).unwrap()
+    }
+
+    /// A fully populated text item whose id and hash derive from `id`.
+    pub fn sample(id: i64) -> ItemRow {
+        let mut hash = [0u8; 16];
+        hash[8..].copy_from_slice(&(id as u64).to_be_bytes());
+        ItemRow {
+            id,
+            hash,
+            kind: ClipKind::Text,
+            created_at: 1_000 + id,
+            last_used_at: 1_000 + id,
+            use_count: 0,
+            pinned: false,
+            preview_enc: vec![1, 2, 3, id as u8],
+            text_enc: Some(vec![9; 40]),
+            ocr_enc: None,
+            ocr_status: OcrStatus::Pending,
+            files_enc: None,
+            blob_hash: None,
+            width: None,
+            height: None,
+            byte_size: 40,
+            source_app: Some("notepad.exe".into()),
+        }
+    }
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn open_applies_pragmas_and_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_writer(&dir.path().join(DB_FILE)).unwrap();
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "wal");
+        // synchronous: 1 = NORMAL, temp_store: 2 = MEMORY
+        let sync: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
+        assert_eq!(sync, 1);
+        let temp: i64 = conn.query_row("PRAGMA temp_store", [], |r| r.get(0)).unwrap();
+        assert_eq!(temp, 2);
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        let idx: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('idx_items_created','idx_items_pinned')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn upgrade_runs_only_missing_migrations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("t.db")).unwrap();
+        migrate_with(&mut conn, &[SCHEMA_V1]).unwrap();
+        conn.execute("INSERT INTO items (hash, kind, created_at, last_used_at, preview_enc, byte_size) VALUES (x'00', 0, 1, 1, x'00', 1)", []).unwrap();
+        // A later release adds a column: existing rows survive.
+        let v2 = "ALTER TABLE items ADD COLUMN note TEXT;";
+        migrate_with(&mut conn, &[SCHEMA_V1, v2]).unwrap();
+        assert_eq!(user_version(&conn), 2);
+        let n: i64 = conn.query_row("SELECT count(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        // Running again is a no-op (the ALTER would fail if repeated).
+        migrate_with(&mut conn, &[SCHEMA_V1, v2]).unwrap();
+        assert_eq!(user_version(&conn), 2);
+    }
+
+    #[test]
+    fn failed_migration_rolls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("t.db")).unwrap();
+        assert!(migrate_with(&mut conn, &[SCHEMA_V1, "THIS IS NOT SQL"]).is_err());
+        // v1 was applied and kept, v2 left no trace.
+        assert_eq!(user_version(&conn), 1);
+    }
+
+    #[test]
+    fn refuses_a_database_from_the_future() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("t.db")).unwrap();
+        conn.execute_batch("PRAGMA user_version = 99").unwrap();
+        let err = migrate(&mut conn).unwrap_err().to_string();
+        assert!(err.contains("99"), "{err}");
+    }
+
+
+}

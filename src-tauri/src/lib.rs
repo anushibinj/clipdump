@@ -1,4 +1,7 @@
 mod autostart;
+// Persistence value types; the full ClipItem arrives in Phase 6.
+#[allow(dead_code)]
+mod model;
 // Wired into the app by Phase 6 (store). Until then nothing calls it.
 #[allow(dead_code)]
 mod persist;
