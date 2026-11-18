@@ -448,6 +448,27 @@ fn a_text_result_carries_metadata_but_no_full_content() {
 }
 
 #[test]
+fn text_results_count_their_lines() {
+    let (fs, _) = FakeFs::new(&[]);
+    let count = |body: &str| {
+        run(&[text(1, body, DAY)], "x", &fs)
+            .first()
+            .map(|d| d.line_count)
+    };
+    assert_eq!(count("x"), Some(1));
+    assert_eq!(count("x\ny\nz"), Some(3));
+    assert_eq!(
+        count("x\r\ny\r\n"),
+        Some(2),
+        "a trailing newline adds no line"
+    );
+    assert_eq!(count("x\n\n\ny"), Some(4), "blank lines count");
+    // Images and files have no lines.
+    let img = run(&[image(2, "x marks", DAY)], "x", &fs);
+    assert_eq!(img[0].line_count, 0);
+}
+
+#[test]
 fn the_dto_serializes_as_camel_case_json() {
     let (fs, _) = FakeFs::new(&[]);
     let r = run(&[image(1, "invoice total", DAY)], "invoice", &fs);
@@ -468,11 +489,12 @@ fn the_dto_serializes_as_camel_case_json() {
         "byteSize",
         "fileCount",
         "missingFiles",
+        "lineCount",
         "hasThumb",
     ] {
         assert!(obj.contains_key(key), "missing {key}");
     }
-    assert_eq!(obj.len(), 15, "no stray fields: {obj:?}");
+    assert_eq!(obj.len(), 16, "no stray fields: {obj:?}");
     assert_eq!(v["kind"], "image");
     assert_eq!(v["matchSource"], "ocr");
     assert_eq!(v["hasThumb"], true);

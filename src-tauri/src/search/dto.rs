@@ -54,6 +54,10 @@ pub struct ResultDto {
     /// How many paths of a file item no longer exist (a lower bound for lists
     /// longer than `MISSING_CHECK_MAX`), else 0.
     pub missing_files: u32,
+    /// Lines of a text item (1 for a single line, a trailing newline adds no
+    /// line), else 0. Counted from the text kept in RAM, or from the search slice
+    /// (the first 10,000 chars) of a long text, so for those it is a lower bound.
+    pub line_count: u32,
     /// Whether `clip://thumb/<id>` has a picture.
     pub has_thumb: bool,
 }
@@ -109,8 +113,21 @@ fn to_dto(
         byte_size: item.byte_size,
         file_count,
         missing_files,
+        line_count: line_count(item),
         has_thumb: item.thumb.is_some(),
     }
+}
+
+/// Lines of a text item for the "n lines" badge; 0 for images and file lists.
+/// A memchr pass over at most the in-RAM text (64 KB) of the few returned rows.
+fn line_count(item: &ClipItem) -> u32 {
+    if item.kind != ClipKind::Text {
+        return 0;
+    }
+    let text: &str = item.text_in_ram.as_deref().unwrap_or(&item.search_text);
+    let body = text.trim_end_matches(['\n', '\r']);
+    let breaks = memchr::memchr_iter(b'\n', body.as_bytes()).count();
+    u32::try_from(breaks + 1).unwrap_or(u32::MAX)
 }
 
 /// The snippet (if any) and the highlight positions, computed against the string
