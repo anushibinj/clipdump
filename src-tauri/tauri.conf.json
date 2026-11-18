@@ -61,7 +61,10 @@
         "displayLanguageSelector": false,
         "compression": "lzma",
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico"
+        "uninstallerIcon": "icons/icon.ico",
+        "customLanguageFiles": {
+          "English": "installer/English.nsh"
+        }
       }
     }
   }
