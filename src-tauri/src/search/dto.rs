@@ -10,6 +10,11 @@ use nucleo_matcher::Utf32Str;
 
 /// Characters in a snippet at most.
 pub const SNIPPET_CHARS: usize = 96;
+/// Most bytes of `preview` a row carries: 300 chars of up to 4 bytes. Ingest
+/// already builds one line of at most 300 chars; this only guards against a row
+/// that came from a damaged or hand edited database, so a row can never carry
+/// more than about a kilobyte of content.
+const PREVIEW_MAX_BYTES: usize = 1200;
 /// How many characters before the first match a snippet starts.
 const SNIPPET_LEAD: usize = 24;
 
@@ -97,7 +102,7 @@ fn to_dto(
     ResultDto {
         id: item.id,
         kind: item.kind,
-        preview: item.preview.to_string(),
+        preview: capped(&item.preview).to_owned(),
         snippet,
         match_indices,
         match_source: match item.kind {
@@ -118,6 +123,19 @@ fn to_dto(
     }
 }
 
+/// `s` cut to [`PREVIEW_MAX_BYTES`] on a char boundary (a no-op for any preview
+/// ingest made).
+fn capped(s: &str) -> &str {
+    if s.len() <= PREVIEW_MAX_BYTES {
+        return s;
+    }
+    let mut cut = PREVIEW_MAX_BYTES;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &s[..cut]
+}
+
 /// Lines of a text item for the "n lines" badge; 0 for images and file lists.
 /// A memchr pass over at most the in-RAM text (64 KB) of the few returned rows.
 fn line_count(item: &ClipItem) -> u32 {
@@ -135,7 +153,7 @@ fn line_count(item: &ClipItem) -> u32 {
 fn highlight(item: &ClipItem, q: &Query, sc: &mut Scratch) -> (Option<String>, Vec<u32>) {
     // Text and files: highlight in the preview when the preview shows the match.
     if item.kind != ClipKind::Image {
-        let idx = indices_in(q, &item.preview, sc);
+        let idx = indices_in(q, capped(&item.preview), sc);
         if !idx.is_empty() {
             return (None, idx);
         }

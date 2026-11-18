@@ -31,6 +31,8 @@ use crate::state::AppState;
 use crate::store::Store;
 use crate::window;
 
+#[cfg(test)]
+mod bounds_tests;
 pub mod config;
 pub mod copy;
 pub mod folder;

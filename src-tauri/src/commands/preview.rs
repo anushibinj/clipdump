@@ -10,8 +10,21 @@ use crate::store::Store;
 
 /// Most UTF-8 bytes of text (or OCR text) a preview carries: 200 KB.
 pub const PREVIEW_TEXT_MAX_BYTES: usize = 200 * 1024;
+/// Most bytes the same text may take once escaped as a JSON string (control
+/// characters become six bytes, newlines and quotes two), 256 KB. Whichever of the
+/// two limits is hit first cuts the text, so the serialized `PreviewDto` stays
+/// under 300 KB whatever the text holds, not just for plain prose.
+pub const PREVIEW_TEXT_MAX_JSON_BYTES: usize = 256 * 1024;
 /// Most files a preview lists. A copied folder tree can hold tens of thousands.
 pub const PREVIEW_FILES_MAX: usize = 500;
+/// Most bytes of one displayed path and of one displayed name. Windows allows
+/// paths of 32,767 characters; nobody needs to read past this.
+pub const PREVIEW_PATH_MAX_BYTES: usize = 2048;
+pub const PREVIEW_NAME_MAX_BYTES: usize = 512;
+/// The listed paths and names together take at most this many bytes (the file
+/// list is cut short when they would exceed it), so the serialized files preview
+/// stays under 300 KB even for 500 very long paths.
+pub const PREVIEW_FILES_MAX_BYTES: usize = 200 * 1024;
 
 /// One row of a file list preview.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -78,6 +91,40 @@ pub fn truncate_utf8(s: &str, max: usize) -> (&str, bool) {
     (&s[..cut], true)
 }
 
+/// Bytes `c` takes inside a JSON string (what `serde_json` writes).
+fn json_len(c: char) -> usize {
+    match c {
+        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+        c if (c as u32) < 0x20 => 6,
+        c => c.len_utf8(),
+    }
+}
+
+/// `s` cut for a preview: at most [`PREVIEW_TEXT_MAX_BYTES`] UTF-8 bytes and at
+/// most [`PREVIEW_TEXT_MAX_JSON_BYTES`] once JSON escaped, on a char boundary.
+/// Walks at most the kept part (about 200 KB), never the whole of a huge text.
+pub fn truncate_preview(s: &str) -> (&str, bool) {
+    let (cut, truncated) = truncate_utf8(s, PREVIEW_TEXT_MAX_BYTES);
+    let mut json = 0;
+    for (i, c) in cut.char_indices() {
+        json += json_len(c);
+        if json > PREVIEW_TEXT_MAX_JSON_BYTES {
+            return (&cut[..i], true);
+        }
+    }
+    (cut, truncated)
+}
+
+/// `s` cut to `max` bytes on a char boundary with a trailing ellipsis when cut.
+fn shorten(s: &str, max: usize) -> String {
+    let (kept, cut) = truncate_utf8(s, max);
+    if cut {
+        format!("{kept}\u{2026}")
+    } else {
+        kept.to_owned()
+    }
+}
+
 /// The last component of a path written with `\` or `/`.
 pub fn file_name(path: &str) -> &str {
     let trimmed = path.trim_end_matches(['\\', '/']);
@@ -95,7 +142,7 @@ pub fn preview_item(store: &Store, paths: &dyn PathChecker, id: u64) -> Result<P
                 .get_full_text(id)
                 .map_err(|_| "could not load the text")?;
             let text = std::str::from_utf8(&bytes).map_err(|_| "could not load the text")?;
-            let (shown, truncated) = truncate_utf8(text, PREVIEW_TEXT_MAX_BYTES);
+            let (shown, truncated) = truncate_preview(text);
             Ok(PreviewDto::Text {
                 id,
                 text: shown.to_owned(),
@@ -105,7 +152,7 @@ pub fn preview_item(store: &Store, paths: &dyn PathChecker, id: u64) -> Result<P
             })
         }
         ClipKind::Image => {
-            let (ocr, ocr_truncated) = truncate_utf8(&item.search_text, PREVIEW_TEXT_MAX_BYTES);
+            let (ocr, ocr_truncated) = truncate_preview(&item.search_text);
             Ok(PreviewDto::Image {
                 id,
                 width: item.width,
@@ -118,22 +165,30 @@ pub fn preview_item(store: &Store, paths: &dyn PathChecker, id: u64) -> Result<P
         }
         ClipKind::Files => {
             let all = item.files.as_deref().unwrap_or(&[]);
-            let files = all
-                .iter()
-                .take(PREVIEW_FILES_MAX)
-                .map(|f| FilePreview {
-                    path: f.path.clone(),
-                    name: file_name(&f.path).to_owned(),
+            let mut budget = PREVIEW_FILES_MAX_BYTES;
+            let mut files = Vec::new();
+            for f in all.iter().take(PREVIEW_FILES_MAX) {
+                let path = shorten(&f.path, PREVIEW_PATH_MAX_BYTES);
+                let name = shorten(file_name(&f.path), PREVIEW_NAME_MAX_BYTES);
+                let cost = path.len() + name.len();
+                if cost > budget {
+                    break;
+                }
+                budget -= cost;
+                files.push(FilePreview {
+                    path,
+                    name,
                     size: f.size,
                     is_dir: f.is_dir,
                     exists: paths.exists(&f.path),
-                })
-                .collect();
+                });
+            }
+            let listed = files.len();
             Ok(PreviewDto::Files {
                 id,
                 files,
                 total_files: all.len(),
-                truncated: all.len() > PREVIEW_FILES_MAX,
+                truncated: all.len() > listed,
                 total_size: all.iter().map(|f| f.size).sum(),
             })
         }
