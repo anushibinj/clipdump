@@ -574,5 +574,6 @@ WebView2, so everything below still needs a Windows run.
       input event to rows in the DOM p50 about 2.5 to 4.7 ms and p95 about 7 to
       12 ms; the fake search alone is 0.3 ms. With a 4x CPU slowdown p50 was
       about 11 to 17 ms and p95 32 to 50 ms, so a slow PC is the thing to watch.
-      If Windows is over budget, the first knobs are the result `limit` in
-      `useSearch.ts` (50 rows) and the rows' `content-visibility`.
+      If Windows is over budget, the first knobs are the result limit (the
+      backend default is 50 rows; `search(query, filter, limit)` in `ipc.ts`
+      takes a smaller one) and the rows' `content-visibility`.

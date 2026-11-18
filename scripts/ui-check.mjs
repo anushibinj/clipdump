@@ -334,6 +334,17 @@ async function keys(browser, url) {
   await settle();
   check("the Paused badge shows in the search bar", (await page.getByText("Paused", { exact: true }).count()) === 1);
 
+  // mouse: filter buttons and rows work and focus stays in the input
+  await reset();
+  await page.getByRole("radio", { name: /Images/ }).click();
+  await settle();
+  check("clicking a filter applies it and keeps focus in the input", (await lastCall("search"))?.args.filter === "images" && (await page.evaluate(() => document.activeElement?.tagName === "INPUT")));
+  const second = (await rowIds())[1];
+  await page.locator(`#clip-row-${second}`).click();
+  await settle();
+  check("clicking a row copies that item", (await lastCall("copy_item"))?.args.id === second);
+  await page.getByRole("radio", { name: /All/ }).click();
+
   // bar:shown focuses and selects the query, bar:hidden resets the view
   await reset();
   await page.keyboard.type("abc");
