@@ -37,12 +37,18 @@ pub trait KeyProtector: Send + Sync {
 /// Windows: DPAPI, current user scope. Everywhere else: the NOT SECURE
 /// development stub in [`insecure`], so the app and its tests build and run on
 /// Linux and macOS until a real keystore is added.
-#[cfg(not(windows))]
 pub fn default_key_protector() -> Box<dyn KeyProtector> {
-    eprintln!(
-        "clipdump: WARNING: no OS keystore on this platform, the data key is stored unprotected"
-    );
-    Box::new(insecure::InsecureKeyProtector)
+    #[cfg(windows)]
+    {
+        Box::new(windows::dpapi::DpapiProtector)
+    }
+    #[cfg(not(windows))]
+    {
+        eprintln!(
+            "clipdump: WARNING: no OS keystore on this platform, the data key is stored unprotected"
+        );
+        Box::new(insecure::InsecureKeyProtector)
+    }
 }
 
 /// Raw handle of the currently focused top level window, if the platform can
