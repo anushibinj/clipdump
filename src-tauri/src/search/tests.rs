@@ -50,3 +50,83 @@ fn tabs_and_newlines_separate_words() {
     let q = Query::parse("foo\tbar\nbaz").unwrap();
     assert_eq!(q.terms.len(), 3);
 }
+
+// -- filters -------------------------------------------------------------
+
+#[test]
+fn prefixes_are_stripped_and_set_the_filter() {
+    let p = parse_query("img: cat photo", TypeFilter::All);
+    assert_eq!(p.text, "cat photo");
+    assert_eq!(p.filter, TypeFilter::Images);
+    assert_eq!(
+        parse_query("file:report", TypeFilter::All).filter,
+        TypeFilter::Files
+    );
+    assert_eq!(parse_query("file:report", TypeFilter::All).text, "report");
+    assert_eq!(parse_query("txt:  hi", TypeFilter::All).text, "hi");
+    assert_eq!(
+        parse_query("txt:hi", TypeFilter::All).filter,
+        TypeFilter::Text
+    );
+}
+
+#[test]
+fn a_typed_prefix_overrides_the_ui_filter() {
+    for ui in [
+        TypeFilter::All,
+        TypeFilter::Text,
+        TypeFilter::Images,
+        TypeFilter::Files,
+    ] {
+        assert_eq!(parse_query("img:x", ui).filter, TypeFilter::Images);
+        assert_eq!(parse_query("txt:x", ui).filter, TypeFilter::Text);
+    }
+}
+
+#[test]
+fn without_a_prefix_the_ui_filter_applies() {
+    let p = parse_query("  hello img:", TypeFilter::Files);
+    assert_eq!(p.filter, TypeFilter::Files);
+    assert_eq!(p.text, "hello img:", "only a leading prefix counts");
+}
+
+#[test]
+fn prefixes_are_case_insensitive_and_alone_is_valid() {
+    let p = parse_query("  IMG:", TypeFilter::Text);
+    assert_eq!(p.filter, TypeFilter::Images);
+    assert_eq!(p.text, "");
+    assert_eq!(
+        parse_query("Txt:a", TypeFilter::All).filter,
+        TypeFilter::Text
+    );
+}
+
+#[test]
+fn similar_words_are_not_prefixes() {
+    assert_eq!(
+        parse_query("image:x", TypeFilter::All).filter,
+        TypeFilter::All
+    );
+    assert_eq!(parse_query("im", TypeFilter::All).text, "im");
+    // Multibyte text right at the cut point must not panic.
+    assert_eq!(parse_query("ééé", TypeFilter::All).text, "ééé");
+}
+
+#[test]
+fn type_filter_accepts_the_right_kinds() {
+    use crate::model::ClipKind::*;
+    assert!(TypeFilter::All.accepts(Text) && TypeFilter::All.accepts(Image));
+    assert!(TypeFilter::Text.accepts(Text) && !TypeFilter::Text.accepts(Image));
+    assert!(TypeFilter::Images.accepts(Image) && !TypeFilter::Images.accepts(Files));
+    assert!(TypeFilter::Files.accepts(Files) && !TypeFilter::Files.accepts(Text));
+}
+
+#[test]
+fn type_filter_deserializes_from_the_ui_names() {
+    let f: TypeFilter = serde_json::from_str("\"images\"").unwrap();
+    assert_eq!(f, TypeFilter::Images);
+    assert_eq!(
+        serde_json::from_str::<TypeFilter>("\"all\"").unwrap(),
+        TypeFilter::All
+    );
+}

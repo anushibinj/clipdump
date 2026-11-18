@@ -20,6 +20,9 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 
+use serde::Deserialize;
+
+use crate::model::ClipKind;
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
@@ -94,6 +97,70 @@ impl Query {
             })
             .collect();
         Some(Self { terms, positives })
+    }
+}
+
+/// Which kinds of items a search returns. The UI sends this (`Alt+1` to `Alt+4`);
+/// a typed prefix in the query overrides it, see [`parse_query`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TypeFilter {
+    #[default]
+    All,
+    Text,
+    Images,
+    Files,
+}
+
+impl TypeFilter {
+    pub fn accepts(self, kind: ClipKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::Text => kind == ClipKind::Text,
+            Self::Images => kind == ClipKind::Image,
+            Self::Files => kind == ClipKind::Files,
+        }
+    }
+}
+
+/// Typed prefixes, matched case insensitively at the start of the query.
+const PREFIXES: [(&str, TypeFilter); 3] = [
+    ("img:", TypeFilter::Images),
+    ("file:", TypeFilter::Files),
+    ("txt:", TypeFilter::Text),
+];
+
+/// A query split into the text to match and the effective type filter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParsedQuery<'a> {
+    /// What is left after the prefix: leading spaces and the prefix are removed.
+    pub text: &'a str,
+    pub filter: TypeFilter,
+}
+
+/// Strip a leading `img:`, `file:` or `txt:` from `raw` and return the filter it
+/// names; without a prefix the UI filter `ui` is used. Only one prefix is
+/// stripped. `img:` alone (nothing after it) is valid: it lists the images.
+/// Allocation free.
+///
+/// A query that really starts with one of these words (`file:///tmp/x`) is read
+/// as a prefix, and the filter lasts until the user edits the query. That is the
+/// price of typed filters, which the plan asks for.
+pub fn parse_query(raw: &str, ui: TypeFilter) -> ParsedQuery<'_> {
+    let trimmed = raw.trim_start();
+    for (prefix, filter) in PREFIXES {
+        if let Some(head) = trimmed.get(..prefix.len())
+            && head.eq_ignore_ascii_case(prefix)
+        {
+            return ParsedQuery {
+                text: trimmed[prefix.len()..].trim_start(),
+                filter,
+            };
+        }
+    }
+    ParsedQuery {
+        text: trimmed,
+        filter: ui,
     }
 }
 
