@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorMessage, search, type ResultDto, type TypeFilter } from "@/lib/ipc";
+import { errorMessage, search, thumbUrl, type ResultDto, type TypeFilter } from "@/lib/ipc";
 import { createLatest } from "@/lib/latest";
 import { moveIndex } from "@/lib/shortcuts";
 import { minuteNow } from "@/lib/time";
+import { thumbsToWarm, warmThumbs } from "@/lib/warm";
 
 export interface SearchApi {
   query: string;
@@ -72,6 +73,8 @@ export function useSearch(): SearchApi {
           sel = next[Math.min(at, next.length - 1)]?.id ?? null;
         }
         resetPending.current = false;
+        // Once, from the first answer (which arrives while the window is still hidden).
+        warmThumbs(thumbsToWarm(next, (id, v) => thumbUrl(id, v)));
         resultsRef.current = next;
         selectedRef.current = sel;
         setResults(next);

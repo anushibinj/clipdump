@@ -3,6 +3,7 @@ import { bytesToMb, formatBytes, mbToBytes } from "./bytes";
 import { captureChord, chordParts, keyName } from "./hotkey";
 import { highlightSegments, windowAroundFirstHit } from "./highlight";
 import { createLatest } from "./latest";
+import { thumbsToWarm } from "./warm";
 import { minuteNow, relativeTime } from "./time";
 
 describe("formatBytes", () => {
@@ -205,5 +206,18 @@ describe("hotkey recorder", () => {
     expect(chordParts("Ctrl+Shift+Space")).toEqual(["Ctrl", "Shift", "Space"]);
     expect(chordParts("Super+L")).toEqual(["Win", "L"]);
     expect(chordParts("")).toEqual([]);
+  });
+});
+
+describe("thumbsToWarm", () => {
+  const rows = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, hasThumb: i % 2 === 0, createdAt: 1000 + i }));
+  const url = (id: number, v: number) => `t/${id}?v=${v}`;
+  it("takes the first rows that have a thumbnail, at most `max`", () => {
+    expect(thumbsToWarm(rows, url, 3)).toEqual(["t/1?v=1000", "t/3?v=1002", "t/5?v=1004"]);
+    expect(thumbsToWarm(rows, url)).toHaveLength(9);
+  });
+  it("is empty without thumbnails or rows", () => {
+    expect(thumbsToWarm([], url)).toEqual([]);
+    expect(thumbsToWarm([{ id: 1, hasThumb: false, createdAt: 1 }], url)).toEqual([]);
   });
 });
