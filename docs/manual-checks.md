@@ -371,3 +371,75 @@ cover it. When Phase 10 shows the badge:
   is verified in Phase 14 (`--perf` log lines and the stress script), not before.
 - Search is only ever called from the command thread; nothing in Phase 8 runs on
   the clipboard watcher or ingest threads.
+
+## Phase 9: IPC layer
+
+Phase 9 adds the commands (`src-tauri/src/commands.rs`), the `clip` URI scheme
+(`scheme.rs`), the per command permissions (`build.rs` and
+`capabilities/default.json`) and the typed frontend bridge (`src/lib/ipc.ts`).
+There is still no search UI (Phase 10), so these checks use the WebView2 developer
+tools of `pnpm tauri dev` (right click in the bar, Inspect, Console).
+
+What was already verified in the Linux container: unit tests for every command
+function and the scheme, and an Xvfb run of the debug binary in which a page
+calls the commands, loads `clip://localhost/thumb/<id>` and `/blob/<id>` as
+images and with `fetch`, and is refused for commands outside the capability.
+
+### The `clip` URL form in WebView2
+- [ ] Tauri serves the scheme on Windows as `http://clip.localhost/...` (on
+      macOS and Linux it is `clip://localhost/...`). Copy a screenshot, open the
+      bar, and in the console run:
+      `await __TAURI_INTERNALS__.invoke("search", { query: "", filter: "images" })`
+      and take the first `id`.
+- [ ] `fetch("http://clip.localhost/thumb/<id>").then(r => [r.status, r.headers.get("content-type"), r.headers.get("cache-control")])`
+      gives `200`, `image/webp`, `max-age=31536000, immutable`.
+- [ ] Same for `http://clip.localhost/blob/<id>`: `200`, `image/png`.
+- [ ] `fetch("http://clip.localhost/thumb/999999")` gives `404` with
+      `cache-control: no-store`. A text item id gives `404` for `thumb` and `blob`.
+- [ ] Paste this in the console and see the picture appear in the top left corner:
+      `document.body.append(Object.assign(new Image(), { src: "http://clip.localhost/blob/<id>", style: "position:fixed;top:0;left:0;max-width:300px;z-index:9" }))`.
+      The ipc.ts helpers build the same URLs (`thumbUrl(id, createdAt)` and
+      `blobUrl(id, createdAt)`; the `?v=` query is ignored by the backend and
+      keeps a reused id from showing an old cached picture).
+- [ ] If the images do not load but `fetch` works, check that the page and the
+      scheme are not blocked by a CSP (the config sets `csp: null`).
+- [ ] The Network tab shows the second load of the same thumbnail served from the
+      memory or disk cache (no new request).
+- [ ] Opening a large screenshot (4K) with `blob/<id>` the first time takes about
+      as long as decrypting and reading the file; the bar stays responsive meanwhile
+      (the read runs on a worker thread).
+
+### Capabilities
+- [ ] In the console, `__TAURI_INTERNALS__.invoke("search", { query: "" })`
+      works, and so does `invoke("plugin:event|listen", ...)` through the app's
+      own `listen` calls (the bar still reacts to the hotkey).
+- [ ] Commands outside the capability are refused. Each of these rejects with
+      "... not allowed": `invoke("plugin:autostart|enable")`,
+      `invoke("plugin:window|hide")`,
+      `invoke("plugin:global-shortcut|unregister_all")`, `invoke("nope")`.
+- [ ] The tray, the hotkey, autostart and a second launch (single instance) still
+      work: they are driven from Rust and need no frontend permission.
+
+### Commands on Windows
+- [ ] `copy_item` is still the Phase 11 stub: `invoke("copy_item", { id, paste: false })`
+      rejects with `copying to the clipboard is not implemented yet (todo Phase 11)`,
+      the bar stays open and the item does not move to the top.
+- [ ] `get_preview` of a text copied from a big file (a few MB) returns at most
+      about 200 KB of `text` with `truncated: true` and the real `totalChars`.
+- [ ] `get_preview` of a screenshot shows `width`, `height`, `ocrStatus` and
+      `ocrText` (after OCR finished). With no OCR language: `ocrStatus` is
+      `"unavailable"` and `get_stats` has `ocrEngine: "unavailable"`.
+- [ ] `get_preview` of copied files lists names and sizes; rename one in Explorer
+      and call it again: that entry has `exists: false`.
+- [ ] `toggle_pin`, then `clear_history`: the pinned item survives and
+      `clear_history` resolves to the number removed. `delete_item` on the pinned
+      one removes it, and its files under `blobs\` and `thumbs\` disappear
+      shortly after.
+- [ ] `get_stats` shows `keyProtector: "dpapi"`, a plausible `diskBytes` and
+      `cacheBytes`, and `ocrHint` text.
+- [ ] `set_settings` with `maxItems: 3`, then `search("")`: only three unpinned
+      items remain (retention ran at once). `pinnedBar: true` keeps the bar
+      visible when it loses focus. Settings are in memory only until Phase 12, so
+      a restart returns to the defaults.
+- [ ] The tray "Pause capture" check mark does not follow `set_settings({ paused })`
+      yet (the menu item is not wired back); the pause itself works.
