@@ -101,8 +101,12 @@ export interface SettingsDto {
   autoPasteOnEnter: boolean;
   /** Keep the bar visible; it does not hide on blur. */
   pinnedBar: boolean;
-  /** Capture paused. */
+  /** Capture paused. Not saved: the app always starts capturing. */
   paused: boolean;
+  /** The global hotkey as chord text, for example "Ctrl+Shift+Space" (modifiers Ctrl, Alt, Shift, Super). */
+  hotkey: string;
+  /** Start the app when the user logs in. */
+  startAtLogin: boolean;
 }
 
 export interface StatsDto {
@@ -120,6 +124,8 @@ export interface StatsDto {
   ocrHint: string;
   /** How the data key is protected, e.g. "dpapi". */
   keyProtector: string;
+  /** Set when the configured hotkey could not be registered (another app owns it), else null. */
+  hotkeyError: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,13 +174,22 @@ export function getSettings(): Promise<SettingsDto> {
   return invoke<SettingsDto>("get_settings");
 }
 
-/** Applies at once (in memory; saved to disk from Phase 12). Resolves to the settings as stored. */
+/**
+ * Applies at once and saves to settings.json in the background. Resolves to the settings as stored
+ * (a canonical hotkey, a tidied ignore list). Rejects with a plain message (use `errorMessage`)
+ * when nothing was applied: for example a hotkey another app owns, or a login item the OS refuses.
+ */
 export function setSettings(settings: SettingsDto): Promise<SettingsDto> {
   return invoke<SettingsDto>("set_settings", { settings });
 }
 
 export function getStats(): Promise<StatsDto> {
   return invoke<StatsDto>("get_stats");
+}
+
+/** Open the history folder in the file manager (the path is fixed in the backend). */
+export function openDataFolder(): Promise<void> {
+  return invoke<void>("open_data_folder");
 }
 
 export function hideBar(): Promise<void> {
@@ -196,6 +211,8 @@ export const EVENTS = {
   /** Debounced to one per 50 ms. Re-run the search. */
   historyChanged: "history:changed",
   settingsOpen: "settings:open",
+  /** Settings changed behind the UI's back (the tray toggled Pause capture): call `getSettings` again. */
+  settingsChanged: "settings:changed",
 } as const;
 
 type Handler = () => void;
@@ -210,6 +227,7 @@ export const onBarHidden = (h: Handler) => on(EVENTS.barHidden, h);
 export const onHistoryChanged = (h: Handler) => on(EVENTS.historyChanged, h);
 /** The tray asked for the settings view. */
 export const onSettingsOpen = (h: Handler) => on(EVENTS.settingsOpen, h);
+export const onSettingsChanged = (h: Handler) => on(EVENTS.settingsChanged, h);
 
 // ---------------------------------------------------------------------------
 // Thumbnails and images: the `clip` URI scheme

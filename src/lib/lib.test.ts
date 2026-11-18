@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bytesToMb, formatBytes, mbToBytes } from "./bytes";
+import { captureChord, chordParts, keyName } from "./hotkey";
 import { highlightSegments, windowAroundFirstHit } from "./highlight";
 import { createLatest } from "./latest";
 import { minuteNow, relativeTime } from "./time";
@@ -143,5 +144,66 @@ describe("gigabyte fields", () => {
     const { bytesToGb, gbToBytes } = await import("./bytes");
     expect(bytesToGb(2 * 1024 ** 3)).toBe(2);
     expect(gbToBytes(0.5)).toBe(512 * 1024 * 1024);
+  });
+});
+
+describe("hotkey recorder", () => {
+  const key = (code: string, mods: Partial<{ ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }> = {}) => ({
+    code,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    ...mods,
+  });
+
+  it("names keys from the physical key", () => {
+    expect(keyName("KeyK")).toBe("K");
+    expect(keyName("Digit7")).toBe("7");
+    expect(keyName("F12")).toBe("F12");
+    expect(keyName("F24")).toBe("F24");
+    expect(keyName("F25")).toBeNull();
+    expect(keyName("ArrowUp")).toBe("Up");
+    expect(keyName("Space")).toBe("Space");
+    expect(keyName("Escape")).toBeNull();
+    expect(keyName("CapsLock")).toBeNull();
+  });
+
+  it("builds the canonical chord in the backend's modifier order", () => {
+    expect(captureChord(key("Space", { ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "chord",
+      chord: "Ctrl+Shift+Space",
+    });
+    expect(captureChord(key("KeyK", { metaKey: true, altKey: true, ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "chord",
+      chord: "Ctrl+Alt+Shift+Super+K",
+    });
+    expect(captureChord(key("Comma", { altKey: true }))).toEqual({ type: "chord", chord: "Alt+Comma" });
+  });
+
+  it("shows held modifiers while only modifiers are down", () => {
+    expect(captureChord(key("ControlLeft", { ctrlKey: true }))).toEqual({ type: "pending", mods: ["Ctrl"] });
+    expect(captureChord(key("ShiftRight", { ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "pending",
+      mods: ["Ctrl", "Shift"],
+    });
+    expect(captureChord(key("MetaLeft", { metaKey: true }))).toEqual({ type: "pending", mods: ["Super"] });
+  });
+
+  it("cancels on a bare Escape only", () => {
+    expect(captureChord(key("Escape"))).toEqual({ type: "cancel" });
+    expect(captureChord(key("Escape", { ctrlKey: true })).type).toBe("invalid");
+  });
+
+  it("refuses a key without Ctrl, Alt or Win, and keys that cannot be global", () => {
+    expect(captureChord(key("KeyA")).type).toBe("invalid");
+    expect(captureChord(key("KeyA", { shiftKey: true })).type).toBe("invalid");
+    expect(captureChord(key("CapsLock", { ctrlKey: true })).type).toBe("invalid");
+  });
+
+  it("shows Super as Win on the key caps", () => {
+    expect(chordParts("Ctrl+Shift+Space")).toEqual(["Ctrl", "Shift", "Space"]);
+    expect(chordParts("Super+L")).toEqual(["Win", "L"]);
+    expect(chordParts("")).toEqual([]);
   });
 });
