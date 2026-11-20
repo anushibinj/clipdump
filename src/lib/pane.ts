@@ -1,5 +1,6 @@
-// Which tab the right pane shows: the item preview or the AI split. A webview presentation
-// choice like the theme, so it lives in localStorage and is read before the first paint.
+// What the right pane shows (the item preview or the AI split) and whether it is open. Webview
+// presentation choices like the theme, so they live in localStorage and are read before the first
+// paint.
 
 export type RightTab = "preview" | "split";
 
@@ -18,6 +19,24 @@ export function readRightTab(): RightTab {
 export function writeRightTab(tab: RightTab): void {
   try {
     localStorage.setItem(KEY, tab);
+  } catch {
+    // Not persisted; the choice still applies for this session.
+  }
+}
+
+const OPEN_KEY = "clipdump.paneOpen";
+
+export function readPaneOpen(): boolean {
+  try {
+    return localStorage.getItem(OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writePaneOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_KEY, open ? "1" : "0");
   } catch {
     // Not persisted; the choice still applies for this session.
   }

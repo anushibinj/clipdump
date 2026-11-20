@@ -351,10 +351,7 @@ async function keys(browser, url) {
   check("Esc closes settings first (preview stays)", (await page.locator("h2", { hasText: "Settings" }).count()) === 0 && (await page.locator('aside[aria-label="Preview"]').count()) === 1);
   await page.keyboard.press("Escape");
   await settle();
-  check("Esc closes the preview next", (await page.locator('aside[aria-label="Preview"]').count()) === 0 && (await calls("hide_bar")).length === hides0);
-  await page.keyboard.press("Escape");
-  await settle();
-  check("Esc then hides the bar", (await calls("hide_bar")).length === hides0 + 1);
+  check("Esc then hides the bar, the pane is remembered open", (await calls("hide_bar")).length === hides0 + 1 && (await page.locator('aside[aria-label="Preview"]').count()) === 1);
 
   // settings
   await reset();

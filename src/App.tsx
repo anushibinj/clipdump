@@ -15,7 +15,7 @@ import { useKeyboard } from "@/hooks/useKeyboard";
 import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
-import { readRightTab, writeRightTab, type RightTab } from "@/lib/pane";
+import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
 import {
   clearHistory,
   copyItem,
@@ -51,7 +51,9 @@ const NOTICE_MS = 5000;
 function App() {
   const s = useSearch();
   const [view, setView] = useState<View>("search");
-  const [previewOpen, setPreviewOpen] = useState(false);
+  // The right pane stays open or closed the way it was left, across openings and restarts.
+  const [previewOpen, setPreviewOpen] = useState(readPaneOpen);
+  useEffect(() => writePaneOpen(previewOpen), [previewOpen]);
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [stats, setStats] = useState<StatsDto | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -231,11 +233,11 @@ function App() {
           setView((v) => (v === "settings" ? "search" : "settings"));
           break;
         case "escape":
-          // Layers, innermost first: pending confirmation, settings, preview, the recovery notice
-          // (the keyboard way to dismiss it), then the bar.
+          // Layers, innermost first: pending confirmation, settings, the recovery notice (the
+          // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is
+          // remembered, so Esc hides the bar and the pane is there again next time (Tab closes it).
           if (c.confirming) disarm();
           else if (c.view === "settings") setView("search");
-          else if (c.previewOpen) setPreviewOpen(false);
           else if (c.recovery) setRecoveryDismissed(c.recovery);
           else hideBar().catch(() => {});
           break;
@@ -274,7 +276,6 @@ function App() {
         onBarHidden(() => {
           // Back to the plain search view for the next open.
           setView("search");
-          setPreviewOpen(false);
           disarm();
         }),
         onHistoryChanged(() => {
