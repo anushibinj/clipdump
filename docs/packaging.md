@@ -204,3 +204,13 @@ Not verifiable on Linux, to be done on Windows (`docs/manual-checks.md`, Phase 1
 build`, the installer itself (install without UAC, install folder, shortcuts, the first launch), the
 WebView2 bootstrapper, the uninstaller (both checkbox states, silent uninstall, the registry values), the
 installer size, SmartScreen, and the workflow on GitHub.
+
+## Upgrading over an existing install
+
+`installer/installer.nsi` is a copy of tauri-bundler 2.10.5's NSIS template (wired in through
+`bundle.windows.nsis.template`) with one change: when an older version is installed, the
+pre-selected choice is **Update the existing installation**, which installs over it and keeps the
+history and settings. The stock template pre-selects "Uninstall before installing" and runs the full
+uninstaller. Uninstalling first is still offered as the second choice. Re-apply the patch (search for
+`Clipdump:` in the file) and re-sync `English.nsh` when the Tauri CLI is upgraded. Not yet verified
+on Windows: add to `docs/manual-checks.md`, Phase 15.
