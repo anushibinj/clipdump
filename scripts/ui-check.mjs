@@ -2,6 +2,8 @@
 //
 //   node scripts/ui-check.mjs keys    keyboard flow assertions (exit code 1 on a failure)
 //   node scripts/ui-check.mjs tasks   keyboard and mouse flow of the Tasks view (exit code 1 on a failure)
+//   node scripts/ui-check.mjs assistant   the task assistant against the fake LLM answers: quick wins, what next,
+//                                     next step, draft, digest, links, tasks from a text, the quiet nudge
 //   node scripts/ui-check.mjs perf    keystroke to rendered timings with 1,000 fake items
 //   node scripts/ui-check.mjs a11y    accessibility audit in light and dark: ARIA roles and names of the
 //                                     search view and settings, a live region for the result count,
@@ -859,6 +861,294 @@ async function tasks(browser, url) {
 }
 
 // ---------------------------------------------------------------------------
+// assistant
+// ---------------------------------------------------------------------------
+
+async function assistant(browser, url) {
+  const { page, problems } = await openPage(browser, url);
+  let failed = 0;
+  const check = (name, ok, detail = "") => {
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `  (${detail})`}`);
+    if (!ok) failed += 1;
+  };
+  const settle = () => page.waitForTimeout(150);
+  const reset = async () => {
+    await page.evaluate(() => window.__clipMock.reset());
+    await page.waitForTimeout(150);
+    await page.evaluate(() => {
+      window.__clipMock.emit("bar:hidden");
+      window.__clipMock.emit("bar:shown");
+    });
+    await settle();
+    if ((await page.locator('[aria-label="Tasks"]').count()) === 0) await page.keyboard.press("Control+t");
+    await page.waitForSelector('[aria-label="Tasks"]');
+    await settle();
+  };
+  const store = () => page.evaluate(() => window.__clipMock.tasks().map((t) => ({ ...t })));
+  const byTitle = async (title) => (await store()).find((t) => t.title === title);
+  const titles = () => page.locator('[aria-label="Tasks"] [role="option"]').evaluateAll((els) => els.map((e) => e.querySelector(".truncate")?.textContent));
+  const sections = () => page.locator('[aria-label="Tasks"] h3').evaluateAll((els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
+  const selectedTitle = () => page.locator('[aria-label="Tasks"] [aria-selected="true"] .truncate').first().textContent();
+  const panel = (name) => page.locator(`section[aria-label="${name}"]`);
+  const calls = (cmd) => page.evaluate((c) => window.__clipMock.control.calls.filter((x) => x.cmd === c), cmd);
+  const input = page.locator("input[placeholder]").first();
+  // The selection survives a reset (the view stays mounted), so pick the task by walking the list.
+  const selectTask = async (title) => {
+    for (let i = 0; i < 12 && (await selectedTitle()) !== title; i += 1) await page.keyboard.press(i < 6 ? "ArrowUp" : "ArrowDown");
+    return (await selectedTitle()) === title;
+  };
+  const hasText = async (loc, text) => ((await loc.count()) > 0 ? (await loc.first().textContent()).includes(text) : false);
+
+  await reset();
+
+  // --- the quiet nudge: the dentist has waited for 20 days -------------------------------------
+  const nudge = panel("Gone quiet");
+  check("a task that went quiet gets a nudge", (await nudge.count()) === 1 && (await hasText(nudge, "Book the dentist")));
+  check("it says how long it has been quiet", await hasText(nudge, "Quiet for 2w"), await nudge.first().textContent());
+  await nudge.getByRole("button", { name: "Ask the assistant" }).click();
+  await settle();
+  check("asking the assistant adds a suggestion", await hasText(nudge, "Suggests: Set it aside"), await nudge.first().textContent());
+  check("and does not change the task", (await byTitle("Book the dentist")).deferredUntil === null);
+  await nudge.getByRole("button", { name: "Set aside a week" }).click();
+  await settle();
+  const dentist = await byTitle("Book the dentist");
+  check("Set aside a week defers it by seven days", dentist.deferredUntil > Date.now() + 6 * 86_400_000, String(dentist.deferredUntil));
+  check("and the nudge goes away", (await nudge.count()) === 0);
+
+  await reset();
+  await nudge.getByRole("button", { name: "Drop" }).click();
+  await settle();
+  check("Drop deletes the task", (await byTitle("Book the dentist")) === undefined);
+  await reset();
+  await nudge.getByRole("button", { name: "Not now" }).click();
+  await settle();
+  const snoozed = await byTitle("Book the dentist");
+  check("Not now asks again tomorrow", snoozed.deferredUntil > Date.now() && snoozed.deferredUntil < Date.now() + 2 * 86_400_000);
+  check("the task itself still exists untouched", snoozed.status === "todo");
+
+  // --- effort chips ----------------------------------------------------------------------------
+  await reset();
+  await page.keyboard.press("Control+h");
+  await settle();
+  const row = (title) => page.locator('[aria-label="Tasks"] [role="option"]', { hasText: title });
+  check("an estimated task shows its size", await hasText(row("Rename the staging buckets"), "15 min"));
+  check("a long one shows Long", await hasText(row("Prepare the Thursday demo"), "Long"));
+  check("a waiting task shows the hourglass", (await row("Reply to the vendor about the invoice").locator('[title="Waiting"]').count()) === 1);
+  check("an unestimated task shows no chip", !(await hasText(row("Book the dentist"), "min")) && !(await hasText(row("Book the dentist"), "Long")));
+  await page.keyboard.press("Control+h");
+  await settle();
+
+  // --- quick wins (Ctrl+Q) ---------------------------------------------------------------------
+  await page.keyboard.press("Control+q");
+  await settle();
+  check("Ctrl+Q shows only the quick wins", JSON.stringify(await titles()) === JSON.stringify(["Reply to the vendor about the invoice", "Rename the staging buckets"]), JSON.stringify(await titles()));
+  check("in a Quick wins section", JSON.stringify(await sections()) === JSON.stringify(["Quick wins 2"]), JSON.stringify(await sections()));
+  check("with the unestimated count in the summary", await hasText(page.locator("text=Quick wins ·"), "1 not estimated yet"));
+  check("and an estimate was asked for the missing one", (await calls("estimate_backlog")).length === 1);
+  await page.waitForTimeout(500);
+  check("the estimate arrives by itself", (await byTitle("Book the dentist")).size !== null);
+  check("the toolbar button shows how many, the new estimate included", await hasText(page.locator('button[aria-label="Quick wins"]'), "3"), await page.locator('button[aria-label="Quick wins"]').first().textContent());
+  await page.keyboard.press("Control+q");
+  await settle();
+  check("Ctrl+Q again brings the calm view back", (await sections()).join("|") === "Now 2|Up next 2", (await sections()).join("|"));
+
+  // a task added now gets its estimate a moment later (the background estimator)
+  await input.fill("Pay the parking fine");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(600);
+  check("a new task is estimated in the background", (await byTitle("Pay the parking fine")).size !== null);
+
+  // --- what next (Ctrl+N) ----------------------------------------------------------------------
+  await reset();
+  await page.keyboard.press("Control+n");
+  await page.waitForSelector('section[aria-label="What to do now"] p.font-medium');
+  const pick = panel("What to do now");
+  check("Ctrl+N shows a pick with a reason", (await hasText(pick, "Review the migration PR")) && (await hasText(pick, "most pressing")), await pick.first().textContent());
+  await pick.getByRole("button", { name: "10 min" }).click();
+  await page.waitForSelector('section[aria-label="What to do now"] p.font-medium');
+  check("a short time asks again and prefers a quick task", await hasText(pick, "Reply to the vendor about the invoice"), await pick.first().textContent());
+  check("and says why", await hasText(pick, "fits the time and energy"));
+  check("the question carried the minutes", (await calls("pick_next_task")).at(-1).args.minutes === 10);
+  await page.keyboard.press("Alt+Enter");
+  await settle();
+  check("Alt+Enter starts the picked task", (await byTitle("Reply to the vendor about the invoice")).status === "doing");
+  check("and selects it", (await selectedTitle()) === "Reply to the vendor about the invoice");
+  await page.keyboard.press("Escape");
+  await settle();
+  check("Esc closes the card and keeps the bar", (await pick.count()) === 0 && (await calls("hide_bar")).length === 0);
+
+  // an unreachable server is a sentence with a retry, not a crash
+  await page.evaluate(() => (window.__clipMock.control.llmError = "could not reach the LLM server (is it running, is the URL right?)"));
+  await page.keyboard.press("Control+n");
+  await page.waitForSelector('section[aria-label="What to do now"] [role="alert"]');
+  check("a failure says why", await hasText(pick.locator('[role="alert"]'), "could not reach the LLM server"));
+  await page.evaluate(() => (window.__clipMock.control.llmError = null));
+  await pick.getByRole("button", { name: "Try again" }).click();
+  await page.waitForSelector('section[aria-label="What to do now"] p.font-medium');
+  check("Try again asks again", (await pick.locator('[role="alert"]').count()) === 0);
+  await page.keyboard.press("Escape");
+
+  // --- next step (Ctrl+G) ----------------------------------------------------------------------
+  await reset();
+  check("the selected task can be chosen by keyboard", await selectTask("Fix the flaky checkout test"));
+  await page.keyboard.press("Control+g");
+  await page.waitForSelector('section[aria-label="Next step"] ol');
+  const steps = panel("Next step");
+  check("Ctrl+G suggests a first step for the selected task", await hasText(steps, 'Open "Fix the flaky checkout test"'));
+  check("and keeps it on the task", (await byTitle("Fix the flaky checkout test")).nextStep.startsWith("Open"));
+  check("without counting as touching it", (await byTitle("Fix the flaky checkout test")).touchedAt < Date.now() - 600_000);
+  check("it shows under the title", await hasText(row("Fix the flaky checkout test"), "Next:"));
+  const before = (await store()).length;
+  await page.keyboard.press("Alt+Enter");
+  await settle();
+  check("Alt+Enter adds the subtasks as tasks", (await store()).length === before + 3 && (await byTitle("Gather what you need")) !== undefined);
+  check("and the card empties out", await hasText(steps, "Small enough to do as it is"));
+  await steps.getByRole("button", { name: "Clear" }).click();
+  await settle();
+  check("Clear removes the suggested step", (await byTitle("Fix the flaky checkout test")).nextStep === "");
+  await page.keyboard.press("Escape");
+
+  // --- digest (Ctrl+D, Ctrl+Shift+D) -----------------------------------------------------------
+  await reset();
+  await page.keyboard.press("Control+d");
+  await page.waitForSelector('section[aria-label="Digest"] p.leading-5');
+  const digest = panel("Digest");
+  check("Ctrl+D shows today's digest with an order", (await hasText(digest, "in flight")) && (await digest.locator("ol li").count()) === 3);
+  await page.keyboard.press("Control+Shift+D");
+  await page.waitForFunction(() => document.querySelector('section[aria-label="Digest"]')?.textContent.includes("this week") || document.querySelector('section[aria-label="Digest"]')?.textContent.includes("done this week"));
+  check("Ctrl+Shift+D shows the week's recap", await hasText(digest, "done this week"));
+  const askedBefore = (await calls("task_digest")).length;
+  await digest.getByRole("button", { name: "Today" }).click();
+  await settle();
+  check("going back to a fresh digest reuses it", (await calls("task_digest")).length === askedBefore);
+  await digest.locator("ol li button").first().click();
+  await settle();
+  check("clicking a task in the order selects it", (await selectedTitle()).length > 0);
+  await page.keyboard.press("Escape");
+
+  // --- tasks from a text (Ctrl+K) --------------------------------------------------------------
+  await reset();
+  await page.keyboard.press("Control+k");
+  const extract = panel("Tasks from a text");
+  check("Ctrl+K opens the box and focuses it", await page.evaluate(() => document.activeElement?.tagName === "TEXTAREA"));
+  await page.keyboard.type("Hi team. Please send the signed lease to Dana by Friday. We need to book the venue. Also review the migration PR.");
+  await page.keyboard.press("Control+Enter");
+  await page.waitForSelector('section[aria-label="Tasks from a text"] [role="checkbox"]');
+  check("Ctrl+Enter finds the action items", (await extract.locator('[role="checkbox"]').count()) === 3, String(await extract.locator('[role="checkbox"]').count()));
+  check("the important one is marked", await hasText(extract, "important"));
+  const ticks = await extract.locator('[role="checkbox"]').evaluateAll((els) => els.map((e) => e.getAttribute("aria-checked") === "true"));
+  check("every new one starts ticked", ticks.every(Boolean), JSON.stringify(ticks));
+  await extract.locator('[role="checkbox"]').nth(1).click();
+  check("unticking one updates the button", (await extract.getByRole("button", { name: /^Add 2 tasks$/ }).count()) === 1);
+  check("the box keeps the focus", await page.evaluate(() => document.activeElement?.tagName === "TEXTAREA"));
+  await page.keyboard.press("Alt+Enter");
+  await settle();
+  check("Alt+Enter in the box adds only the ticked ones", (await byTitle("Please send the signed lease to Dana by Friday")) !== undefined && (await byTitle("We need to book the venue")) === undefined && (await byTitle("Also review the migration PR")) !== undefined);
+  check("and keeps the importance", (await byTitle("Please send the signed lease to Dana by Friday")).important === true);
+  check("then closes the card", (await extract.count()) === 0);
+  check("and the focus is back in the input", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+
+  // a duplicate is flagged and starts unticked
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("Review the migration PR.");
+  await page.keyboard.press("Control+Enter");
+  await page.waitForSelector('section[aria-label="Tasks from a text"] [role="checkbox"]');
+  check("a task already on the list is flagged", await hasText(extract, "already on the list"));
+  check("and starts unticked", (await extract.locator('[role="checkbox"]').first().getAttribute("aria-checked")) === "false");
+  await page.keyboard.press("Escape");
+  check("Esc inside the box closes the card", (await extract.count()) === 0);
+  check("and gives the focus back to the input", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+
+  // what was just copied is used when the box is empty
+  await page.evaluate(() => window.__clipMock.capture("Reminder: call the plumber about the leak tomorrow."));
+  await settle();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+Enter");
+  await page.waitForSelector('section[aria-label="Tasks from a text"] [role="checkbox"]');
+  check("an empty box reads the newest copied text", await hasText(extract, "call the plumber about the leak"));
+  await page.keyboard.press("Escape");
+
+  // --- links (Ctrl+L) and the linked items in the notes ----------------------------------------
+  await reset();
+  await page.keyboard.press("Control+l");
+  await page.waitForSelector('section[aria-label="Clipboard items for your tasks"] li');
+  const links = panel("Clipboard items for your tasks");
+  check("Ctrl+L suggests a clipboard item for a task", (await links.locator("li").count()) === 1 && (await hasText(links, "it looks related")));
+  await links.getByRole("button", { name: /Link all/ }).click();
+  await settle();
+  const linked = (await store()).filter((t) => t.clipIds.length > 0);
+  check("Link all stores the link on the task", linked.length === 1);
+  check("and the row shows a paperclip with a count", (await row(linked[0].title).locator("svg.lucide-paperclip").count()) === 1);
+  check("and the card empties out", await hasText(links, "Nothing you copied lately"));
+  await page.keyboard.press("Escape");
+  await row(linked[0].title).click();
+  await page.keyboard.press("Control+e");
+  await page.waitForSelector('[aria-label="Linked clipboard items"] li');
+  check("the notes list the linked item", (await page.locator('[aria-label="Linked clipboard items"] li').count()) === 1);
+  await page.locator('[aria-label="Linked clipboard items"] button[aria-label="Unlink"]').click();
+  await settle();
+  check("Unlink removes the link", (await store()).every((t) => t.clipIds.length === 0));
+  check("and the list from the notes", (await page.locator('[aria-label="Linked clipboard items"]').count()) === 0);
+
+  // --- draft where I left off (Ctrl+R) ---------------------------------------------------------
+  await reset();
+  await page.evaluate(() => window.__clipMock.capture("401 Unauthorized at /login on the second run"));
+  await settle();
+  await page.keyboard.press("Control+r");
+  await page.waitForSelector('aside [role="status"]');
+  const aside = page.locator("aside").first();
+  check("Ctrl+R opens the notes with a draft", (await hasText(aside.locator('[role="status"]'), "401 Unauthorized")), await aside.locator('[role="status"]').first().textContent());
+  check("the draft is not saved by itself", (await byTitle("Fix the flaky checkout test")).note.startsWith("Fails only"));
+  await aside.getByRole("button", { name: "Use it" }).click();
+  await page.waitForTimeout(700);
+  check("Use it puts the draft in the note and saves it", (await byTitle("Fix the flaky checkout test")).note.includes("401 Unauthorized"));
+  check("and the draft card goes away", (await aside.locator('[role="status"]').count()) === 0);
+  await page.evaluate(() => (window.__clipMock.control.llmError = null));
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Shift+End").catch(() => {});
+
+  // --- set aside (Ctrl+B) and Esc order --------------------------------------------------------
+  await reset();
+  await page.keyboard.press("Control+b");
+  await settle();
+  const fixed = await byTitle("Fix the flaky checkout test");
+  check("Ctrl+B sets the selected task aside for a week", fixed.deferredUntil > Date.now() + 6 * 86_400_000);
+  check("and the row shows a clock", (await row("Fix the flaky checkout test").locator("svg.lucide-clock").count()) === 1);
+
+  await reset();
+  await page.keyboard.press("Control+d");
+  await page.waitForSelector('section[aria-label="Digest"] p.leading-5');
+  await input.fill("half typed");
+  await page.keyboard.press("Escape");
+  check("Esc clears the typed text first", (await input.inputValue()) === "" && (await panel("Digest").count()) === 1);
+  await page.keyboard.press("Escape");
+  check("then closes the card", (await panel("Digest").count()) === 0);
+  check("and only then hides the bar", (await calls("hide_bar")).length === 0);
+  await page.keyboard.press("Escape");
+  await settle();
+  check("the next Esc hides the bar", (await calls("hide_bar")).length === 1);
+
+  // --- no LLM server set up --------------------------------------------------------------------
+  await reset();
+  await page.evaluate(() => {
+    const s = window.__clipMock.settings();
+    s.llmBaseUrl = "";
+  });
+  await page.keyboard.press("Control+n");
+  await page.waitForSelector('section[aria-label="What to do now"] [role="alert"]');
+  check("without a server the card says to set one up", await hasText(panel("What to do now"), "set up an LLM server in Settings first"));
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    window.__clipMock.settings().llmBaseUrl = "http://localhost:11434/v1";
+  });
+
+  check("no console errors or page errors", problems.length === 0, problems.join(" | "));
+  await page.context().close();
+  console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
+  return failed === 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
 // a11y
 // ---------------------------------------------------------------------------
 
@@ -1462,10 +1752,11 @@ let code = 1;
 try {
   if (mode === "keys") code = await keys(browser, server.url);
   else if (mode === "tasks") code = await tasks(browser, server.url);
+  else if (mode === "assistant") code = await assistant(browser, server.url);
   else if (mode === "perf") code = await perf(browser, server.url);
   else if (mode === "a11y") code = await a11y(browser, server.url);
   else if (mode === "shots") code = await shots(browser, server.url);
-  else console.log("usage: node scripts/ui-check.mjs keys|tasks|a11y|perf|shots [--url URL] [--out DIR]");
+  else console.log("usage: node scripts/ui-check.mjs keys|tasks|assistant|a11y|perf|shots [--url URL] [--out DIR]");
 } finally {
   await browser.close();
   await server.stop();
