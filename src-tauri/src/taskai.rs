@@ -330,6 +330,234 @@ pub fn next_action(cfg: &LlmConfig, http: &dyn HttpPost, task: &Task) -> Result<
     parse_next_action(&complete(cfg, http, &system, &user, 0.2)?, task)
 }
 
+// ---------------------------------------------------------------------------
+// Clipboard items as the model sees them
+// ---------------------------------------------------------------------------
+
+/// A clipboard item reduced to one line of text. The command layer builds these from the
+/// history (it knows how to read an item); this module only formats and checks them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipLine {
+    pub id: u64,
+    /// Unix ms the item was copied.
+    pub at: i64,
+    /// "text", "image" (its OCR text) or "files" (their names).
+    pub kind: &'static str,
+    pub text: String,
+    /// The app it was copied from, when known.
+    pub app: Option<String>,
+}
+
+/// "5 min ago", "3 h ago", "2 d ago".
+fn ago(now: i64, at: i64) -> String {
+    let mins = ((now - at) / 60_000).max(0);
+    if mins < 60 {
+        format!("{mins} min ago")
+    } else if mins < 60 * 24 {
+        format!("{} h ago", mins / 60)
+    } else {
+        format!("{} d ago", mins / (60 * 24))
+    }
+}
+
+/// One clip as a prompt line, the id first so the model can answer with it.
+fn clip_line(c: &ClipLine, now: i64) -> String {
+    let from = c.app.as_deref().map(|a| format!(" | from {}", one_line(a, 40))).unwrap_or_default();
+    format!(
+        "clip={} | {} | {}{} | {}",
+        c.id,
+        ago(now, c.at),
+        c.kind,
+        from,
+        one_line(&c.text, LINE_CHARS)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Where I left off
+// ---------------------------------------------------------------------------
+
+/// Clips handed to a "where I left off" draft at most.
+pub const MAX_RESUME_CLIPS: usize = 12;
+
+const RESUME_PROMPT: &str = "You write the \"where I left off\" note for a task a person is about to pick up again. \
+You get the task, its current note, and what the person copied to the clipboard while working, newest first.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"note\":\"<the note>\"}\n\
+Rules:\n\
+- One to three short sentences, in the first person and the past tense, for example \"Was reading the OAuth docs and had copied the token endpoint.\"\n\
+- Mention concrete things the clips show (a page, an error message, a file name), but copy nothing long.\n\
+- Never repeat a password, token, key, card number or other secret from a clip; say \"a token\" instead.\n\
+- Do not invent anything the clips and the task do not show. Keep what the current note already says if it still holds.";
+
+#[derive(Deserialize)]
+struct RawNote {
+    #[serde(default)]
+    note: String,
+}
+
+/// The drafted note, bounded to what a task's note can hold. An empty draft is an error.
+pub fn parse_note(reply: &str) -> Result<String, String> {
+    let raw: RawNote = parse(reply)?;
+    let note = short_text(&raw.note, MAX_NOTE_CHARS);
+    if note.is_empty() {
+        return Err("the model did not write a note".to_owned());
+    }
+    Ok(note)
+}
+
+/// Draft a note for `task` from `clips` (newest first, the caller picks which). With no clips
+/// there is nothing to go on and the server is not asked.
+pub fn resume_note(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    task: &Task,
+    clips: &[ClipLine],
+    now: i64,
+) -> Result<String, String> {
+    if clips.is_empty() {
+        return Err("nothing was copied since you last touched this task, so there is nothing to go on".to_owned());
+    }
+    let mut user = format!("<data>\nTask: {}\n", one_line(&task.title, LINE_CHARS));
+    if !task.note.is_empty() {
+        user.push_str(&format!("Current note: {}\n", one_line(&task.note, LINE_CHARS)));
+    }
+    user.push_str("Copied, newest first:\n");
+    for c in clips.iter().take(MAX_RESUME_CLIPS) {
+        user.push_str(&clip_line(c, now));
+        user.push('\n');
+    }
+    user.push_str("</data>");
+    let system = format!("{RESUME_PROMPT}\n{DATA_RULE}");
+    parse_note(&complete(cfg, http, &system, &user, 0.2)?)
+}
+
+// ---------------------------------------------------------------------------
+// Digest
+// ---------------------------------------------------------------------------
+
+/// Which look back: this morning's briefing or the week's recap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DigestKind {
+    Morning,
+    Week,
+}
+
+/// A few sentences and the order to start in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Digest {
+    pub summary: String,
+    /// Ids of open tasks, best first. Only ones on the list, at most [`MAX_ORDER`].
+    pub order: Vec<u64>,
+}
+
+/// Tasks suggested in a digest's order at most.
+pub const MAX_ORDER: usize = 5;
+/// A task untouched this long "has gone quiet" in a digest.
+const QUIET_DAYS: i64 = 5;
+const MAX_SUMMARY_CHARS: usize = 800;
+
+/// Open (waiting or in flight) tasks, deferred ones included, most promising first.
+fn open_sorted(tasks: &[Task]) -> Vec<&Task> {
+    let mut list: Vec<&Task> = tasks.iter().filter(|t| t.status != Status::Done).collect();
+    list.sort_by_key(|t| (t.status != Status::Doing, !t.important, t.created_at, t.id));
+    list.truncate(MAX_LISTED);
+    list
+}
+
+const MORNING_PROMPT: &str = "You write a short morning briefing for a person's task list.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"summary\":\"<2 to 4 plain sentences>\",\"order\":[<task ids>]}\n\
+The summary says what is in flight, what has gone quiet and what is worth finishing today. \
+\"order\" is up to 5 ids of open tasks to work on today, best first, using only ids from the list. \
+Be specific, use the task titles, do not pad.";
+
+const WEEK_PROMPT: &str = "You write a short recap of a person's week from their task list.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"summary\":\"<2 to 4 plain sentences>\",\"order\":[<task ids>]}\n\
+The summary says what got done this week, what is still open and stuck, and what to focus on next. \
+\"order\" is up to 5 ids of open tasks to start next week with, best first, using only ids from the open list. \
+Be specific, use the task titles, do not pad.";
+
+#[derive(Deserialize)]
+struct RawDigest {
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    order: Vec<u64>,
+}
+
+/// The model's digest: a summary that is not empty, and an order that keeps only ids of `open`
+/// tasks (no repeats, at most [`MAX_ORDER`]).
+pub fn parse_digest(reply: &str, open: &[&Task]) -> Result<Digest, String> {
+    let raw: RawDigest = parse(reply)?;
+    let summary = short_text(&raw.summary, MAX_SUMMARY_CHARS);
+    if summary.is_empty() {
+        return Err("the model did not write a summary".to_owned());
+    }
+    let mut order: Vec<u64> = Vec::new();
+    for id in raw.order {
+        if open.iter().any(|t| t.id == id) && !order.contains(&id) {
+            order.push(id);
+        }
+        if order.len() == MAX_ORDER {
+            break;
+        }
+    }
+    Ok(Digest { summary, order })
+}
+
+/// The morning briefing or the week's recap. An empty list needs no server.
+pub fn digest(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    tasks: &[Task],
+    kind: DigestKind,
+    now: i64,
+) -> Result<Digest, String> {
+    let open = open_sorted(tasks);
+    let window = match kind {
+        DigestKind::Morning => DAY_MS,
+        DigestKind::Week => 7 * DAY_MS,
+    };
+    let mut done: Vec<&Task> = tasks
+        .iter()
+        .filter(|t| t.status == Status::Done && t.done_at.is_some_and(|at| now - at <= window))
+        .collect();
+    done.sort_by_key(|t| std::cmp::Reverse(t.done_at));
+    done.truncate(MAX_LISTED);
+    if open.is_empty() && done.is_empty() {
+        return Ok(Digest {
+            summary: "Nothing on the list yet.".to_owned(),
+            order: Vec::new(),
+        });
+    }
+    let in_flight = open.iter().filter(|t| t.status == Status::Doing).count();
+    let quiet = open.iter().filter(|t| days_idle(t, now) >= QUIET_DAYS).count();
+    let mut user = format!(
+        "Open: {} ({} in flight, {} untouched for {}+ days). Done in the last {}: {}.\n<data>\nOpen tasks:\n",
+        open.len(),
+        in_flight,
+        quiet,
+        QUIET_DAYS,
+        if kind == DigestKind::Morning { "day" } else { "7 days" },
+        done.len(),
+    );
+    for t in &open {
+        user.push_str(&task_line(t, now));
+        user.push('\n');
+    }
+    user.push_str("Done:\n");
+    for t in &done {
+        user.push_str(&format!("- {}\n", one_line(&t.title, LINE_CHARS)));
+    }
+    user.push_str("</data>");
+    let prompt = match kind {
+        DigestKind::Morning => MORNING_PROMPT,
+        DigestKind::Week => WEEK_PROMPT,
+    };
+    let system = format!("{prompt}\n{DATA_RULE}");
+    parse_digest(&complete(cfg, http, &system, &user, 0.3)?, &open)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +776,106 @@ mod tests {
             http.user_text(),
             "<data>\nTask: taxes\nWhere the person left off: found the forms\n</data>"
         );
+    }
+    fn clip(id: u64, at: i64, text: &str) -> ClipLine {
+        ClipLine {
+            id,
+            at,
+            kind: "text",
+            text: text.into(),
+            app: None,
+        }
+    }
+
+    #[test]
+    fn ago_rounds_down_to_the_biggest_unit() {
+        let now = 10 * DAY_MS;
+        assert_eq!(ago(now, now), "0 min ago");
+        assert_eq!(ago(now, now - 59 * 60_000), "59 min ago");
+        assert_eq!(ago(now, now - 3 * 3_600_000 - 1), "3 h ago");
+        assert_eq!(ago(now, now - 2 * DAY_MS), "2 d ago");
+        assert_eq!(ago(now, now + 5), "0 min ago", "a clock step back is not negative");
+    }
+
+    #[test]
+    fn a_clip_line_names_the_id_the_age_the_kind_and_the_app() {
+        let mut c = clip(9, 0, "error: token\nexpired");
+        c.app = Some("Chrome".into());
+        assert_eq!(
+            clip_line(&c, 5 * 60_000),
+            "clip=9 | 5 min ago | text | from Chrome | error: token expired"
+        );
+    }
+
+    #[test]
+    fn a_resume_draft_is_bounded_and_needs_clips_to_go_on() {
+        let t = task(1, "fix login");
+        let none = Fake::answering("unused");
+        let e = resume_note(&cfg(), &none, &t, &[], 0).unwrap_err();
+        assert!(e.contains("nothing was copied"));
+        assert!(none.seen.borrow().is_empty());
+
+        let http = Fake::answering(r#"{"note":" Was reading the OAuth docs.\n"}"#);
+        let clips = vec![clip(2, 0, "https://example.com/oauth"), clip(1, 0, "401 Unauthorized")];
+        let got = resume_note(&cfg(), &http, &t, &clips, 60_000).unwrap();
+        assert_eq!(got, "Was reading the OAuth docs.");
+        let user = http.user_text();
+        assert!(user.starts_with("<data>\nTask: fix login\nCopied, newest first:\nclip=2 | 1 min ago"));
+        assert!(http.system_text().contains("Never repeat a password"));
+
+        let long = format!(r#"{{"note":"{}"}}"#, "n".repeat(MAX_NOTE_CHARS + 100));
+        assert_eq!(parse_note(&long).unwrap().chars().count(), MAX_NOTE_CHARS);
+        assert!(parse_note(r#"{"note":" "}"#).is_err());
+    }
+
+    #[test]
+    fn only_the_newest_clips_are_sent_for_a_resume() {
+        let http = Fake::answering(r#"{"note":"ok"}"#);
+        let clips: Vec<ClipLine> = (0..30).map(|i| clip(i, 0, "x")).collect();
+        resume_note(&cfg(), &http, &task(1, "t"), &clips, 0).unwrap();
+        assert_eq!(http.user_text().matches("clip=").count(), MAX_RESUME_CLIPS);
+    }
+
+    #[test]
+    fn a_digest_order_keeps_only_open_tasks_once() {
+        let a = open(1, "a", Status::Todo);
+        let b = open(2, "b", Status::Doing);
+        let open_list = [&a, &b];
+        let got = parse_digest(
+            r#"{"summary":" Two open.\n","order":[2,9,2,1,1,3,4,5,6,7]}"#,
+            &open_list,
+        )
+        .unwrap();
+        assert_eq!(got, Digest { summary: "Two open.".into(), order: vec![2, 1] });
+        assert!(parse_digest(r#"{"summary":"","order":[1]}"#, &open_list).is_err());
+        assert!(parse_digest("fine", &open_list).is_err());
+    }
+
+    #[test]
+    fn the_week_recap_sends_what_got_done_and_what_is_open() {
+        let now = 20 * DAY_MS;
+        let mut done_new = open(1, "ship the release", Status::Done);
+        done_new.done_at = Some(now - DAY_MS);
+        let mut done_old = open(2, "ancient", Status::Done);
+        done_old.done_at = Some(now - 9 * DAY_MS);
+        let mut stuck = open(3, "call the bank", Status::Todo);
+        stuck.touched_at = now - 8 * DAY_MS;
+        let http = Fake::answering(r#"{"summary":"Shipped the release.","order":[3]}"#);
+        let got = digest(&cfg(), &http, &[done_new, done_old, stuck], DigestKind::Week, now).unwrap();
+        assert_eq!(got.order, vec![3]);
+        let user = http.user_text();
+        assert!(user.starts_with("Open: 1 (0 in flight, 1 untouched for 5+ days). Done in the last 7 days: 1."));
+        assert!(user.contains("id=3 | call the bank | waiting"));
+        assert!(user.contains("- ship the release"));
+        assert!(!user.contains("ancient"));
+        assert!(http.system_text().contains("recap"));
+    }
+
+    #[test]
+    fn an_empty_list_has_a_digest_without_a_server() {
+        let down = Fake::answering("unused");
+        let got = digest(&cfg(), &down, &[], DigestKind::Morning, 0).unwrap();
+        assert_eq!(got.summary, "Nothing on the list yet.");
+        assert!(got.order.is_empty() && down.seen.borrow().is_empty());
     }
 }
