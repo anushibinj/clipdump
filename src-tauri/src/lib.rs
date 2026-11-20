@@ -38,6 +38,8 @@ mod shutdown;
 // The queue of LLM splits, two at a time.
 mod splitter;
 mod state;
+// What the LLM can suggest for the task list (estimates, next step, digest, ...).
+mod taskai;
 // The task list of the Tasks view, kept apart from the clipboard history.
 mod tasks;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
