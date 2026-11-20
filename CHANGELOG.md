@@ -10,12 +10,26 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [0.1.2] - 2026-11-20
 
+### Added
+
+- AI split turns key-value pairs into two copyable items. When a text pairs a key with a
+  value, in any notation (`key: value`, `key - value`, `key = value`, `key | value`,
+  `key => value`, a tab or a table row), the split returns a "<name> key" entry and a
+  "<name> value" entry, so each can be pasted into a form on its own. The separator is
+  never part of either item.
+
 ### Changed
 
 - Installing a newer version over an existing install now pre-selects "Update the existing
   installation", which installs in place and keeps the clipboard history and settings. Before,
   the installer pre-selected "Uninstall before installing" and ran the full uninstaller.
   Uninstalling first is still offered as the second choice.
+
+### Improved
+
+- Finished AI splits are cached in memory for the session. Going back to an item shows its
+  pieces at once instead of the skeleton loader. Failed splits are not cached, so they can
+  be retried.
 
 ## [0.1.1] - 2026-11-20
 
