@@ -162,7 +162,6 @@ pub fn run() {
                     hotkey::register_at_startup(&hotkey::PluginRegistrar(app.handle()), &key);
                 *state.hotkey_error.lock().unwrap() = note;
             }
-            start_splitter(app);
             tray::build(app)?;
             start_capture(app);
             if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
@@ -248,10 +247,15 @@ fn load_settings(app: &tauri::App) {
     *state.settings.write().unwrap() = startup.settings;
 }
 
-/// Start the queue behind Split. Its jobs read the store and the settings when
-/// they run (not when they are queued), so a changed server or model applies to
-/// the next job.
-fn start_splitter(app: &tauri::App) {
+/// Start the queue behind Split and hook it to the store: every new text that is
+/// long enough is queued the moment it is captured (when Split is set up), so its
+/// pieces are usually ready by the time the bar is opened. Jobs read the store and
+/// the settings when they RUN, so a changed server or model applies to the next one.
+fn start_splitter(
+    app: &tauri::App,
+    store: &std::sync::Arc<store::Store>,
+    persist: std::sync::Arc<persist::Persist>,
+) {
     use std::sync::Arc;
     use tauri::Emitter;
     let run_app = app.handle().clone();
@@ -273,10 +277,26 @@ fn start_splitter(app: &tauri::App) {
     let changed = move || {
         let _ = notify_app.emit_to(window::LABEL, events::SPLIT_UPDATED, ());
     };
-    let _ = app
-        .state::<AppState>()
-        .splitter
-        .set(splitter::Splitter::start(splitter::WORKERS, run, changed));
+    let splitter = splitter::Splitter::start_with(
+        splitter::WORKERS,
+        run,
+        changed,
+        Some(Arc::new(commands::split::SplitStore(persist))),
+    );
+    if app.state::<AppState>().splitter.set(splitter).is_err() {
+        return;
+    }
+    let hook_app = app.handle().clone();
+    store.set_new_text_hook(Box::new(move |id, hash| {
+        let state = hook_app.state::<AppState>();
+        let set_up = llm::LlmConfig::from_settings(
+            &state.settings.read().unwrap_or_else(|e| e.into_inner()),
+        )
+        .is_some();
+        if set_up && let Some(splitter) = state.splitter.get() {
+            splitter.request(id, hash, false);
+        }
+    }));
 }
 
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow
@@ -412,6 +432,7 @@ fn start_ingest(
     }
     // Kept for the life of the app: search and the commands read it, and the
     // shutdown flushes the database through it.
+    start_splitter(app, &store, Arc::clone(&persist));
     app.manage(store);
     app.manage(persist);
     Ok(())

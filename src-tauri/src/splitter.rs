@@ -2,14 +2,15 @@
 //! after another, so splitting never slows the app and never hammers the server.
 //!
 //! * At most [`WORKERS`] calls run at the same time; the rest wait in a queue.
-//! * The queue is last in, first out: what the user asked for most recently is
-//!   what they are looking at, so it goes first (arrowing quickly through the
-//!   list must not make the current item wait behind ten skipped ones).
-//! * Results are kept in memory only, by content hash (the same text copied twice
-//!   shares one result), never on disk: the pieces are often passwords and tokens
-//!   and the history is encrypted at rest, a plain cache next to it would not be.
-//! * A failure is kept too and is not retried by itself; only `force` runs it
-//!   again. That is what stops a wrong API key from being retried on every look.
+//! * The queue is first in, first out: texts are split in the order they were
+//!   copied. A job is queued the moment a text is captured (see
+//!   `Store::set_new_text_hook`), so by the time the user opens the bar the result
+//!   is usually there already.
+//! * Results are kept by content hash (the same text copied twice shares one
+//!   result) in memory and, through [`Persistence`], in the encrypted history
+//!   database, so they survive a restart. Only successes are persisted.
+//! * A failure is kept in memory and is not retried by itself; only `force` runs
+//!   it again. That is what stops a wrong API key from being retried on every look.
 //!
 //! The job itself (`run`) and the "something changed" hook are closures, so the
 //! queue is tested without a network or a window.
@@ -22,8 +23,9 @@ use crate::llm::Part;
 
 /// Calls to the LLM server that run at once.
 pub const WORKERS: usize = 2;
-/// Jobs waiting at most; past it the oldest waiting job is dropped.
-pub const MAX_QUEUED: usize = 50;
+/// Jobs waiting at most. A request past it is refused (nothing already waiting
+/// is dropped: first come, first served) and can simply be made again later.
+pub const MAX_QUEUED: usize = 200;
 /// Finished results kept (oldest dropped first).
 pub const KEEP_FINISHED: usize = 200;
 
@@ -33,6 +35,12 @@ pub enum Status {
     Running,
     Done(Vec<Part>),
     Failed(String),
+}
+
+/// Where finished splits are kept between runs.
+pub trait Persistence: Send + Sync {
+    fn load(&self, hash: u128) -> Option<Vec<Part>>;
+    fn save(&self, hash: u128, parts: &[Part]);
 }
 
 struct Job {
@@ -57,6 +65,7 @@ struct Shared {
     cv: Condvar,
     run: Box<Run>,
     changed: Box<dyn Fn() + Send + Sync>,
+    persistence: Option<Arc<dyn Persistence>>,
 }
 
 impl Shared {
@@ -77,11 +86,22 @@ impl Splitter {
         run: impl Fn(u64) -> Result<Vec<Part>, String> + Send + Sync + 'static,
         changed: impl Fn() + Send + Sync + 'static,
     ) -> Self {
+        Self::start_with(workers, run, changed, None)
+    }
+
+    /// [`Splitter::start`] with finished splits kept in `persistence`.
+    pub fn start_with(
+        workers: usize,
+        run: impl Fn(u64) -> Result<Vec<Part>, String> + Send + Sync + 'static,
+        changed: impl Fn() + Send + Sync + 'static,
+        persistence: Option<Arc<dyn Persistence>>,
+    ) -> Self {
         let shared = Arc::new(Shared {
             inner: Mutex::new(Inner::default()),
             cv: Condvar::new(),
             run: Box::new(run),
             changed: Box::new(changed),
+            persistence,
         });
         for n in 0..workers.max(1) {
             let worker = Arc::clone(&shared);
@@ -93,23 +113,25 @@ impl Splitter {
     }
 
     /// Ask for the text with content hash `hash` (item `id`) to be split, and
-    /// return where it stands. Already queued, running, done or failed: nothing
-    /// new happens, unless `force` is set and it is done or failed, which runs it
-    /// again. Otherwise the job goes to the front of the queue.
+    /// return where it stands. Already queued, running, done (in memory or on
+    /// disk) or failed: nothing new happens, unless `force` is set and it is done
+    /// or failed, which runs it again. Otherwise the job goes to the back of the
+    /// queue, or is refused as a `Failed` that is not stored when the queue is full.
     pub fn request(&self, id: u64, hash: u128, force: bool) -> Status {
+        if !force && let Some(known) = self.status(hash) {
+            return known;
+        }
         let mut g = self.shared.lock();
         match g.entries.get(&hash) {
             Some(s @ (Status::Queued | Status::Running)) => return s.clone(),
             Some(s) if !force => return s.clone(),
             _ => {}
         }
-        g.finished.retain(|h| *h != hash);
-        if g.queue.len() >= MAX_QUEUED
-            && let Some(dropped) = g.queue.pop_back()
-        {
-            g.entries.remove(&dropped.hash);
+        if g.queue.len() >= MAX_QUEUED {
+            return Status::Failed("the split queue is full, try again in a moment".to_owned());
         }
-        g.queue.push_front(Job { id, hash });
+        g.finished.retain(|h| *h != hash);
+        g.queue.push_back(Job { id, hash });
         g.entries.insert(hash, Status::Queued);
         drop(g);
         self.shared.cv.notify_one();
@@ -117,8 +139,29 @@ impl Splitter {
     }
 
     /// Where the text with content hash `hash` stands, `None` if never asked for.
+    /// A result that is only on disk is loaded (and then kept in memory).
     pub fn status(&self, hash: u128) -> Option<Status> {
-        self.shared.lock().entries.get(&hash).cloned()
+        if let Some(s) = self.shared.lock().entries.get(&hash) {
+            return Some(s.clone());
+        }
+        // The disk read happens without the lock.
+        let parts = self.shared.persistence.as_ref()?.load(hash)?;
+        let mut g = self.shared.lock();
+        if !g.entries.contains_key(&hash) {
+            g.entries.insert(hash, Status::Done(parts));
+            g.finished.push_back(hash);
+            trim(&mut g);
+        }
+        g.entries.get(&hash).cloned()
+    }
+}
+
+/// Forget the oldest finished results past [`KEEP_FINISHED`] (they stay on disk).
+fn trim(g: &mut Inner) {
+    while g.finished.len() > KEEP_FINISHED {
+        if let Some(old) = g.finished.pop_front() {
+            g.entries.remove(&old);
+        }
     }
 }
 
@@ -149,25 +192,22 @@ fn work(shared: &Shared) {
         (shared.changed)();
         let outcome = catch_unwind(AssertUnwindSafe(|| (shared.run)(job.id)))
             .unwrap_or_else(|_| Err("the split stopped unexpectedly".to_owned()));
+        // Written down before the entry says "done", so a restart right after
+        // the UI showed the pieces still finds them.
+        if let (Ok(parts), Some(p)) = (&outcome, &shared.persistence) {
+            p.save(job.hash, parts);
+        }
         {
             let mut g = shared.lock();
-            // Dropped by a full queue or replaced meanwhile: only a job still
-            // marked running owns its entry.
-            if matches!(g.entries.get(&job.hash), Some(Status::Running)) {
-                g.entries.insert(
-                    job.hash,
-                    match outcome {
-                        Ok(parts) => Status::Done(parts),
-                        Err(message) => Status::Failed(message),
-                    },
-                );
-                g.finished.push_back(job.hash);
-                while g.finished.len() > KEEP_FINISHED {
-                    if let Some(old) = g.finished.pop_front() {
-                        g.entries.remove(&old);
-                    }
-                }
-            }
+            g.entries.insert(
+                job.hash,
+                match outcome {
+                    Ok(parts) => Status::Done(parts),
+                    Err(message) => Status::Failed(message),
+                },
+            );
+            g.finished.push_back(job.hash);
+            trim(&mut g);
         }
         (shared.changed)();
     }
@@ -255,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_request_goes_first() {
+    fn requests_are_served_first_come_first_served() {
         let (started_tx, started_rx) = mpsc::channel::<u64>();
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let go_rx = Mutex::new(go_rx);
@@ -284,7 +324,7 @@ mod tests {
             go_tx.send(()).unwrap();
         }
         wait_until("all done", || (1..=4).all(|h| done(&s, h)));
-        assert_eq!(*order.lock().unwrap(), vec![1, 4, 3, 2]);
+        assert_eq!(*order.lock().unwrap(), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -345,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_queue_drops_its_oldest_waiting_job() {
+    fn a_full_queue_refuses_the_newest_and_keeps_what_waits() {
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let go_rx = Mutex::new(go_rx);
         let (started_tx, started_rx) = mpsc::channel::<()>();
@@ -360,12 +400,89 @@ mod tests {
         );
         s.request(0, 0, false);
         started_rx.recv().unwrap(); // job 0 holds the only worker
-        for h in 1..=(MAX_QUEUED as u128 + 1) {
-            s.request(h as u64, h, false);
+        for h in 1..=MAX_QUEUED as u128 {
+            assert_eq!(s.request(h as u64, h, false), Status::Queued);
         }
-        assert_eq!(s.status(1), None, "the oldest waiting job was dropped");
-        assert_eq!(s.status(2), Some(Status::Queued));
-        assert_eq!(s.status(MAX_QUEUED as u128 + 1), Some(Status::Queued));
-        drop(go_tx); // lets blocked and later jobs fail fast on recv
+        let over = MAX_QUEUED as u128 + 1;
+        assert!(
+            matches!(s.request(over as u64, over, false), Status::Failed(m) if m.contains("full"))
+        );
+        assert_eq!(
+            s.status(over),
+            None,
+            "a refusal is not stored, asking again later works"
+        );
+        assert_eq!(
+            s.status(1),
+            Some(Status::Queued),
+            "the first in line is untouched"
+        );
+        drop(go_tx);
+    }
+
+    #[derive(Default)]
+    struct Mem(Mutex<HashMap<u128, Vec<Part>>>);
+
+    impl Persistence for Mem {
+        fn load(&self, hash: u128) -> Option<Vec<Part>> {
+            self.0.lock().unwrap().get(&hash).cloned()
+        }
+        fn save(&self, hash: u128, parts: &[Part]) {
+            self.0.lock().unwrap().insert(hash, parts.to_vec());
+        }
+    }
+
+    #[test]
+    fn results_survive_a_restart_through_the_persistence() {
+        let disk = Arc::new(Mem::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&calls);
+        let first = Splitter::start_with(
+            1,
+            move |_| {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![part("kept")])
+            },
+            || {},
+            Some(disk.clone()),
+        );
+        first.request(1, 5, false);
+        wait_until("done", || done(&first, 5));
+        assert_eq!(disk.load(5), Some(vec![part("kept")]), "written to disk");
+        drop(first);
+
+        // A new run: nothing in memory, the answer comes from disk, no call.
+        let c = Arc::clone(&calls);
+        let second = Splitter::start_with(
+            1,
+            move |_| {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+            || {},
+            Some(disk.clone()),
+        );
+        assert_eq!(second.status(5), Some(Status::Done(vec![part("kept")])));
+        assert_eq!(
+            second.request(1, 5, false),
+            Status::Done(vec![part("kept")])
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Re-split replaces what is on disk.
+        second.request(1, 5, true);
+        wait_until("re-run", || {
+            calls.load(Ordering::SeqCst) == 2
+                && matches!(second.status(5), Some(Status::Done(p)) if p.is_empty())
+        });
+        assert_eq!(disk.load(5), Some(Vec::new()));
+    }
+
+    #[test]
+    fn failures_are_not_written_to_disk() {
+        let disk = Arc::new(Mem::default());
+        let s = Splitter::start_with(1, |_| Err("no".into()), || {}, Some(disk.clone()));
+        s.request(1, 8, false);
+        wait_until("failed", || done(&s, 8));
+        assert_eq!(disk.load(8), None);
     }
 }

@@ -49,6 +49,31 @@ pub fn splittable_hash(store: &Store, cfg: Option<&LlmConfig>, id: u64) -> Resul
     Ok(item.hash)
 }
 
+/// The splits kept in the encrypted history database (`persist`): JSON in, JSON
+/// out, encrypted by the writer thread.
+pub struct SplitStore(pub std::sync::Arc<crate::persist::Persist>);
+
+impl crate::splitter::Persistence for SplitStore {
+    fn load(&self, hash: u128) -> Option<Vec<Part>> {
+        let json = self.0.load_split(&hash.to_be_bytes()).ok().flatten()?;
+        serde_json::from_slice(&json).ok()
+    }
+
+    fn save(&self, hash: u128, parts: &[Part]) {
+        let Ok(json) = serde_json::to_vec(parts) else {
+            return;
+        };
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        let _ = self.0.submit(crate::persist::WriteOp::SetSplit {
+            hash: hash.to_be_bytes(),
+            json,
+            at,
+        });
+    }
+}
+
 /// The most text `copy_text` accepts. A piece is a number or a token, never a book;
 /// the cap only stops a runaway caller.
 pub const MAX_SNIPPET_BYTES: usize = 1024 * 1024;
