@@ -66,6 +66,36 @@ never touch them.
 - Code: `src-tauri/src/tasks.rs` (store, atomic encrypted saves), `commands/tasks.rs`, `src/lib/tasks.ts` (what shows),
   `src/lib/taskKeys.ts` (keys), `src/components/TasksView.tsx`.
 
+#### Task assistant (needs the LLM server that Split uses)
+Seven helpers that only **suggest**. Nothing changes a task until the person accepts it; the two exceptions are
+annotations that never count as touching a task (the effort estimate and the suggested next step), so a task left
+alone still goes quiet. Every answer is checked against what the app knows (an id must be a task on the list, a size
+one of three words, a title bounded) and a reply that does not check out is an error sentence, never half applied.
+- `Ctrl+N` **what next**: one task from those open and not set aside, for the minutes free (10, 30, 60 or any) and the
+  energy (low, normal, high), with a reason. `Alt+Enter` starts it.
+- **Effort**: a new task is estimated in the background (size quick, short or long, and kind quick, deep or waiting),
+  one at a time so adding never waits and a burst never hammers the server. `Ctrl+Q` shows only the quick wins, all of
+  them, and asks for the missing estimates.
+- `Ctrl+G` **next step**: a concrete first action, kept on the task and shown as "Next:" under its title, and for a big
+  task a breakdown that becomes tasks only when accepted.
+- `Ctrl+R` **where I left off**: a draft from the clipboard items copied since the task was last touched, shown in the
+  notes sidebar to take or leave. The prompt tells the model to use only clips that relate to the task and never to
+  repeat a secret.
+- `Ctrl+D` / `Ctrl+Shift+D` **digest**: a morning briefing or the week's recap with an order to start in; kept 30 minutes.
+- `Ctrl+L` **links**: which recent clipboard items belong to which open task. A linked item shows in the notes sidebar
+  (copy it back, unlink). A task keeps 20 links at most; one that left the history is not shown.
+- `Ctrl+K` **tasks from a text**: the action items in a pasted text, or in the newest copied text when the box is empty.
+  Duplicates of open tasks are found by code (not by the model) and start unticked.
+- **Gone quiet**: in flight for 3 days, or waiting for 14, untouched and not set aside. A card asks "still relevant?" with
+  Start it, Set aside a week (`Ctrl+B`), Drop and "Not now" (asks again tomorrow). It works without the assistant;
+  "Ask the assistant" only adds a recommendation, and an important task is never recommended to be dropped.
+- Privacy is Split's: task text, and for the draft, the links and the extract a few recent clipboard items, go only to the
+  server set up in Settings. The estimate of a new task runs by itself once that server is set up (like Split does for a
+  new text); every other call runs only when its key is pressed. Error sentences never contain the text or the answer.
+- Code: `src-tauri/src/taskai.rs` (prompts and the checks of every answer), `commands/task_ai.rs` (gathering, the
+  background estimator), `src/lib/taskAi.ts` and `src/hooks/useTaskAi.ts` (the card's state),
+  `src/components/TaskAiPanel.tsx`, `TaskNudge.tsx`, `TaskNotes.tsx`.
+
 ### Optional "pinned bar" mode (setting)
 Keep the bar permanently visible as a slim always-on-top strip (does not hide on blur). Hotkey then just focuses it.
 
