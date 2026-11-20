@@ -1,6 +1,7 @@
 import { memo, type PointerEvent } from "react";
-import { Check, Circle, CircleDot, NotebookPen, Star } from "lucide-react";
+import { Check, Circle, CircleDot, Clock, Hourglass, NotebookPen, Paperclip, Star } from "lucide-react";
 import type { Task } from "@/lib/ipc";
+import { KIND_LABEL, SIZE_LABEL, SIZE_TITLE, isDeferred } from "@/lib/tasks";
 import { fullDateTime, fullTime, relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ export const TaskRow = memo(function TaskRow({
   const doing = task.status === "doing";
   const done = task.status === "done";
   const stale = doing && now - task.touchedAt >= STALE_MS;
+  const aside = !done && isDeferred(task, now);
   const age = done ? (task.doneAt ?? task.touchedAt) : task.touchedAt;
   const showAge = stale || done;
   return (
@@ -96,21 +98,56 @@ export const TaskRow = memo(function TaskRow({
         >
           {task.title}
         </div>
-        {task.note !== "" ? (
+        {task.note !== "" && (
           <div className="truncate text-xs leading-4 text-muted-foreground" title={task.note}>
             <span className="text-foreground/60">Left off:</span> {task.note}
           </div>
-        ) : (
-          doing &&
-          selected && (
-            <div className="truncate text-xs leading-4 text-muted-foreground/70">
-              Add where you left off with Ctrl+E
-            </div>
-          )
+        )}
+        {/* The assistant's suggested first step. With a note too, only the selected row shows both. */}
+        {task.nextStep !== "" && !done && (selected || task.note === "") && (
+          <div className="truncate text-xs leading-4 text-muted-foreground" title={task.nextStep}>
+            <span className="text-foreground/60">Next:</span> {task.nextStep}
+          </div>
+        )}
+        {task.note === "" && task.nextStep === "" && doing && selected && (
+          <div className="truncate text-xs leading-4 text-muted-foreground/70">
+            Add where you left off with Ctrl+E
+          </div>
         )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5 pt-px">
+        {aside && (
+          <span
+            className="text-muted-foreground"
+            title={`Set aside until ${fullDateTime(task.deferredUntil ?? 0)}`}
+            aria-label="Set aside"
+          >
+            <Clock className="size-3.5" aria-hidden />
+          </span>
+        )}
+        {task.clipIds.length > 0 && (
+          <span
+            className="flex items-center gap-0.5 text-xs text-muted-foreground tabular-nums"
+            title={`${task.clipIds.length} linked clipboard ${task.clipIds.length === 1 ? "item" : "items"}`}
+          >
+            <Paperclip className="size-3" aria-hidden />
+            {task.clipIds.length}
+          </span>
+        )}
+        {task.kind === "waiting" && !done && (
+          <span className="text-muted-foreground" title={KIND_LABEL.waiting} aria-label={KIND_LABEL.waiting}>
+            <Hourglass className="size-3.5" aria-hidden />
+          </span>
+        )}
+        {task.size !== null && !done && (
+          <span
+            className="rounded bg-foreground/[0.07] px-1 text-[11px] leading-4 text-muted-foreground"
+            title={task.kind === null ? SIZE_TITLE[task.size] : `${SIZE_TITLE[task.size]}. ${KIND_LABEL[task.kind]}.`}
+          >
+            {SIZE_LABEL[task.size]}
+          </span>
+        )}
         {showAge && (
           <span
             className={cn(
