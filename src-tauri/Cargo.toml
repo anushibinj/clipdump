@@ -46,6 +46,11 @@ nucleo-matcher = { version = "0.3.1", default-features = false, features = ["uni
 # nucleo is asked (see `search.rs`). Already in the tree through nucleo.
 memchr = "2"
 
+# "Split" (llm.rs): one blocking JSON POST to the user's OpenAI compatible server.
+# No async runtime needed (commands run on Tauri's thread pool); rustls with bundled
+# roots, so it also works where the OS has no TLS stack set up.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+
 # Speed and size over build time. See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 opt-level = 3
