@@ -8,6 +8,33 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A task assistant in the task list, using the LLM server already set up for AI split. It only
+  suggests; nothing changes until you accept it.
+- `Ctrl+N` answers "what should I do now?" with one task and a reason, for the time (10 minutes,
+  30, an hour or any) and the energy (low, normal, high) you have. `Alt+Enter` starts it.
+- Every task gets an effort estimate in the background (about 15 minutes, up to an hour, or longer,
+  and whether it is quick, needs focus or is waiting on someone), shown as a small chip on the
+  row. `Ctrl+Q` shows only the quick wins, for when there are ten minutes to spare.
+- `Ctrl+G` turns a vague task into a concrete first step, shown under its title, and for a big task
+  offers subtasks to add with one key.
+- `Ctrl+R` drafts "where I left off" from what you copied since you last touched the task. It is a
+  draft in the notes sidebar: you take it or dismiss it.
+- `Ctrl+D` writes today's digest and `Ctrl+Shift+D` the week's recap, each with the order to start in.
+- `Ctrl+L` suggests which recent clipboard items belong to which task. Linked items show in the
+  notes sidebar, where you can copy one back or unlink it.
+- `Ctrl+K` finds the tasks in a pasted text, or in the text you just copied, and flags the ones that
+  are already on the list.
+- A task that has gone quiet (in flight for 3 days, waiting for 14) gets a "still relevant?" card:
+  start it, set it aside for a week (`Ctrl+B`), drop it, or ask again tomorrow. It works without an
+  LLM server; the assistant can add a recommendation, and never recommends dropping an important task.
+- `Alt+Enter` takes the main suggestion of whichever card is open.
+
+### Changed
+
+- Estimates and suggestions do not count as touching a task, so a task you left alone still goes quiet.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added
