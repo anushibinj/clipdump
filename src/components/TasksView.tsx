@@ -459,7 +459,12 @@ export function TasksView({
         if (!p || p.kind !== "extract" || p.result?.status !== "done") return;
         const chosen = p.result.value.tasks.filter((_, i) => p.selected[i]);
         if (chosen.length === 0) return;
-        void addAll(chosen).then((added) => added > 0 && closePanel());
+        void addAll(chosen).then((added) => {
+          if (added === 0) return;
+          // The box that had the focus goes away with the card: hand the focus back to the input.
+          closePanel();
+          returnFocus();
+        });
       },
     }),
     // `ai.runExtract` and the others are stable callbacks; `ai` itself is a new object each render.

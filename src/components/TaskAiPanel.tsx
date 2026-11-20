@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Check, Loader2, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import type { Energy, Task } from "@/lib/ipc";
@@ -392,6 +392,11 @@ function Extract({
             e.preventDefault();
             e.stopPropagation();
             actions.runExtract(panel.text);
+          } else if (e.key === "Enter" && e.altKey) {
+            // The same "take the suggestion" key as in the list, from the box that has the focus.
+            e.preventDefault();
+            e.stopPropagation();
+            actions.addFound();
           }
         }}
         rows={3}
@@ -420,14 +425,24 @@ function Extract({
                     const existing = t.duplicateOf === null ? null : tasks.find((x) => x.id === t.duplicateOf);
                     return (
                       <li key={`${i}-${t.title}`}>
-                        <label className="flex cursor-pointer items-start gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            tabIndex={-1}
-                            checked={panel.selected[i] ?? false}
-                            onChange={() => actions.toggleFound(i)}
-                            className="mt-1"
-                          />
+                        {/* A button, not a native checkbox: clicking a checkbox takes the keyboard focus away from the bar. */}
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={panel.selected[i] ?? false}
+                          tabIndex={-1}
+                          onClick={() => actions.toggleFound(i)}
+                          className="flex w-full items-start gap-2 rounded text-left text-sm hover:bg-foreground/[0.04]"
+                        >
+                          <span
+                            className={cn(
+                              "mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border",
+                              (panel.selected[i] ?? false) ? "border-primary bg-primary text-primary-foreground" : "border-input",
+                            )}
+                            aria-hidden
+                          >
+                            {(panel.selected[i] ?? false) && <Check className="size-2.5" strokeWidth={3} />}
+                          </span>
                           <span className="min-w-0 flex-1">
                             {t.title}
                             {t.important && <span className="ml-1.5 text-xs text-amber-700 dark:text-amber-400">important</span>}
@@ -437,7 +452,7 @@ function Extract({
                               </span>
                             )}
                           </span>
-                        </label>
+                        </button>
                       </li>
                     );
                   })}
