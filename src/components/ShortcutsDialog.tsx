@@ -21,6 +21,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "Shift", "Del"], label: "Clear history" },
   { keys: ["Alt", "1-4"], label: "Filter: all, text, images, files" },
   { keys: ["Ctrl", "T"], label: "Tasks" },
+  { keys: ["Ctrl", "N"], label: "Notes" },
   { keys: ["Ctrl", ","], label: "Settings" },
   { keys: ["Ctrl", "?"], label: "This help" },
   { keys: ["Esc"], label: "Close" },
@@ -41,6 +42,19 @@ const TASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "Del"], label: "Delete the task" },
   { keys: ["Ctrl", "T"], label: "Back to the clipboard search" },
   { keys: ["Esc"], label: "Cancel an edit, clear the text, close" },
+];
+
+const NOTE_SHORTCUTS: Shortcut[] = [
+  { keys: ["Ctrl", "Enter"], label: "New note" },
+  { keys: ["Up / Down"], label: "Pick a note" },
+  { keys: ["Tab"], label: "Write in the picked note" },
+  { keys: ["Ctrl", "G"], label: "Add tags to the note" },
+  { keys: ["Ctrl", "P"], label: "Pin or unpin" },
+  { keys: ["Ctrl", "Del"], label: "Delete the note (press twice)" },
+  { keys: ["#tag"], label: "In the filter: only notes with the tag" },
+  { keys: ["Ctrl", "E"], label: "In a note: back to the filter" },
+  { keys: ["Ctrl", "N"], label: "Back to the clipboard search" },
+  { keys: ["Esc"], label: "Clear the filter, close" },
 ];
 
 /** The bottom right trigger: opens the shortcuts help. */
@@ -90,9 +104,11 @@ function List({ title, items }: { title: string; items: Shortcut[] }) {
 
 /** The "Shortcuts" modal: every keyboard shortcut in one list. */
 export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChange, onCloseAutoFocus, view = "search" }: Props) {
-  const tasksFirst = view === "tasks";
   const clipboard = <List key="clipboard" title="Clipboard search" items={SHORTCUTS} />;
   const tasks = <List key="tasks" title="Tasks" items={TASK_SHORTCUTS} />;
+  const notes = <List key="notes" title="Notes" items={NOTE_SHORTCUTS} />;
+  // The view behind the dialog comes first.
+  const sections = view === "tasks" ? [tasks, clipboard, notes] : view === "notes" ? [notes, clipboard, tasks] : [clipboard, tasks, notes];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm gap-3 p-4" aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus}>
@@ -100,7 +116,7 @@ export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChang
           <DialogTitle className="text-base">Shortcuts</DialogTitle>
           <DialogDescription className="sr-only">Keyboard shortcuts</DialogDescription>
         </DialogHeader>
-        <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto">{tasksFirst ? [tasks, clipboard] : [clipboard, tasks]}</div>
+        <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto">{sections}</div>
       </DialogContent>
     </Dialog>
   );
