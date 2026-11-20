@@ -1202,15 +1202,21 @@ needs a real window, monitor or LLM has been run.
       window and after a copy; Settings shows "Pinned bar" on. Click again: it hides on blur again.
 - [ ] Dismiss hides the bar (same as Esc) and the clicks do not take the focus out of the search box.
 
-### Split with AI
+### AI split
 - [ ] Settings > Split with AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
-      OpenAI (`https://api.openai.com/v1`, a model name, an API key), select a text item with several
-      numbers, e-mails and a token, press Tab, then Split (or `Ctrl+Shift+S`). Items appear, each with
-      a label; clicking one puts exactly that text on the clipboard (paste it to check).
+      OpenAI (`https://api.openai.com/v1`, a model name, an API key). Select a text item with several
+      numbers, e-mails and a token, press Tab, click the "AI split" tab (or press `Ctrl+Shift+S`).
+      After a moment the items appear by themselves, each with a label; clicking one puts exactly that
+      text on the clipboard (paste it to check). Nothing has to be pressed to start it.
+- [ ] Close and reopen the bar, press Tab: the pane shows the tab you used last. Quit and start the app:
+      still the same tab.
+- [ ] Arrow quickly through twenty text items on the AI split tab and watch the server log: only the
+      items you stopped on are sent, never more than two requests at the same time.
+- [ ] Re-split asks again and replaces the result. A short text (under 20 characters) shows "0 items"
+      without a request.
 - [ ] The copied piece is not added to the history as a new item.
-- [ ] Wrong key: the message says the server refused the API key. Wrong URL or server off: it says the
-      server could not be reached. Neither message contains the text or the server's answer.
-- [ ] "Show text" goes back to the plain text; selecting another item and coming back shows the earlier
-      result without a new request.
+- [ ] Wrong key: the message says the server refused the API key, and it is not retried by itself
+      (Re-split retries). Server off or wrong URL: it says the server could not be reached. Neither
+      message contains the text or the server's answer.
+- [ ] Nothing is sent while the Preview tab is showing, and nothing is sent when a text is copied.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.
-

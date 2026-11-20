@@ -16,13 +16,17 @@ All notable changes to Clipdump are listed here. The format follows
   screen if the monitor got smaller. Monitors never dragged on keep the old placement.
 - Pin and Dismiss icons at the top right of the bar. Pin is the "Pinned bar" setting
   (the bar stays open on blur and after a copy); Dismiss hides the bar like Esc.
-- Split with AI: with an OpenAI compatible server configured in Settings (OpenAI,
-  Ollama, LM Studio, ...), the Split button in the text preview (or `Ctrl+Shift+S`)
-  asks the model to break a long text into the items worth copying (numbers, e-mails,
-  tokens, user names, passwords, ...). Each item copies with one click. Items the model
-  invents or alters are dropped: every value must occur in the text exactly. The text is
-  sent only when Split is pressed; the API key is stored in `settings.json` (not
-  encrypted) and never returned to the UI.
+- AI split: with an OpenAI compatible server configured in Settings (OpenAI, Ollama,
+  LM Studio, ...), the right pane has two tabs, Preview and AI split, and remembers the
+  one you used last. On the AI split tab a text item is split by the model by itself into
+  the items worth copying (numbers, e-mails, tokens, user names, passwords, ...), each
+  one click to copy; Re-split asks again if the first answer is not right. The calls run
+  in a background queue, two at a time, newest request first, so the app stays fast and
+  the server is not flooded. Items the model invents or alters are dropped: every value
+  must occur in the text exactly. A text is sent only when you look at it on the AI split
+  tab (never on capture) and results are kept in memory only. The API key is stored in
+  `settings.json` (not encrypted) and never returned to the UI. `Ctrl+Shift+S` opens the
+  right pane on that tab.
 
 ## [0.1.0] - Unreleased
 
