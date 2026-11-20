@@ -28,6 +28,8 @@ export type Action =
   | { type: "clear" }
   | { type: "filter"; filter: TypeFilter }
   | { type: "togglePreview" }
+  /** Ctrl+Shift+S: open the preview and split the selected text into copyable items. */
+  | { type: "split" }
   | { type: "toggleSettings" }
   | { type: "move"; delta: number }
   | { type: "escape" };
@@ -63,6 +65,9 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   }
   if (ctrl && !alt && !shift && d !== null && d >= 1 && d <= 9) {
     return { type: "copyNth", n: d };
+  }
+  if (ctrl && shift && !alt && (e.code === "KeyS" || e.key.toLowerCase() === "s")) {
+    return { type: "split" };
   }
   if (ctrl && !alt && !shift && (e.code === "KeyP" || e.key.toLowerCase() === "p")) {
     return { type: "togglePin" };

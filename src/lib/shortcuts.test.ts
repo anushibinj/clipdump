@@ -31,6 +31,14 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k("Enter", { shiftKey: true }))).toBeNull();
   });
 
+  it("Ctrl+Shift+S splits the selected text, Ctrl+S and Shift+S are left alone", () => {
+    expect(r(k("S", { ctrlKey: true, shiftKey: true }))).toEqual({ type: "split" });
+    expect(r(k("s", { ctrlKey: true, shiftKey: true }))).toEqual({ type: "split" });
+    expect(r(k("s", ctrl))).toBeNull();
+    expect(r(k("S", { shiftKey: true }))).toBeNull();
+    expect(resolveShortcut(k("S", { ctrlKey: true, shiftKey: true }), "settings")).toBeNull();
+  });
+
   it("Ctrl+1..9 copies the Nth row, Ctrl+0 does nothing", () => {
     for (let n = 1; n <= 9; n += 1) {
       expect(r(k(String(n), ctrl))).toEqual({ type: "copyNth", n });

@@ -1,7 +1,10 @@
-import { memo } from "react";
-import { FileText, Files, Image as ImageIcon } from "lucide-react";
+import { memo, type ReactNode } from "react";
+import { FileText, Files, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { FileList } from "@/components/FileList";
 import { ImagePreview } from "@/components/ImagePreview";
+import { SplitParts } from "@/components/SplitParts";
+import { Button } from "@/components/ui/button";
+import type { SplitControl } from "@/hooks/useSplit";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatBytes } from "@/lib/bytes";
 import type { PreviewDto, ResultDto } from "@/lib/ipc";
@@ -13,15 +16,57 @@ interface PreviewPaneProps {
   preview: PreviewDto | null;
   error: string | null;
   ocrHint: string;
+  /** Split state of the selected item (text items only). */
+  split: SplitControl;
+  /** A footer message for the bar. */
+  onError: (message: string) => void;
 }
 
-function Header({ icon: Icon, title, meta }: { icon: typeof FileText; title: string; meta: string }) {
+function Header({
+  icon: Icon,
+  title,
+  meta,
+  action,
+}: {
+  icon: typeof FileText;
+  title: string;
+  meta: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-2 border-b px-3 text-xs">
       <Icon className="size-3.5 text-muted-foreground" aria-hidden />
       <span className="font-medium">{title}</span>
       <span className="ml-auto text-muted-foreground tabular-nums">{meta}</span>
+      {action}
     </div>
+  );
+}
+
+/** The Split button of a text preview: asks the LLM, or goes back to the plain text. */
+function SplitButton({ split }: { split: SplitControl }) {
+  const { status } = split.state;
+  if (status === "done") {
+    return (
+      <Button type="button" variant="ghost" size="xs" tabIndex={-1} onClick={split.reset} onMouseDown={(e) => e.preventDefault()}>
+        Show text
+      </Button>
+    );
+  }
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="xs"
+      tabIndex={-1}
+      disabled={status === "loading"}
+      title="Split into copyable items with your LLM (Ctrl+Shift+S)"
+      onClick={split.run}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {status === "loading" ? <Loader2 className="animate-spin" aria-hidden /> : <Sparkles aria-hidden />}
+      {status === "loading" ? "Splitting..." : "Split"}
+    </Button>
   );
 }
 
@@ -30,7 +75,14 @@ function Header({ icon: Icon, title, meta }: { icon: typeof FileText; title: str
  * its OCR text, or the file list. Shows the previous item dimmed while the next
  * one loads, so arrowing through items does not flash empty.
  */
-export const PreviewPane = memo(function PreviewPane({ result, preview, error, ocrHint }: PreviewPaneProps) {
+export const PreviewPane = memo(function PreviewPane({
+  result,
+  preview,
+  error,
+  ocrHint,
+  split,
+  onError,
+}: PreviewPaneProps) {
   const stale = preview !== null && result !== null && preview.id !== result.id;
   return (
     <aside
@@ -55,7 +107,16 @@ export const PreviewPane = memo(function PreviewPane({ result, preview, error, o
                 icon={FileText}
                 title="Text"
                 meta={`${preview.totalChars.toLocaleString()} chars, ${formatBytes(preview.byteSize)}`}
+                action={stale ? null : <SplitButton split={split} />}
               />
+              {split.state.status === "error" && (
+                <p role="alert" className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-red-700 dark:text-destructive">
+                  {split.state.message}
+                </p>
+              )}
+              {split.state.status === "done" && !stale ? (
+                <SplitParts parts={split.state.parts} onError={onError} />
+              ) : (
               <ScrollArea className="min-h-0 flex-1">
                 <pre className="p-3 font-mono text-xs/5 whitespace-pre-wrap break-words select-text">
                   {preview.text}
@@ -66,6 +127,7 @@ export const PreviewPane = memo(function PreviewPane({ result, preview, error, o
                   </p>
                 )}
               </ScrollArea>
+              )}
             </>
           )}
           {preview.kind === "image" && (

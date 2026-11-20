@@ -13,6 +13,7 @@ const HINTS: Hint[] = [
   { keys: ["↑", "↓"], label: "move" },
   { keys: ["Tab"], label: "preview" },
   { keys: ["Ctrl", "P"], label: "pin" },
+  { keys: ["Ctrl", "Shift", "S"], label: "split", optional: true },
   { keys: ["Ctrl", "Del"], label: "delete", optional: true },
   { keys: ["Ctrl", ","], label: "settings", optional: true },
   { keys: ["Esc"], label: "close" },
