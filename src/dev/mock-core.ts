@@ -392,7 +392,113 @@ const control = {
   llmError: null as string | null,
   /** How long a background estimate takes, in ms. */
   estimateDelayMs: 300,
+  /** Every note command rejects with this message when set. */
+  notesError: null as string | null,
 };
+
+// ---------------------------------------------------------------------------
+// Notes (the same rules as src-tauri/src/notes.rs)
+// ---------------------------------------------------------------------------
+
+interface MockNote {
+  id: number;
+  title: string;
+  body: string;
+  pinned: boolean;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+function seedNotes(): MockNote[] {
+  const n = (id: number, title: string, body: string, tags: string[], agoH: number, pinned = false): MockNote => ({
+    id,
+    title,
+    body,
+    pinned,
+    tags,
+    createdAt: NOW - (agoH + 10) * HOUR,
+    updatedAt: NOW - agoH * HOUR,
+  });
+  return [
+    n(1, "Release checklist", "1. Bump the version\n2. Update the changelog\n3. Tag and push", ["work", "release"], 2, true),
+    n(2, "", "Ask about the staging bucket quota before Friday", ["work"], 6),
+    n(3, "Wifi at the flat", "Network: flat-5g\nAsk the landlord for the guest password", ["home"], 30),
+    n(4, "Book ideas", "The Pragmatic Programmer\nDesigning Data-Intensive Applications", ["reading"], 90, true),
+    n(5, "", "Random thought: a calmer way to show hidden tasks", [], 200),
+  ];
+}
+let notes: MockNote[] = seedNotes();
+let nextNoteId = 100;
+
+const NOTE_TITLE_MAX = 120;
+const NOTE_BODY_MAX = 20_000;
+
+function noteTags(raw: unknown): string[] {
+  const out: string[] = [];
+  for (const t of (Array.isArray(raw) ? raw : []) as string[]) {
+    const tag = String(t).trim().replace(/^#+/, "").split(/\s+/).filter(Boolean).join("-").toLowerCase();
+    if (!tag || out.includes(tag)) continue;
+    if (Array.from(tag).length > 32) throw "a tag is too long";
+    out.push(tag);
+  }
+  if (out.length > 10) throw "too many tags on this note";
+  return out;
+}
+
+function noteTitle(raw: unknown): string {
+  const title = String(raw ?? "").trim();
+  if (Array.from(title).length > NOTE_TITLE_MAX) throw "the title is too long";
+  return title;
+}
+
+function noteBody(raw: unknown): string {
+  const body = String(raw ?? "").trimEnd();
+  if (Array.from(body).length > NOTE_BODY_MAX) throw "the note is too long";
+  return body;
+}
+
+function runNote(cmd: string, args: Record<string, unknown>): unknown {
+  switch (cmd) {
+    case "list_notes":
+      return notes.map((n) => ({ ...n, tags: [...n.tags] }));
+    case "add_note": {
+      if (notes.length >= 1000) throw "too many notes, delete some first";
+      const now = Date.now();
+      const n: MockNote = {
+        id: nextNoteId++,
+        title: noteTitle(args.title),
+        body: noteBody(args.body),
+        pinned: false,
+        tags: noteTags(args.tags),
+        createdAt: now,
+        updatedAt: now,
+      };
+      notes.push(n);
+      return { ...n, tags: [...n.tags] };
+    }
+    case "update_note": {
+      const n = notes.find((x) => x.id === Number(args.id));
+      if (!n) throw "note not found";
+      const patch = (args.patch ?? {}) as Partial<MockNote>;
+      const title = patch.title === undefined ? undefined : noteTitle(patch.title);
+      const body = patch.body === undefined ? undefined : noteBody(patch.body);
+      const tags = patch.tags === undefined ? undefined : noteTags(patch.tags);
+      if (title !== undefined) n.title = title;
+      if (body !== undefined) n.body = body;
+      if (tags !== undefined) n.tags = tags;
+      if (patch.pinned !== undefined) n.pinned = patch.pinned;
+      n.updatedAt = Date.now();
+      return { ...n, tags: [...n.tags] };
+    }
+    case "delete_note": {
+      const before = notes.length;
+      notes = notes.filter((n) => n.id !== Number(args.id));
+      return notes.length !== before;
+    }
+  }
+  throw `${cmd} not allowed`;
+}
 
 // ---------------------------------------------------------------------------
 // Search
@@ -687,6 +793,12 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "get_clips":
       if (control.tasksError) throw control.tasksError;
       return runTask(cmd, args);
+    case "list_notes":
+    case "add_note":
+    case "update_note":
+    case "delete_note":
+      if (control.notesError) throw control.notesError;
+      return runNote(cmd, args);
     case "copy_text":
       return null;
     case "start_drag":
@@ -756,6 +868,9 @@ const hooks = {
     control.estimateDelayMs = 300;
     tasks = seedTasks();
     nextTaskId = 100;
+    control.notesError = null;
+    notes = seedNotes();
+    nextNoteId = 100;
     load(200);
     changed();
   },
@@ -764,6 +879,11 @@ const hooks = {
     tasks = list.map((t) => ({ ...t }));
   },
   tasks: () => tasks,
+  /** Replace the notes (an empty array for a fresh start). */
+  setNotes(list: MockNote[]) {
+    notes = list.map((n) => ({ ...n, tags: [...n.tags] }));
+  },
+  notes: () => notes,
   /** Add one text item on top, like a new clipboard capture. */
   capture(text: string) {
     const id = nextId++;

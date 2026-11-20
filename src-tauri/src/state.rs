@@ -67,6 +67,8 @@ pub struct AppState {
     /// Ids of new tasks waiting for the background estimator (`commands::task_ai`). Empty
     /// until `start_estimator` runs.
     pub task_estimates: OnceLock<std::sync::mpsc::Sender<u64>>,
+    /// The notes of the Notes view (`notes.rs`); same start and failure rules as `tasks`.
+    pub notes: OnceLock<Arc<crate::notes::NoteStore>>,
 }
 
 /// Is pinned-bar mode on? Relaxed is enough: it is an independent flag.

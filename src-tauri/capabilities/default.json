@@ -35,6 +35,10 @@
     "allow-extract-tasks",
     "allow-review-stale-tasks",
     "allow-get-clips",
+    "allow-list-notes",
+    "allow-add-note",
+    "allow-update-note",
+    "allow-delete-note",
     "allow-perf-ack"
   ]
 }

@@ -16,7 +16,7 @@ export interface KeyInfo {
   keyCode?: number;
 }
 
-export type View = "search" | "settings" | "tasks";
+export type View = "search" | "settings" | "tasks" | "notes";
 
 export type Action =
   | { type: "copy"; paste: boolean }
@@ -35,6 +35,8 @@ export type Action =
   | { type: "toggleShortcuts" }
   /** Tab or Ctrl+T: between the clipboard search and the task list. */
   | { type: "toggleTasks" }
+  /** Ctrl+Shift+N: between the clipboard search and the notes. */
+  | { type: "toggleNotes" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -57,7 +59,9 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (meta) return null;
 
   // The task view peels its own layers with Esc (an edit, the typed text, then the bar).
-  if (e.key === "Escape" && !ctrl && !alt && !shift && view !== "tasks") return { type: "escape" };
+  if (e.key === "Escape" && !ctrl && !alt && !shift && view !== "tasks" && view !== "notes") {
+    return { type: "escape" };
+  }
   if (ctrl && !alt && !shift && (e.key === "," || e.code === "Comma")) {
     return { type: "toggleSettings" };
   }
@@ -68,11 +72,17 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && !alt && !shift && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
     return { type: "toggleTasks" };
   }
-  // Tab cycles the app modes: clipboard search <-> tasks. Settings keeps Tab for moving between its controls.
-  if (e.key === "Tab" && !ctrl && !alt && !shift && view !== "settings") {
+  // Tab cycles the app modes: clipboard search <-> tasks. Settings keeps Tab for moving between its
+  // controls, and the notes keep it for the editor's own fields.
+  if (e.key === "Tab" && !ctrl && !alt && !shift && view !== "settings" && view !== "notes") {
     return { type: "toggleTasks" };
   }
-  // The settings and task views have their own fields and keys: only Esc, Ctrl+, Ctrl+? and Ctrl+T act here.
+  // Ctrl+Shift+N, not Ctrl+N: in the task view Ctrl+N is "what next".
+  if (ctrl && shift && !alt && (e.code === "KeyN" || e.key.toLowerCase() === "n")) {
+    return { type: "toggleNotes" };
+  }
+  // The settings, task and notes views have their own fields and keys: only Esc, Ctrl+, Ctrl+?,
+  // Ctrl+T, Tab (tasks) and Ctrl+Shift+N act here.
   if (view !== "search") return null;
 
   const d = digit(e);

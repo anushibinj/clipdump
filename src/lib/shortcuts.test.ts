@@ -156,3 +156,19 @@ describe("moveIndex", () => {
     expect(moveIndex(0, -1, 1)).toBe(0);
   });
 });
+
+describe("Ctrl+Shift+N and the notes view", () => {
+  it("Ctrl+Shift+N toggles the notes from every view", () => {
+    for (const v of ["search", "tasks", "notes", "settings"] as const) {
+      expect(resolveShortcut(k("n", { ...ctrl, shiftKey: true }), v)).toEqual({ type: "toggleNotes" });
+    }
+  });
+  it("the notes view keeps its own Esc and keys", () => {
+    expect(resolveShortcut(k("Escape"), "notes")).toBeNull();
+    expect(resolveShortcut(k("Enter", ctrl), "notes")).toBeNull();
+    expect(resolveShortcut(k("p", ctrl), "notes")).toBeNull();
+    expect(resolveShortcut(k("Tab"), "notes")).toBeNull();
+    // Ctrl+N alone is not the notes key (it is "what next" in the task view).
+    expect(resolveShortcut(k("n", ctrl), "notes")).toBeNull();
+  });
+});
