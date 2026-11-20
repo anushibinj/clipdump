@@ -24,7 +24,13 @@ export function useSplit(itemId: number | null, enabled: boolean): SplitControl 
   const wanted = useRef<number | null>(null);
   wanted.current = enabled ? itemId : null;
 
+  // Finished splits kept in RAM, so hovering back to an item shows its pieces at once instead of
+  // flashing the skeleton while the backend is asked again.
+  const cache = useRef(new Map<number, SplitStatus>());
+
   const apply = useCallback((id: number, status: SplitStatus) => {
+    if (status.status === "done") cache.current.set(id, status);
+    else if (status.status === "error") cache.current.delete(id);
     if (wanted.current === id) setShown({ id, status });
   }, []);
 
@@ -70,6 +76,8 @@ export function useSplit(itemId: number | null, enabled: boolean): SplitControl 
     request(itemId, true);
   }, [itemId, request]);
 
-  const state: SplitView = shown !== null && shown.id === itemId ? shown.status : { status: "pending" };
+  const cached = itemId !== null ? cache.current.get(itemId) : undefined;
+  const state: SplitView =
+    shown !== null && shown.id === itemId ? shown.status : (cached ?? { status: "pending" });
   return { state, rerun };
 }
