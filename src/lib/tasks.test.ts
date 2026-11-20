@@ -25,6 +25,11 @@ function task(p: Partial<Task> = {}): Task {
     createdAt: NOW - 1000 * (100 - n),
     touchedAt: NOW - 1000 * (100 - n),
     doneAt: null,
+    size: null,
+    kind: null,
+    nextStep: "",
+    clipIds: [],
+    deferredUntil: null,
     ...p,
   };
 }

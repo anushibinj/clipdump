@@ -265,6 +265,10 @@ export function setSettings(settings: SettingsDto): Promise<SettingsDto> {
 // ---------------------------------------------------------------------------
 
 export type TaskStatus = "todo" | "doing" | "done";
+/** How long a task takes, as estimated by the LLM: about 15 minutes or less, up to an hour, longer. */
+export type TaskSize = "quick" | "short" | "long";
+/** What kind of work a task is: small and mechanical, needs a block of focus, or blocked on someone else. */
+export type TaskKind = "quick" | "deep" | "waiting";
 
 export interface Task {
   id: number;
@@ -279,6 +283,15 @@ export interface Task {
   touchedAt: number;
   /** Unix ms, set while the task is done. */
   doneAt: number | null;
+  /** The LLM's estimate, null until it has made one (or when no LLM server is set up). */
+  size: TaskSize | null;
+  kind: TaskKind | null;
+  /** A concrete first step suggested by the LLM. Empty when there is none. */
+  nextStep: string;
+  /** History ids of the clipboard items linked to this task. One may have left the history since. */
+  clipIds: number[];
+  /** Unix ms. Until then the task is not nagged about as gone quiet. */
+  deferredUntil: number | null;
 }
 
 /** The fields `updateTask` can change; a field left out stays as it is. */
@@ -287,6 +300,15 @@ export interface TaskPatch {
   note?: string;
   status?: TaskStatus;
   important?: boolean;
+  /** null clears the estimate. */
+  size?: TaskSize | null;
+  kind?: TaskKind | null;
+  /** "" clears the suggestion. */
+  nextStep?: string;
+  /** Replaces the linked items (20 at most). */
+  clipIds?: number[];
+  /** null clears the deferral. */
+  deferredUntil?: number | null;
 }
 
 /** Every task, in the order they were added. */
@@ -307,6 +329,118 @@ export function updateTask(id: number, patch: TaskPatch): Promise<Task> {
 /** Resolves to whether the task existed. */
 export function deleteTask(id: number): Promise<boolean> {
   return invoke<boolean>("delete_task", { id });
+}
+
+// ---------------------------------------------------------------------------
+// The task assistant (src-tauri/src/taskai.rs, commands/task_ai.rs). Every call below is one round
+// trip to the LLM server set up in Settings and rejects with a plain message (use `errorMessage`)
+// when there is none or it fails. They only suggest: nothing changes a task except `estimateTask`
+// and `suggestNextStep`, which keep their answer on it.
+// ---------------------------------------------------------------------------
+
+/** How much energy there is, which steers "what next" toward lighter or heavier tasks. */
+export type Energy = "low" | "normal" | "high";
+
+export interface TaskPick {
+  id: number;
+  /** One short sentence: why this one, now. */
+  reason: string;
+}
+
+export interface NextAction {
+  /** The first concrete step. Also kept on the task as `nextStep`. */
+  step: string;
+  /** The steps after it, for a big task. Empty for a small one. They become tasks only when accepted. */
+  subtasks: string[];
+}
+
+export interface TaskDigest {
+  summary: string;
+  /** Ids of open tasks, best first. */
+  order: number[];
+}
+
+export interface TaskLink {
+  taskId: number;
+  clipId: number;
+  reason: string;
+}
+
+export interface ExtractedTask {
+  title: string;
+  important: boolean;
+  /** The id of an open task that already says the same, else null. */
+  duplicateOf: number | null;
+}
+
+export interface ExtractResult {
+  /** The start of the text the tasks were taken from. */
+  source: string;
+  tasks: ExtractedTask[];
+}
+
+export interface StaleVerdict {
+  id: number;
+  verdict: "do" | "defer" | "drop";
+  reason: string;
+}
+
+/** A clipboard item linked to a task, enough to list it and copy it back. */
+export interface ClipRef {
+  id: number;
+  kind: ClipKind;
+  preview: string;
+  createdAt: number;
+}
+
+/** Estimate (or estimate again) a task now. Resolves to the task with its size and kind. */
+export function estimateTask(id: number): Promise<Task> {
+  return invoke<Task>("estimate_task", { id });
+}
+
+/** Queue estimates for the open tasks that have none. Resolves to how many; `onTasksUpdated` fires as each finishes. */
+export function estimateBacklog(): Promise<number> {
+  return invoke<number>("estimate_backlog");
+}
+
+/** "What should I do now?" Null when nothing is open. `minutes` null means not said. */
+export function pickNextTask(minutes: number | null, energy: Energy): Promise<TaskPick | null> {
+  return invoke<TaskPick | null>("pick_next_task", { minutes, energy });
+}
+
+/** A concrete first step for a task (kept on it) and, for a big one, subtasks. */
+export function suggestNextStep(id: number): Promise<NextAction> {
+  return invoke<NextAction>("suggest_next_step", { id });
+}
+
+/** A draft of where the task was left off, from what was copied since. Not saved: the caller decides. */
+export function draftResumeNote(id: number): Promise<string> {
+  return invoke<string>("draft_resume_note", { id });
+}
+
+/** The morning briefing or the week's recap. */
+export function taskDigest(kind: "morning" | "week"): Promise<TaskDigest> {
+  return invoke<TaskDigest>("task_digest", { kind });
+}
+
+/** Which recent clipboard items belong to which open task. */
+export function suggestTaskLinks(): Promise<TaskLink[]> {
+  return invoke<TaskLink[]>("suggest_task_links");
+}
+
+/** Action items in `text`; with no text, in the newest copied text. */
+export function extractTasks(text: string | null): Promise<ExtractResult> {
+  return invoke<ExtractResult>("extract_tasks", { text });
+}
+
+/** What to do about each of the quiet tasks: do it, defer it or drop it. */
+export function reviewStaleTasks(ids: number[]): Promise<StaleVerdict[]> {
+  return invoke<StaleVerdict[]>("review_stale_tasks", { ids });
+}
+
+/** The clipboard items still in the history among `ids`, in that order. No LLM involved. */
+export function getClips(ids: number[]): Promise<ClipRef[]> {
+  return invoke<ClipRef[]>("get_clips", { ids });
 }
 
 export function getStats(): Promise<StatsDto> {
@@ -351,6 +485,8 @@ export const EVENTS = {
   historyRecovered: "history:recovered",
   /** A split job started or finished: call `getSplit` again for the item on screen. */
   splitUpdated: "split:updated",
+  /** A task changed behind the UI's back (the background estimator finished one): call `listTasks` again. */
+  tasksUpdated: "tasks:updated",
 } as const;
 
 type Handler = () => void;
@@ -368,6 +504,7 @@ export const onSettingsOpen = (h: Handler) => on(EVENTS.settingsOpen, h);
 export const onSettingsChanged = (h: Handler) => on(EVENTS.settingsChanged, h);
 export const onHistoryRecovered = (h: Handler) => on(EVENTS.historyRecovered, h);
 export const onSplitUpdated = (h: Handler) => on(EVENTS.splitUpdated, h);
+export const onTasksUpdated = (h: Handler) => on(EVENTS.tasksUpdated, h);
 
 // ---------------------------------------------------------------------------
 // Thumbnails and images: the `clip` URI scheme
