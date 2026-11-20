@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { SplitParts } from "@/components/SplitParts";
 import { Button } from "@/components/ui/button";
 import type { SplitControl } from "@/hooks/useSplit";
@@ -16,6 +16,32 @@ function Note({ children }: { children: string }) {
   return <p className="p-4 text-xs text-muted-foreground">{children}</p>;
 }
 
+/** Placeholder rows while the LLM works on the text (or the text waits its turn in the queue). */
+function SplitSkeleton({ waiting }: { waiting: boolean }) {
+  return (
+    <div role="status" aria-live="polite" className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
+        <span className="relative flex size-2">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/50 motion-reduce:animate-none" />
+          <span className="relative inline-flex size-2 rounded-full bg-primary/70" />
+        </span>
+        {waiting ? "In the queue, splitting soon..." : "Splitting this text..."}
+      </div>
+      <div className="divide-y divide-border/60" aria-hidden>
+        {[56, 72, 44, 64].map((w, i) => (
+          <div key={i} className="space-y-1.5 px-3 py-2.5">
+            <div className="h-2 w-12 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            <div
+              className="h-3 animate-pulse rounded bg-muted motion-reduce:animate-none"
+              style={{ width: `${w}%`, animationDelay: `${i * 120}ms` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * The "AI split" tab: the copyable pieces of the selected text, made by the LLM without being asked
  * (see `useSplit`). The one manual control is Re-split, for when the first answer is not right.
@@ -26,14 +52,7 @@ export function SplitTab({ kind, split, onError }: SplitTabProps) {
 
   const { state } = split;
   const busy = state.status === "pending" || state.status === "queued" || state.status === "running";
-  if (busy) {
-    return (
-      <p className="flex items-center gap-2 p-4 text-xs text-muted-foreground" role="status">
-        <Loader2 className="size-3.5 animate-spin" aria-hidden />
-        {state.status === "queued" ? "Waiting for the LLM..." : "Splitting with the LLM..."}
-      </p>
-    );
-  }
+  if (busy) return <SplitSkeleton waiting={state.status === "queued"} />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
