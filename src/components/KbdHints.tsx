@@ -17,11 +17,21 @@ const HINTS: Hint[] = [
   { keys: ["Esc"], label: "close" },
 ];
 
-/** The footer line of shortcut hints. */
-export const KbdHints = memo(function KbdHints() {
+const TASK_HINTS: Hint[] = [
+  { keys: ["Enter"], label: "add or next step" },
+  { keys: ["Ctrl", "Enter"], label: "start or done" },
+  { keys: ["Ctrl", "I"], label: "important", optional: true },
+  { keys: ["Ctrl", "E"], label: "note", optional: true },
+  { keys: ["Ctrl", "T"], label: "search" },
+  { keys: ["Esc"], label: "close" },
+];
+
+/** The footer line of shortcut hints: the clipboard search's, or the task list's. */
+export const KbdHints = memo(function KbdHints({ tasks = false }: { tasks?: boolean }) {
+  const hints = tasks ? TASK_HINTS : HINTS;
   return (
     <ul className="@container flex w-full items-center gap-3.5 text-xs text-muted-foreground" aria-label="Keyboard shortcuts">
-      {HINTS.map((h) => (
+      {hints.map((h) => (
         <li
           key={h.label}
           className={h.optional ? "hidden items-center gap-1.5 @min-[560px]:flex" : "flex items-center gap-1.5"}
