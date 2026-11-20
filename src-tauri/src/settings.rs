@@ -32,8 +32,24 @@ pub const MAX_APP_NAME_CHARS: usize = 260;
 /// field by field (unknown fields are ignored, missing ones default).
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Most monitors whose bar position is remembered (the oldest entry goes first).
+pub const MAX_WINDOW_POSITIONS: usize = 32;
+/// Longest accepted LLM server URL, model name and API key (characters).
+pub const MAX_LLM_FIELD_CHARS: usize = 2048;
+
 const MIB: usize = 1024 * 1024;
 const GIB: u64 = 1024 * 1024 * 1024;
+
+/// Where the user dragged the bar on one monitor. `x` and `y` are LOGICAL pixels
+/// from the monitor's top left corner, so the spot survives a DPI change; the
+/// monitor is told apart by `monitor` (its OS name, or its geometry when it has
+/// none, see `window::monitor_key`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedPosition {
+    pub monitor: String,
+    pub x: i32,
+    pub y: i32,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -78,6 +94,19 @@ pub struct Settings {
     /// Start the app when the user logs in. Default true (the plan enables it
     /// on first run); after that the user's choice wins.
     pub start_at_login: bool,
+    /// The bar position the user chose, per monitor. Empty until the bar is
+    /// dragged; a monitor without an entry gets the default placement.
+    pub window_positions: Vec<SavedPosition>,
+    /// Base URL of an OpenAI compatible server (`https://api.openai.com/v1`,
+    /// `http://localhost:11434/v1` for Ollama). Empty means "Split" is not set up.
+    pub llm_base_url: String,
+    /// Model name sent in the request, for example `gpt-4o-mini` or `llama3.2`.
+    pub llm_model: String,
+    /// Bearer token for the server, empty for none (a local server needs none).
+    /// Kept in this file as plain text like every other setting (it is never
+    /// sent to the webview, see `SettingsDto`), so it is only as private as the
+    /// user's profile folder.
+    pub llm_api_key: String,
 }
 
 impl Default for Settings {
@@ -96,6 +125,10 @@ impl Default for Settings {
             pinned_bar: false,
             hotkey: crate::hotkey::DEFAULT_HOTKEY.to_owned(),
             start_at_login: true,
+            window_positions: Vec::new(),
+            llm_base_url: String::new(),
+            llm_model: String::new(),
+            llm_api_key: String::new(),
         }
     }
 }
@@ -182,6 +215,40 @@ pub fn tidy_ignored_apps(raw: &[String], strict: bool) -> Result<Vec<String>, St
     Ok(apps)
 }
 
+/// One entry per monitor (the last one wins), no empty names, at most
+/// [`MAX_WINDOW_POSITIONS`] (the oldest are dropped).
+pub fn tidy_positions(list: &mut Vec<SavedPosition>) {
+    let mut out: Vec<SavedPosition> = Vec::with_capacity(list.len());
+    for p in list.drain(..).filter(|p| !p.monitor.trim().is_empty()) {
+        out.retain(|q| q.monitor != p.monitor);
+        out.push(p);
+    }
+    if out.len() > MAX_WINDOW_POSITIONS {
+        out.drain(..out.len() - MAX_WINDOW_POSITIONS);
+    }
+    *list = out;
+}
+
+/// Remember `x`, `y` for `monitor`, replacing its earlier entry. True when the
+/// list changed.
+pub fn remember_position(list: &mut Vec<SavedPosition>, monitor: &str, x: i32, y: i32) -> bool {
+    if list.iter().any(|p| p.monitor == monitor && p.x == x && p.y == y) {
+        return false;
+    }
+    list.push(SavedPosition {
+        monitor: monitor.to_owned(),
+        x,
+        y,
+    });
+    let last = list.len() - 1;
+    // Replace in place: drop an older entry of the same monitor.
+    if let Some(i) = list[..last].iter().position(|p| p.monitor == monitor) {
+        list.remove(i);
+    }
+    tidy_positions(list);
+    true
+}
+
 /// One field of a JSON object: the value when present and of the right type,
 /// else `default` with a note in `issues`.
 fn field<T: serde::de::DeserializeOwned>(
@@ -225,6 +292,10 @@ impl Settings {
             pinned_bar: field(obj, "pinned_bar", d.pinned_bar, issues),
             hotkey: field(obj, "hotkey", d.hotkey, issues),
             start_at_login: field(obj, "start_at_login", d.start_at_login, issues),
+            window_positions: field(obj, "window_positions", d.window_positions, issues),
+            llm_base_url: field(obj, "llm_base_url", d.llm_base_url, issues),
+            llm_model: field(obj, "llm_model", d.llm_model, issues),
+            llm_api_key: field(obj, "llm_api_key", d.llm_api_key, issues),
         };
         s.sanitize(issues);
         Some(s)
@@ -250,6 +321,14 @@ impl Settings {
             self.max_image_bytes = d.max_image_bytes;
         }
         self.ignored_apps = tidy_ignored_apps(&self.ignored_apps, false).unwrap_or_default();
+        tidy_positions(&mut self.window_positions);
+        for text in [&mut self.llm_base_url, &mut self.llm_model, &mut self.llm_api_key] {
+            *text = text.trim().to_owned();
+            if text.chars().count() > MAX_LLM_FIELD_CHARS {
+                issues.push("an LLM setting is too long, cleared".to_owned());
+                text.clear();
+            }
+        }
         match crate::hotkey::Hotkey::parse(&self.hotkey) {
             // Store the canonical spelling ("ctrl+shift+space" -> "Ctrl+Shift+Space").
             Ok(hk) => self.hotkey = hk.to_string(),
@@ -326,6 +405,37 @@ mod tests {
         assert!(!s.pinned_bar, "pinned bar is opt in");
         assert_eq!(s.hotkey, "Ctrl+Shift+Space");
         assert!(s.start_at_login, "start at login is on by default (plan)");
+    }
+
+    #[test]
+    fn positions_are_kept_per_monitor_and_bounded() {
+        let mut l = Vec::new();
+        assert!(remember_position(&mut l, "A", 1, 2));
+        assert!(!remember_position(&mut l, "A", 1, 2), "no change, no save");
+        assert!(remember_position(&mut l, "B", 3, 4));
+        assert!(remember_position(&mut l, "A", 5, 6));
+        assert_eq!(l.len(), 2);
+        assert_eq!((l[1].monitor.as_str(), l[1].x, l[1].y), ("A", 5, 6));
+        for n in 0..40 {
+            remember_position(&mut l, &format!("m{n}"), n, n);
+        }
+        assert_eq!(l.len(), MAX_WINDOW_POSITIONS);
+        assert_eq!(l.last().unwrap().monitor, "m39");
+        let mut junk = vec![SavedPosition { monitor: "  ".into(), x: 0, y: 0 }];
+        tidy_positions(&mut junk);
+        assert!(junk.is_empty());
+    }
+
+    #[test]
+    fn saved_positions_round_trip_through_the_file_format() {
+        let s = Settings {
+            window_positions: vec![SavedPosition { monitor: "\\\\.\\DISPLAY2".into(), x: -40, y: 90 }],
+            ..Settings::default()
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        let mut issues = Vec::new();
+        assert_eq!(Settings::from_json_value(&v, &mut issues).unwrap(), s);
+        assert!(issues.is_empty());
     }
 
     #[test]
