@@ -1,5 +1,7 @@
 ; English strings of the Tauri NSIS installer, copied from tauri-bundler 2.10.5
-; (languages/English.nsh) with two changes:
+; (languages/English.nsh) with these changes (the first two are listed below, plus the
+; updateExisting string and the reworded olderOrUnknownVersionInstalled, used by the
+; patched installer/installer.nsi):
 ;   deleteAppData    "Delete the application data" became "Also delete clipboard history"
 ;   {{product_name}} became ${PRODUCTNAME} (this file is included as is, not templated)
 ; Wired in through bundle.windows.nsis.customLanguageFiles. Re-sync it with the
@@ -19,7 +21,8 @@ LangString failedToKillApp ${LANG_ENGLISH} "Failed to kill ${PRODUCTNAME}. Pleas
 LangString installingWebview2 ${LANG_ENGLISH} "Installing WebView2..."
 LangString newerVersionInstalled ${LANG_ENGLISH} "A newer version of ${PRODUCTNAME} is already installed! It is not recommended that you install an older version. If you really want to install this older version, it's better to uninstall the current version first. Select the operation you want to perform and click Next to continue."
 LangString older ${LANG_ENGLISH} "older"
-LangString olderOrUnknownVersionInstalled ${LANG_ENGLISH} "An $R4 version of ${PRODUCTNAME} is installed on your system. It's recommended that you uninstall the current version before installing. Select the operation you want to perform and click Next to continue."
+LangString olderOrUnknownVersionInstalled ${LANG_ENGLISH} "An $R4 version of ${PRODUCTNAME} is installed on your system. You can update it in place (your clipboard history and settings are kept) or uninstall it first. Select the operation you want to perform and click Next to continue."
+LangString updateExisting ${LANG_ENGLISH} "Update the existing installation (recommended)"
 LangString silentDowngrades ${LANG_ENGLISH} "Downgrades are disabled for this installer, can't proceed with the silent installer, please use the graphical interface installer instead.$\n"
 LangString unableToUninstall ${LANG_ENGLISH} "Unable to uninstall!"
 LangString uninstallApp ${LANG_ENGLISH} "Uninstall ${PRODUCTNAME}"
