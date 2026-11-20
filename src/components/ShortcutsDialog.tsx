@@ -14,7 +14,8 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "1-9"], label: "Copy the Nth result" },
   { keys: ["Up / Down"], label: "Move selection" },
   { keys: ["PgUp / PgDn"], label: "Move by a page" },
-  { keys: ["Tab"], label: "Toggle preview" },
+  { keys: ["Tab"], label: "Switch to tasks" },
+  { keys: ["Alt", "P"], label: "Toggle preview" },
   { keys: ["Ctrl", "P"], label: "Pin or unpin" },
   { keys: ["Ctrl", "Shift", "S"], label: "Split text" },
   { keys: ["Ctrl", "Del"], label: "Delete item" },
@@ -39,6 +40,7 @@ const TASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "L"], label: "Lock in on the task (focus mode)" },
   { keys: ["Ctrl", "P"], label: "Park a distraction while locked in" },
   { keys: ["Ctrl", "Del"], label: "Delete the task" },
+  { keys: ["Tab"], label: "Back to the clipboard search" },
   { keys: ["Ctrl", "T"], label: "Back to the clipboard search" },
   { keys: ["Esc"], label: "Cancel an edit, clear the text, close" },
 ];
