@@ -94,7 +94,12 @@ Reply with JSON only, no prose, in exactly this shape:\n\
 {\"items\":[{\"label\":\"<2 to 4 word name of what it is>\",\"value\":\"<the item>\"}]}\n\
 Rules:\n\
 - \"value\" must be copied character for character from the text. Never correct, reformat, shorten or invent anything.\n\
-- Leave out labels, field names and filler such as \"Password:\" or \"call me at\"; the value is only the item itself.\n\
+- Key-value pairs: when the text pairs a key (a field or variable name) with a value, in any notation such as \"key: value\", \
+\"key - value\", \"key = value\", \"key | value\", \"key => value\", a tab or a table row, emit TWO entries, the key first and then \
+its value, because the person will paste both into a form. Label the key entry \"<name> key\" and the value entry \"<name> value\", \
+for example {\"label\":\"Token key\",\"value\":\"ARTIFACTORY_TOKEN\"},{\"label\":\"Token value\",\"value\":\"kjhak...\"}. \
+Copy the key exactly as written, without the separator or surrounding quotes. A separator is never part of the key or the value.\n\
+- Apart from key-value pairs, leave out labels and filler such as \"Password:\" or \"call me at\"; the value is only the item itself.\n\
 - One entry per distinct item, in the order they appear in the text.\n\
 - If the text has nothing worth copying separately, reply {\"items\":[]}.";
 
@@ -318,6 +323,14 @@ mod tests {
             r["messages"][1],
             json!({ "role": "user", "content": "hello" })
         );
+    }
+
+    #[test]
+    fn the_prompt_asks_for_key_value_pairs_as_two_items() {
+        for sep in ["key: value", "key - value", "key | value"] {
+            assert!(SYSTEM_PROMPT.contains(sep), "missing {sep}");
+        }
+        assert!(SYSTEM_PROMPT.contains("TWO entries"));
     }
 
     #[test]
