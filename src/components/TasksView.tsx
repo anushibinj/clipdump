@@ -33,6 +33,8 @@ interface TasksViewProps {
   onDragHeader: (e: MouseEvent) => void;
   pinned: boolean;
   onTogglePinned: () => void;
+  /** Changes each time the bar is hidden: the hidden tasks fold away again (the view itself stays open). */
+  collapseSignal: number;
 }
 
 const LIST_ID = "task-list";
@@ -57,10 +59,12 @@ export function TasksView({
   onDragHeader,
   pinned,
   onTogglePinned,
+  collapseSignal,
 }: TasksViewProps) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<Mode>({ kind: "add" });
   const [showHidden, setShowHidden] = useState(false);
+  useEffect(() => setShowHidden(false), [collapseSignal]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const view = useMemo(
