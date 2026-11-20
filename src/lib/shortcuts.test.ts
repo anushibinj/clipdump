@@ -77,9 +77,18 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k("Delete"))).toBeNull();
   });
 
-  it("Tab toggles the preview, Shift+Tab does not", () => {
-    expect(r(k("Tab"))).toEqual({ type: "togglePreview" });
+  it("Tab switches to tasks, Shift+Tab does not", () => {
+    expect(r(k("Tab"))).toEqual({ type: "toggleTasks" });
     expect(r(k("Tab", { shiftKey: true }))).toBeNull();
+  });
+
+  it("Tab also leaves the task view", () => {
+    expect(resolveShortcut(k("Tab"), "tasks")).toEqual({ type: "toggleTasks" });
+  });
+
+  it("Alt+P toggles the preview", () => {
+    expect(r(k("p", { altKey: true, code: "KeyP" }))).toEqual({ type: "togglePreview" });
+    expect(r(k("p", { altKey: true, ctrlKey: true, code: "KeyP" }))).toBeNull();
   });
 
   it("arrows and pages move, Home and End stay with the input", () => {
