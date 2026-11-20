@@ -106,19 +106,51 @@ Copy the key exactly as written, without the separator or surrounding quotes. A 
 /// The chat completion request body. Deterministic (`temperature` 0) because the
 /// same text should always split the same way.
 pub fn build_request(model: &str, text: &str) -> Value {
+    build_chat(model, SYSTEM_PROMPT, text, 0.0)
+}
+
+/// A chat completion request with any system prompt. `temperature` 0 is sent as the integer
+/// 0 (what the split request always sent); anything else as a float.
+pub fn build_chat(model: &str, system: &str, user: &str, temperature: f64) -> Value {
+    let temperature = if temperature == 0.0 {
+        json!(0)
+    } else {
+        json!(temperature)
+    };
     json!({
         "model": model,
-        "temperature": 0,
+        "temperature": temperature,
         "messages": [
-            { "role": "system", "content": SYSTEM_PROMPT },
-            { "role": "user", "content": text },
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
         ],
     })
 }
 
+/// One chat round trip with the configured server: the reply text of the first choice.
+/// The task assistant (`taskai.rs`) uses this; every prompt there asks for JSON and
+/// validates what comes back, like [`parse_parts`] does for Split.
+pub fn complete(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    system: &str,
+    user: &str,
+    temperature: f64,
+) -> Result<String, String> {
+    let url = endpoint(&cfg.base_url)?;
+    let bearer = Some(cfg.api_key.as_str()).filter(|k| !k.is_empty());
+    let body = http.post_json(&url, bearer, &build_chat(&cfg.model, system, user, temperature))?;
+    reply_text(&body)
+}
+
 /// The part of `text` that is sent: at most [`MAX_INPUT_CHARS`] characters.
 fn clip(text: &str) -> &str {
-    match text.char_indices().nth(MAX_INPUT_CHARS) {
+    clip_to(text, MAX_INPUT_CHARS)
+}
+
+/// The first `max` characters of `text` (the whole text when it is shorter).
+pub fn clip_to(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
         Some((i, _)) => &text[..i],
         None => text,
     }
@@ -139,7 +171,7 @@ fn reply_text(body: &str) -> Result<String, String> {
 
 /// The JSON object inside a model reply: models wrap it in a code fence or add a
 /// sentence around it even when told not to, so take the outermost `{ ... }`.
-fn json_object(reply: &str) -> Option<&str> {
+pub fn json_object(reply: &str) -> Option<&str> {
     let start = reply.find('{')?;
     let end = reply.rfind('}')?;
     (end > start).then(|| &reply[start..=end])
@@ -323,6 +355,45 @@ mod tests {
             r["messages"][1],
             json!({ "role": "user", "content": "hello" })
         );
+    }
+
+    #[test]
+    fn complete_sends_the_given_prompt_and_returns_the_reply_text() {
+        let http = Fake::answering("hello back");
+        let cfg = LlmConfig {
+            api_key: "k".into(),
+            ..cfg()
+        };
+        let got = complete(&cfg, &http, "be brief", "hi", 0.3).unwrap();
+        assert_eq!(got, "hello back");
+        let seen = http.seen.borrow();
+        let (url, bearer, body) = &seen[0];
+        assert_eq!(url, "http://localhost:11434/v1/chat/completions");
+        assert_eq!(bearer.as_deref(), Some("k"));
+        assert_eq!(body["temperature"], 0.3);
+        assert_eq!(body["messages"][0]["content"], "be brief");
+        assert_eq!(body["messages"][1]["content"], "hi");
+    }
+
+    #[test]
+    fn complete_reports_a_bad_url_or_server_without_quoting_anything() {
+        let bad = LlmConfig {
+            base_url: "nope".into(),
+            ..cfg()
+        };
+        assert!(complete(&bad, &Fake::answering("x"), "s", "u", 0.0).is_err());
+        let down = Fake {
+            reply: Err("could not reach the LLM server (is it running, is the URL right?)".into()),
+            seen: RefCell::default(),
+        };
+        let e = complete(&cfg(), &down, "s", "secret task text", 0.0).unwrap_err();
+        assert!(!e.contains("secret"));
+    }
+
+    #[test]
+    fn clip_to_counts_characters() {
+        assert_eq!(clip_to("héllo", 2), "hé");
+        assert_eq!(clip_to("ab", 5), "ab");
     }
 
     #[test]
