@@ -36,6 +36,8 @@ const TASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "E"], label: "Note: where you left off" },
   { keys: ["F2"], label: "Edit the title" },
   { keys: ["Ctrl", "H"], label: "Show or hide the hidden tasks" },
+  { keys: ["Ctrl", "L"], label: "Lock in on the task (focus mode)" },
+  { keys: ["Ctrl", "P"], label: "Park a distraction while locked in" },
   { keys: ["Ctrl", "Del"], label: "Delete the task" },
   { keys: ["Ctrl", "T"], label: "Back to the clipboard search" },
   { keys: ["Esc"], label: "Cancel an edit, clear the text, close" },
