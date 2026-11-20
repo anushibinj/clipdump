@@ -217,13 +217,29 @@ export function clearHistory(): Promise<number> {
   return invoke<number>("clear_history");
 }
 
+/** Where the split of one text item stands (`requestSplit`, `getSplit`). */
+export type SplitStatus =
+  /** Never asked for. */
+  | { status: "none" }
+  /** Waiting in the queue (two LLM calls run at a time). */
+  | { status: "queued" }
+  | { status: "running" }
+  | { status: "done"; parts: SplitPart[] }
+  | { status: "error"; message: string };
+
 /**
- * Ask the configured LLM server to break a text item into copyable pieces. Takes seconds; rejects
- * with a plain message (use `errorMessage`) when Split is not set up or the server fails. Every
- * returned value is an exact substring of the item.
+ * Ask for a text item to be split into copyable pieces by the configured LLM server, and get where
+ * it stands. The work happens in a backend queue; `onSplitUpdated` fires when it moves. Asking
+ * again for a finished item returns the stored result; `force` runs it again (re-split). Rejects
+ * with a plain message when Split is not set up or the item is not text.
  */
-export function splitItem(id: number): Promise<SplitPart[]> {
-  return invoke<SplitPart[]>("split_item", { id });
+export function requestSplit(id: number, force = false): Promise<SplitStatus> {
+  return invoke<SplitStatus>("request_split", { id, force });
+}
+
+/** Where the split of an item stands, without starting one. */
+export function getSplit(id: number): Promise<SplitStatus> {
+  return invoke<SplitStatus>("get_split", { id });
 }
 
 /** Put one piece on the clipboard. The bar stays open and nothing is added to the history. */
@@ -284,6 +300,8 @@ export const EVENTS = {
   settingsChanged: "settings:changed",
   /** The history was moved aside at startup: call `getStats`, its `recovery` field has the sentence. */
   historyRecovered: "history:recovered",
+  /** A split job started or finished: call `getSplit` again for the item on screen. */
+  splitUpdated: "split:updated",
 } as const;
 
 type Handler = () => void;
@@ -300,6 +318,7 @@ export const onHistoryChanged = (h: Handler) => on(EVENTS.historyChanged, h);
 export const onSettingsOpen = (h: Handler) => on(EVENTS.settingsOpen, h);
 export const onSettingsChanged = (h: Handler) => on(EVENTS.settingsChanged, h);
 export const onHistoryRecovered = (h: Handler) => on(EVENTS.historyRecovered, h);
+export const onSplitUpdated = (h: Handler) => on(EVENTS.splitUpdated, h);
 
 // ---------------------------------------------------------------------------
 // Thumbnails and images: the `clip` URI scheme

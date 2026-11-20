@@ -67,7 +67,7 @@ const control = {
   loginItemError: false,
   /** `get_stats` reports the hotkey as not registered at startup. */
   hotkeyStartupError: null as string | null,
-  /** `split_item` rejects with this message when set. */
+  /** A split fails with this message when set. */
   splitError: null as string | null,
   /** Simulated LLM time for `split_item`, in ms. */
   splitDelayMs: 150,
@@ -224,6 +224,29 @@ function stats() {
   };
 }
 
+type MockSplit =
+  | { status: "queued" | "running" | "none" }
+  | { status: "done"; parts: { label: string; value: string }[] }
+  | { status: "error"; message: string };
+const splits = new Map<string, MockSplit>();
+const splitQueue: string[] = [];
+let splitsRunning = 0;
+
+function pumpSplits() {
+  while (splitsRunning < 2 && splitQueue.length > 0) {
+    const key = splitQueue.shift() as string;
+    splitsRunning += 1;
+    splits.set(key, { status: "running" });
+    emit("split:updated");
+    void splitText(key).then((parts) => {
+      splitsRunning -= 1;
+      splits.set(key, control.splitError ? { status: "error", message: control.splitError } : { status: "done", parts });
+      emit("split:updated");
+      pumpSplits();
+    });
+  }
+}
+
 /** A stand-in for the model: pick out e-mails, phone numbers, URLs and key=value tokens, exactly as written. */
 function splitText(text: string): Promise<{ label: string; value: string }[]> {
   const found: { label: string; value: string; at: number }[] = [];
@@ -315,12 +338,23 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       return null;
     case "perf_ack":
       return null; // recorded in `control.calls` like every command
-    case "split_item": {
+    case "request_split": {
       const row = find(Number(args.id));
       if (!settings.llmBaseUrl || !settings.llmModel) throw "set up an LLM server in Settings first";
       if (row.kind !== "text") throw "only text items can be split";
-      if (control.splitError) throw control.splitError;
-      return splitText(row.text);
+      const key = row.text;
+      const known = splits.get(key);
+      if (known && !args.force) return known;
+      if (known && (known.status === "queued" || known.status === "running")) return known;
+      // Two at a time, like the backend: the rest wait in the queue.
+      splits.set(key, { status: "queued" });
+      splitQueue.unshift(key);
+      pumpSplits();
+      return { status: "queued" };
+    }
+    case "get_split": {
+      const row = find(Number(args.id));
+      return splits.get(row.text) ?? { status: "none" };
     }
     case "copy_text":
       return null;
@@ -373,6 +407,8 @@ const hooks = {
   },
   reset() {
     settings = { ...DEFAULT_SETTINGS };
+    splits.clear();
+    splitQueue.length = 0;
     control.calls.length = 0;
     control.latencyMs = 0;
     control.delayByQuery = {};
