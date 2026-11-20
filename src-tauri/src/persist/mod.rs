@@ -116,6 +116,13 @@ pub enum WriteOp {
         text: Option<String>,
         status: OcrStatus,
     },
+    /// The pieces an LLM split the text with content `hash` into (JSON bytes, the
+    /// writer encrypts them). Ignored when no item has that hash any more.
+    SetSplit {
+        hash: [u8; 16],
+        json: Vec<u8>,
+        at: i64,
+    },
     /// Commit everything before this op, then report whether it all succeeded.
     Flush(Sender<bool>),
     /// Like `Flush`, then drain, checkpoint and exit the writer thread.
@@ -295,6 +302,13 @@ impl Persist {
             .transpose()
     }
 
+    /// Decrypted JSON of the split stored for the text with content `hash`.
+    pub fn load_split(&self, hash: &[u8; 16]) -> Result<Option<Vec<u8>>> {
+        db::load_split(&self.reader.lock().unwrap(), hash)?
+            .map(|enc| self.crypto.decrypt(&enc))
+            .transpose()
+    }
+
     /// Largest committed item id (0 when empty). Seeds the store's id counter.
     pub fn max_id(&self) -> Result<i64> {
         db::max_id(&self.reader.lock().unwrap())
@@ -445,16 +459,26 @@ impl Writer {
                 }
                 WriteOp::UpdateUsed { id, at } => db::update_used(&tx, id, at).map(|_| ()),
                 WriteOp::SetPinned { id, pinned } => db::set_pinned(&tx, id, pinned).map(|_| ()),
-                WriteOp::Delete { id } => db::delete_item(&tx, id).map(|r| {
-                    if let Some(r) = r {
-                        doom(&mut doomed, &r);
-                    }
-                }),
-                WriteOp::DeleteUnpinned => db::delete_unpinned(&tx).map(|v| {
-                    v.iter().for_each(|r| doom(&mut doomed, r));
-                }),
+                WriteOp::Delete { id } => db::delete_item(&tx, id)
+                    .map(|r| {
+                        if let Some(r) = r {
+                            doom(&mut doomed, &r);
+                        }
+                    })
+                    .and_then(|()| db::prune_splits(&tx)),
+                WriteOp::DeleteUnpinned => db::delete_unpinned(&tx)
+                    .map(|v| {
+                        v.iter().for_each(|r| doom(&mut doomed, r));
+                    })
+                    .and_then(|()| db::prune_splits(&tx)),
                 WriteOp::DeleteOlderThan { cutoff } => db::delete_older_than(&tx, cutoff)
-                    .map(|v| v.iter().for_each(|r| doom(&mut doomed, r))),
+                    .map(|v| v.iter().for_each(|r| doom(&mut doomed, r)))
+                    .and_then(|()| db::prune_splits(&tx)),
+                WriteOp::SetSplit { hash, json, at } => self
+                    .crypto
+                    .encrypt(&json)
+                    .and_then(|enc| db::set_split(&tx, &hash, &enc, at))
+                    .map(|_| ()),
                 WriteOp::SetOcr { id, text, status } => {
                     set_ocr(&tx, &self.crypto, id, text, status)
                 }
@@ -1125,5 +1149,39 @@ pub(crate) mod tests {
             0,
             "the WAL was folded into the database"
         );
+    }
+
+    #[test]
+    fn a_split_is_stored_encrypted_and_goes_with_its_item() {
+        let t = tempfile::tempdir().unwrap();
+        let p = open(t.path());
+        let item = text_item(1, "alpha beta");
+        let hash = item.hash;
+        p.submit(insert_op(item)).unwrap();
+        let json = br#"[{"label":"A","value":"canary-split-value"}]"#.to_vec();
+        p.submit(WriteOp::SetSplit {
+            hash,
+            json: json.clone(),
+            at: 5,
+        })
+        .unwrap();
+        // For a hash no item has: nothing is stored.
+        p.submit(WriteOp::SetSplit {
+            hash: [9; 16],
+            json: json.clone(),
+            at: 5,
+        })
+        .unwrap();
+        p.flush().unwrap();
+        assert_eq!(p.load_split(&hash).unwrap(), Some(json));
+        assert_eq!(p.load_split(&[9; 16]).unwrap(), None);
+        // On disk it is not readable.
+        let mut raw = std::fs::read(t.path().join("history.db")).unwrap();
+        raw.extend(std::fs::read(t.path().join("history.db-wal")).unwrap_or_default());
+        assert!(!String::from_utf8_lossy(&raw).contains("canary-split-value"));
+        // Deleting the item deletes its split.
+        p.submit(WriteOp::Delete { id: 1 }).unwrap();
+        p.flush().unwrap();
+        assert_eq!(p.load_split(&hash).unwrap(), None);
     }
 }

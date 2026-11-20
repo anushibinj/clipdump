@@ -114,9 +114,19 @@ CREATE INDEX idx_items_created ON items(created_at);
 CREATE INDEX idx_items_pinned ON items(pinned);
 ";
 
+/// Schema v2: the pieces an LLM split a text into, encrypted, one row per text
+/// (by its content hash). Rows exist only while an item with that hash does.
+const SCHEMA_V2: &str = "
+CREATE TABLE splits (
+  hash        BLOB PRIMARY KEY,   -- content hash of the text item
+  data_enc    BLOB NOT NULL,      -- encrypted JSON [{label,value}]
+  created_at  INTEGER NOT NULL    -- unix ms
+);
+";
+
 /// Ordered migrations. `PRAGMA user_version` is the number already applied, so
 /// to change the schema append a script here; never edit an old one.
-const MIGRATIONS: &[&str] = &[SCHEMA_V1];
+const MIGRATIONS: &[&str] = &[SCHEMA_V1, SCHEMA_V2];
 
 /// A full `items` row, with every sensitive column still encrypted.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -352,6 +362,37 @@ pub fn load_text(conn: &Connection, id: i64) -> Result<Option<Vec<u8>>> {
     }
 }
 
+/// Store (or replace) the encrypted split of the text with content `hash`, but only
+/// while an item with that hash exists: a split that finishes after its item was
+/// deleted must not leave the pieces (often passwords) behind.
+pub fn set_split(conn: &Connection, hash: &[u8; 16], data_enc: &[u8], at: i64) -> Result<bool> {
+    let n = conn.execute(
+        "INSERT OR REPLACE INTO splits (hash, data_enc, created_at)
+         SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM items WHERE hash = ?1)",
+        rusqlite::params![hash.as_slice(), data_enc, at],
+    )?;
+    Ok(n > 0)
+}
+
+/// The encrypted split of the text with content `hash`, if one was stored.
+pub fn load_split(conn: &Connection, hash: &[u8; 16]) -> Result<Option<Vec<u8>>> {
+    let mut stmt = conn.prepare_cached("SELECT data_enc FROM splits WHERE hash = ?1")?;
+    let mut rows = stmt.query([hash.as_slice()])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// Drop the splits whose item is gone (called after every delete).
+pub fn prune_splits(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "DELETE FROM splits WHERE hash NOT IN (SELECT hash FROM items)",
+        [],
+    )?;
+    Ok(())
+}
+
 /// Largest id in use, or 0 for an empty table. Seeds the store's id counter.
 pub fn max_id(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM items", [], |r| r.get(0))?)
@@ -540,7 +581,7 @@ pub(crate) mod tests {
         }
         let conn = open_writer(&path).unwrap();
         assert_eq!(load_all_meta(&conn, 1 << 20).unwrap().len(), 1);
-        assert_eq!(user_version(&conn), 1);
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
     }
 
     #[test]
