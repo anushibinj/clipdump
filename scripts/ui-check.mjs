@@ -357,25 +357,33 @@ async function keys(browser, url) {
   await reset();
   await page.keyboard.press("Control+,");
   await settle();
+  await page.getByRole("tab", { name: "Capture" }).click();
   await page.locator("#paused").click();
   await settle();
   check("the pause switch saves through set_settings", (await lastCall("set_settings"))?.args.settings.paused === true);
+  await page.getByRole("tab", { name: "History" }).click();
   await page.locator("#max-items").fill("500");
   await page.locator("#max-items").press("Enter");
   await settle();
   check("a number field commits on Enter", (await lastCall("set_settings"))?.args.settings.maxItems === 500);
+  await page.getByRole("tab", { name: "Capture" }).click();
   await page.locator("#max-text").fill("0");
   await page.locator("#max-text").blur();
   await settle();
   check("an invalid number falls back to the stored value", (await page.locator("#max-text").inputValue()) === "5");
-  check("every switch, the hotkey button and the data folder button are enabled", (await page.locator('button[role="switch"]:disabled').count()) === 0 && (await page.getByRole("button", { name: "Change" }).isEnabled()) && (await page.getByRole("button", { name: /Open/ }).isEnabled()));
+  await page.getByRole("tab", { name: "General" }).click();
+  check("every switch and the hotkey button are enabled", (await page.locator('button[role="switch"]:disabled').count()) === 0 && (await page.getByRole("button", { name: "Change" }).isEnabled()));
+  await page.getByRole("tab", { name: "Data" }).click();
+  check("the data folder button is enabled", await page.getByRole("button", { name: /Open/ }).isEnabled());
   check("no placeholder text about a later update remains", (await page.getByText("later update").count()) === 0 && (await page.getByText("Not available yet").count()) === 0);
+  await page.getByRole("tab", { name: "General" }).click();
   await page.locator("#autostart").click();
   await settle();
   check("Start at login saves startAtLogin", (await lastCall("set_settings"))?.args.settings.startAtLogin === false);
   await page.locator("#pinned-bar").click();
   await settle();
   check("Pinned bar saves pinnedBar", (await lastCall("set_settings"))?.args.settings.pinnedBar === true);
+  await page.getByRole("tab", { name: "Data" }).click();
   await page.getByRole("button", { name: /Open/ }).click();
   await settle();
   check("Open data folder calls open_data_folder", (await lastCall("open_data_folder")) !== undefined);
@@ -385,7 +393,8 @@ async function keys(browser, url) {
   check("a failed Open data folder shows the error", (await page.getByRole("alert").filter({ hasText: "could not open the file manager" }).count()) === 1);
 
   // hotkey recorder
-  check("the hotkey shows as key caps", (await page.getByTestId("hotkey-chord").innerText()).replace(/\s+/g, "") === "CtrlShiftSpace");
+  await page.getByRole("tab", { name: "General" }).click();
+    check("the hotkey shows as key caps", (await page.getByTestId("hotkey-chord").innerText()).replace(/\s+/g, "") === "CtrlShiftSpace");
   await page.getByRole("button", { name: "Change" }).click();
   check("Change starts recording", (await page.getByTestId("hotkey-recording").count()) === 1);
   await page.keyboard.press("Escape");
@@ -760,7 +769,7 @@ async function a11y(browser, url) {
     check("settings is a modal dialog named Settings", dlg.has && /^Settings$/i.test(dlg.name ?? "") && dlg.modal === "true", JSON.stringify(dlg));
     check("focus is inside the settings dialog", dlg.inside);
     check("every control in settings has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
-    check("settings has headings", (await page.getByRole("heading", { name: "Settings" }).count()) === 1 && (await page.getByRole("heading", { level: 3 }).count()) >= 4);
+    check("settings has headings", (await page.getByRole("heading", { name: "Settings" }).count()) === 1 && (await page.getByRole("tab").count()) === 5);
 
     const stops = [];
     for (let i = 0; i < 60; i += 1) {
@@ -783,7 +792,7 @@ async function a11y(browser, url) {
       if (stops.length && stops[0].id === st.id && stops.length > 3) break;
       stops.push(st);
     }
-    check("Tab reaches the settings controls", stops.length >= 10, `${stops.length} stops`);
+    check("Tab reaches the settings controls", stops.length >= 8, `${stops.length} stops`);
     const noRing = stops.filter((s) => !s.ring);
     check("every Tab stop in settings shows a focus ring", noRing.length === 0, noRing.map((s) => s.id).join(", "));
     check("Tab stays inside the card", stops.every((s) => s.inMain));
