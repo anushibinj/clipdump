@@ -23,6 +23,22 @@ export type TaskAction =
   /** Enter while editing. */
   | { type: "commitEdit" }
   | { type: "toggleHidden" }
+  /** Ctrl+N: ask the LLM what to do now. */
+  | { type: "pickNext" }
+  /** Ctrl+Q: only the quick wins. */
+  | { type: "toggleQuick" }
+  /** Ctrl+G: a concrete next step (and subtasks) for the selected task. */
+  | { type: "nextStep" }
+  /** Ctrl+R: draft "where I left off" from what was copied since. */
+  | { type: "draftNote" }
+  /** Ctrl+D: this morning's briefing; Ctrl+Shift+D: the week's recap. */
+  | { type: "digest"; period: "morning" | "week" }
+  /** Ctrl+L: which recent clipboard items belong to which task. */
+  | { type: "links" }
+  /** Ctrl+K: find tasks in a pasted or just copied text. */
+  | { type: "extract" }
+  /** Ctrl+B: set the selected task aside for a week. */
+  | { type: "defer" }
   | { type: "delete" }
   | { type: "move"; delta: number }
   /** Esc: leave an edit, else clear the input, else close the bar. */
@@ -58,7 +74,19 @@ export function resolveTaskKey(e: KeyInfo, state: TaskKeyState): TaskAction | nu
     if (letter("i")) return { type: "toggleImportant" };
     if (letter("e")) return { type: "editNote" };
     if (letter("h")) return { type: "toggleHidden" };
+    // The assistant's chords. Not while a title is being edited: the input then holds a title.
+    if (!state.editing) {
+      if (letter("n")) return { type: "pickNext" };
+      if (letter("q")) return { type: "toggleQuick" };
+      if (letter("g")) return { type: "nextStep" };
+      if (letter("r")) return { type: "draftNote" };
+      if (letter("d")) return { type: "digest", period: "morning" };
+      if (letter("l")) return { type: "links" };
+      if (letter("k")) return { type: "extract" };
+      if (letter("b")) return { type: "defer" };
+    }
   }
+  if (ctrl && shift && !alt && !state.editing && letter("d")) return { type: "digest", period: "week" };
   if (e.key === "F2" && !ctrl && !alt && !shift) return { type: "editTitle" };
   if (e.key === "Delete" && !alt && (ctrl || shift)) return { type: "delete" };
 

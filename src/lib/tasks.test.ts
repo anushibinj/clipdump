@@ -200,6 +200,26 @@ describe("resolveTaskKey", () => {
     expect(resolveTaskKey(key("PageUp"), empty)).toEqual({ type: "move", delta: -5 });
     expect(resolveTaskKey(key("Escape"), empty)).toEqual({ type: "escape" });
   });
+  it("maps the assistant's chords, and leaves them out while a title is edited", () => {
+    const chord = (k: string, extra: Partial<KeyInfo> = {}) =>
+      resolveTaskKey(key(k, { ctrlKey: true, ...extra }), empty);
+    expect(chord("n")).toEqual({ type: "pickNext" });
+    expect(chord("q")).toEqual({ type: "toggleQuick" });
+    expect(chord("g")).toEqual({ type: "nextStep" });
+    expect(chord("r")).toEqual({ type: "draftNote" });
+    expect(chord("d")).toEqual({ type: "digest", period: "morning" });
+    expect(chord("d", { shiftKey: true })).toEqual({ type: "digest", period: "week" });
+    expect(chord("l")).toEqual({ type: "links" });
+    expect(chord("k")).toEqual({ type: "extract" });
+    expect(chord("b")).toEqual({ type: "defer" });
+    for (const k of ["n", "q", "g", "r", "d", "l", "k", "b"]) {
+      expect(resolveTaskKey(key(k, { ctrlKey: true }), editing)).toBeNull();
+    }
+    expect(resolveTaskKey(key("d", { ctrlKey: true, shiftKey: true }), editing)).toBeNull();
+    // Plain letters are still typing, and Alt turns a chord into something else.
+    expect(resolveTaskKey(key("n"), empty)).toBeNull();
+    expect(chord("n", { altKey: true })).toBeNull();
+  });
   it("leaves typing, plain Delete and composition alone", () => {
     expect(resolveTaskKey(key("a"), empty)).toBeNull();
     expect(resolveTaskKey(key("Delete"), typed)).toBeNull();
