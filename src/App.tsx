@@ -34,6 +34,7 @@ import {
   onBarShown,
   onHistoryChanged,
   onHistoryRecovered,
+  onTasksUpdated,
   onSettingsChanged,
   onSettingsOpen,
   perfAck,
@@ -321,6 +322,8 @@ function App() {
         onSettingsChanged(() => loadSettings()),
         // The history was moved aside at startup; `get_stats` carries the sentence.
         onHistoryRecovered(() => loadStats()),
+        // The background estimator finished a task's effort estimate.
+        onTasksUpdated(() => refreshTasks()),
       );
     } catch {
       // No event bus (plain browser without the mock): the UI still works, it just never refreshes by itself.
