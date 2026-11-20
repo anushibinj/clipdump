@@ -444,6 +444,57 @@ export function getClips(ids: number[]): Promise<ClipRef[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Ask (src-tauri/src/ask.rs, commands/ask.rs)
+// ---------------------------------------------------------------------------
+
+export type AskSource = "note" | "task" | "clip";
+
+/** One excerpt that was sent to the model. */
+export interface AskHit {
+  /** The number the answer cites this excerpt by (`[2]`). Not its position in the list. */
+  n: number;
+  source: AskSource;
+  /** The note, task or history item id. */
+  id: number;
+  /** Unix ms. */
+  createdAt: number;
+  title: string;
+  /** Exactly the text the model saw. */
+  excerpt: string;
+  /** The verbatim quote that backs the answer; only on a cited hit. */
+  quote: string | null;
+  cited: boolean;
+}
+
+/** What was searched, so a wrong guess about the time or the words is visible. */
+export interface AskSearched {
+  /** `YYYY-MM-DD` both, or null when the question named no time. */
+  from: string | null;
+  to: string | null;
+  terms: string[];
+  sources: AskSource[];
+  /** Items looked through. */
+  scanned: number;
+}
+
+export interface AskAnswer {
+  /** False when nothing verified answers the question; `answer` then says so. */
+  found: boolean;
+  answer: string;
+  /** Every excerpt that was sent, the cited ones first. */
+  hits: AskHit[];
+  searched: AskSearched;
+}
+
+/**
+ * Answer a question from the notes, the tasks and the clipboard history with the LLM server set up
+ * in Settings. Two round trips; nothing but the question and a few excerpts leaves the machine.
+ */
+export function askEverything(question: string): Promise<AskAnswer> {
+  return invoke<AskAnswer>("ask_everything", { question });
+}
+
+// ---------------------------------------------------------------------------
 // Notes (src-tauri/src/notes.rs, commands/notes.rs)
 // ---------------------------------------------------------------------------
 
