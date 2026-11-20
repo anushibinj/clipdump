@@ -31,6 +31,8 @@ export type Action =
   /** Ctrl+Shift+S: open the preview and split the selected text into copyable items. */
   | { type: "split" }
   | { type: "toggleSettings" }
+  /** Ctrl+?: open or close the shortcuts help. */
+  | { type: "toggleShortcuts" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -55,6 +57,10 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (e.key === "Escape" && !ctrl && !alt && !shift) return { type: "escape" };
   if (ctrl && !alt && !shift && (e.key === "," || e.code === "Comma")) {
     return { type: "toggleSettings" };
+  }
+  // Ctrl+? (Ctrl+Shift+/ on a US layout). Matched by character or by the physical slash key.
+  if (ctrl && !alt && (e.key === "?" || (shift && e.code === "Slash"))) {
+    return { type: "toggleShortcuts" };
   }
   // The settings view has its own fields: only Esc and Ctrl+, act there.
   if (view === "settings") return null;

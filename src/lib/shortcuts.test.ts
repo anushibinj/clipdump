@@ -97,6 +97,13 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k(",", ctrl))).toEqual({ type: "toggleSettings" });
   });
 
+  it("Ctrl+? opens the shortcuts help, a plain ? is typing", () => {
+    expect(r(k("?", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
+    expect(r(k("/", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
+    expect(r(k("?", { shiftKey: true, code: "Slash" }))).toBeNull();
+    expect(r(k("/", ctrl))).toBeNull();
+  });
+
   it("ignores IME composition and the meta key", () => {
     expect(r(k("Enter", { isComposing: true }))).toBeNull();
     expect(r(k("Enter", { keyCode: 229 }))).toBeNull();
