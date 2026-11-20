@@ -289,9 +289,21 @@ pub struct Store {
     settings: Arc<std::sync::RwLock<Settings>>,
     clock: Clock,
     load_time: Duration,
+    /// Called with the id and content hash of every NEW text item of at least
+    /// `llm::MIN_SPLIT_CHARS` bytes, after the store lock is released (the split
+    /// queue hangs here, see `splitter.rs`). Set once at startup.
+    new_text: std::sync::OnceLock<NewTextHook>,
 }
 
+/// See [`Store::set_new_text_hook`].
+pub type NewTextHook = Box<dyn Fn(u64, u128) + Send + Sync>;
+
 impl Store {
+    /// Register what runs for each new text item (at most once; later calls are ignored).
+    pub fn set_new_text_hook(&self, hook: NewTextHook) {
+        let _ = self.new_text.set(hook);
+    }
+
     /// Load the history and build the indexes.
     ///
     /// The startup integrity check (orphan rows and files) already ran inside
@@ -354,6 +366,7 @@ impl Store {
             settings,
             clock,
             load_time: Duration::ZERO,
+            new_text: std::sync::OnceLock::new(),
         };
         store.run_retention();
         Ok(Self {
@@ -474,6 +487,9 @@ impl Store {
             width: item.width,
             height: item.height,
         });
+        let text_job = (item.kind == ClipKind::Text
+            && item.byte_size >= crate::llm::MIN_SPLIT_CHARS as u64)
+            .then_some(item.hash);
         let (clip, op) = build_new(id, last_used_at, item);
         items.add(clip);
         self.queue(op);
@@ -481,6 +497,9 @@ impl Store {
         drop(items);
         if let Some(job) = ocr_job {
             self.ocr.enqueue(job);
+        }
+        if let (Some(hash), Some(hook)) = (text_job, self.new_text.get()) {
+            hook(id, hash);
         }
         self.notify();
         Inserted::New(id)
