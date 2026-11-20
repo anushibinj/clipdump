@@ -20,6 +20,11 @@ concrete first step and subtasks, `Ctrl+R` drafts where you left off from what y
 tasks, `Ctrl+K` finds the tasks in a pasted or just copied text, and a task that has gone quiet gets a
 "still relevant?" nudge. The assistant only suggests; nothing changes until you accept it.
 
+`Ctrl+/` opens **Ask**: type a question such as "what was that thing my manager told me 2 weeks ago?" and
+the same LLM server answers it from your notes, tasks and clipboard history. It works out the dates and
+the likely wording, finds the matching items on the machine, and shows an answer only when it can quote
+the item it came from; the quote is highlighted under the answer, so you can check it.
+
 Status: version 0.1.0, not released. The code is tested on Linux and cross-checked against the Windows
 APIs; it has not been run on Windows yet (`docs/manual-checks.md` lists what is left to verify).
 The plan is in `PLAN.md`.

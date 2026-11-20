@@ -1226,6 +1226,27 @@ needs a real window, monitor or LLM has been run.
 - [ ] A copy from an app on the ignore list is not captured and nothing is sent.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.
 
+### Ask (needs an LLM server set up in Settings)
+- [ ] `Ctrl+/` opens the Ask view with the question box focused; again (or the Search button, or the
+      sparkle button in the search row) returns. The bar reopens on Ask if that is where it was left.
+- [ ] Write a note "Priya (my manager) wants the Q4 report by Friday", copy a text with a date in it, and add
+      a task. Ask "what did my manager want?": the answer names the report and Friday, carries a `[1]`
+      chip, and the note shows below with the quote highlighted. Clicking the chip scrolls to the card.
+- [ ] Ask about a time ("what did I copy yesterday?", "what did I note last week?"): the line under the
+      answer shows the dates that were searched, and the answer uses items of that range.
+- [ ] Ask something that is nowhere in the data ("what is the capital of Mars?"): "I could not find that in your
+      notes, tasks or clipboard history", and "Looked at (n)" lists what was sent. No made up answer.
+- [ ] The server log shows exactly two requests per question (plan, answer), and none when the search finds
+      nothing to send. The second request holds only numbered excerpts, never a whole history.
+- [ ] A clip copied from an app on the ignore list (and a password manager copy) never appears in a
+      source card or in the request.
+- [ ] Esc clears the typed text, then the answer, then hides the bar. Enter while a question runs does not
+      start a second one. A second question replaces the first even if the first answers late.
+- [ ] Server off or wrong URL: a plain sentence, not the text and not the server's reply. No server set up:
+      "set up an LLM server in Settings first".
+- [ ] "Copy" on a clipboard source puts that item on the clipboard (paste it to check); "Open" on a note or
+      task opens that view.
+
 ### Notes
 - [ ] `Ctrl+Shift+N` in the bar opens the notes view with the filter focused; again it returns to the
       clipboard search. The first launch shows "No notes yet". The Notes button in the search view's filter

@@ -10,6 +10,23 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Added
 
+- Ask. `Ctrl+/` (or the sparkle button in the search view's filter row) opens a view where one question
+  is answered from your notes, tasks and clipboard history ("what was that thing my manager told me 2
+  weeks ago?"), with the LLM server already set up for AI split. No vector database or embeddings: the
+  history is small and in memory, so the work is in the steps around the model. (1) The model turns the
+  question and today's date into a date range, search words with synonyms and the sources to look in;
+  an unreadable plan falls back to the question's own words. (2) The app ranks the items itself: word
+  hits inside the range, items of the range by recency, and word hits outside it at a discount, so a
+  wrong date costs rank, not the answer. At most 25 excerpts of 600 characters are kept. (3) Only those
+  excerpts, numbered and dated, go to the model, which must say "not found" when they do not answer.
+  (4) The answer is shown only when it cites an excerpt and quotes it word for word (case and
+  whitespace aside); a claim whose quote is not in the excerpt is dropped, and an answer left with no
+  verified source becomes "I could not find that". Cited sources show the highlighted quote; the other
+  excerpts that were sent are listed under "Also sent to the model", and the line under the answer says
+  which dates, sources and how many items were searched. Nothing is sent until you press Enter, and
+  only the question and those excerpts go, only to your own server; clips copied from ignored apps are
+  never captured, so they are never searched. Esc clears the text, then the answer, then closes the bar.
+
 - Notes. `Ctrl+Shift+N` (or the Notes button in the search view's filter row) opens a notes view next to the
   clipboard search and the tasks. Keep as many notes as you like; every one has an optional title, free
   tags and a pin (pinned notes stay on top). No folders or categories, only tags. `Ctrl+Enter` makes a new
