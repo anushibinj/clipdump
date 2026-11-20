@@ -47,7 +47,7 @@ export const ShortcutsButton = memo(function ShortcutsButton({ onClick }: { onCl
     <button
       type="button"
       onClick={onClick}
-      className="ml-auto flex shrink-0 items-center gap-1.5 rounded-sm px-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      className="ml-auto flex min-h-6 shrink-0 items-center gap-1.5 rounded-sm px-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       Shortcuts
       <span className="flex gap-0.5">
