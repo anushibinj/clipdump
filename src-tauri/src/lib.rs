@@ -38,6 +38,9 @@ mod shutdown;
 // The queue of LLM splits, two at a time.
 mod splitter;
 mod state;
+// "Ask": a question answered from the notes, tasks and clipboard (plan, retrieve, answer, verify).
+mod ask;
+
 // What the LLM can suggest for the task list (estimates, next step, digest, ...).
 mod taskai;
 // The task list of the Tasks view, kept apart from the clipboard history.
