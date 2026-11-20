@@ -1054,6 +1054,41 @@ fn the_ignore_list_is_trimmed_and_deduplicated() {
 }
 
 #[test]
+fn the_llm_key_is_write_only_and_the_url_is_checked() {
+    let sfx = SettingsFx::new();
+    let env = sfx.env();
+    let mut dto = env.current();
+    assert!(!dto.llm_api_key_set);
+    dto.llm_base_url = " http://localhost:11434/v1 ".into();
+    dto.llm_model = " llama3.2 ".into();
+    dto.llm_api_key = Some(" sk-secret ".into());
+    let stored = env.apply(dto).unwrap();
+    assert_eq!(stored.llm_base_url, "http://localhost:11434/v1");
+    assert_eq!(stored.llm_model, "llama3.2");
+    assert!(stored.llm_api_key_set);
+    assert_eq!(stored.llm_api_key, None, "the key never goes back to the webview");
+    assert_eq!(sfx.fx.settings.read().unwrap().llm_api_key, "sk-secret");
+    let json = serde_json::to_string(&env.current()).unwrap();
+    assert!(!json.contains("sk-secret"));
+
+    // The webview sends the whole object back with a null key: the key stays.
+    let mut other = env.current();
+    other.max_items = 500;
+    assert!(env.apply(other).unwrap().llm_api_key_set);
+    // An empty string removes it.
+    let mut clear = env.current();
+    clear.llm_api_key = Some(String::new());
+    assert!(!env.apply(clear).unwrap().llm_api_key_set);
+
+    let mut bad = env.current();
+    bad.llm_base_url = "localhost:11434".into();
+    assert!(env.apply(bad).is_err());
+    let mut empty = env.current();
+    empty.llm_base_url = String::new();
+    assert!(env.apply(empty).is_ok(), "clearing the URL turns Split off");
+}
+
+#[test]
 fn settings_json_must_be_complete_and_camel_case() {
     let sfx = SettingsFx::new();
     let mut v = serde_json::to_value(sfx.env().current()).unwrap();
@@ -1412,7 +1447,7 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
             .collect(),
     );
 
-    assert_eq!(from_build.len(), 12);
+    assert_eq!(from_build.len(), 15);
     assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
     assert_eq!(
         from_build, from_cap,

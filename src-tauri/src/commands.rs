@@ -38,6 +38,7 @@ pub mod config;
 pub mod copy;
 pub mod folder;
 pub mod preview;
+pub mod split;
 #[cfg(test)]
 mod tests;
 
@@ -257,6 +258,36 @@ pub fn perf_ack(kind: AckKind, ms: Option<f64>) {
 #[tauri::command(async)]
 pub fn hide_bar(app: AppHandle) {
     window::hide(&app);
+}
+
+/// The user pressed the bar's drag handle: hand the mouse to the OS window drag
+/// and remember where the bar ends up (see `window::remember_position`).
+#[tauri::command(async)]
+pub fn start_drag(app: AppHandle) {
+    window::start_user_drag(&app);
+}
+
+/// Break the text item `id` into the pieces worth copying separately, with the
+/// user's own LLM server (see `llm.rs`). Runs on a pool thread: the request can
+/// take many seconds and must never block the window.
+#[tauri::command(async)]
+pub fn split_item(app: AppHandle, id: u64) -> Result<Vec<crate::llm::Part>, String> {
+    let store = store(&app)?;
+    let cfg = {
+        let state = app.state::<AppState>();
+        let s = state.settings.read().unwrap_or_else(|e| e.into_inner());
+        crate::llm::LlmConfig::from_settings(&s)
+    };
+    split::split_text_item(&store, cfg.as_ref(), &crate::llm::UreqHttp, id)
+}
+
+/// Put one piece of a split text on the clipboard. The bar stays open (the next
+/// piece is usually wanted too) and the item is not added to the history: the
+/// self-write guard swallows the echo like it does for `copy_item`.
+#[tauri::command(async)]
+pub fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    split::copy_snippet::<platform::Writer>(&state.self_write, mono_ms, text)
 }
 
 /// Open the history folder in the file manager. The path is the fixed data

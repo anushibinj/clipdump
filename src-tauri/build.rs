@@ -14,6 +14,9 @@ const COMMANDS: &[&str] = &[
     "set_settings",
     "get_stats",
     "hide_bar",
+    "start_drag",
+    "split_item",
+    "copy_text",
     "open_data_folder",
     "perf_ack",
 ];

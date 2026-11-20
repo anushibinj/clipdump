@@ -16,6 +16,9 @@
     "allow-set-settings",
     "allow-get-stats",
     "allow-hide-bar",
+    "allow-start-drag",
+    "allow-split-item",
+    "allow-copy-text",
     "allow-open-data-folder",
     "allow-perf-ack"
   ]

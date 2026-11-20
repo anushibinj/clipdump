@@ -8,6 +8,8 @@ mod events;
 mod hash;
 // The global hotkey chord: parse, validate, rebind (Phase 12).
 mod hotkey;
+// "Split": the user's OpenAI compatible server breaks a long text into copyable pieces.
+mod llm;
 // Ingest pipeline: worker pool, text, image and file items, hand-off to the store.
 mod ingest;
 // OCR worker and queue (Phase 7). Wired in `start_ingest`; the stats accessors
@@ -106,6 +108,9 @@ pub fn run() {
             commands::set_settings,
             commands::get_stats,
             commands::hide_bar,
+            commands::start_drag,
+            commands::split_item,
+            commands::copy_text,
             commands::open_data_folder,
             commands::perf_ack
         ])
@@ -123,6 +128,8 @@ pub fn run() {
                 }
                 // The bar is never destroyed, only hidden, so the next open is
                 // instant (Alt+F4, taskbar close, etc. all land here).
+                // Only a user drag is remembered (see `window::remember_position`).
+                tauri::WindowEvent::Moved(_) => window::remember_position(win.app_handle()),
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     window::hide(win.app_handle());
