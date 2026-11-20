@@ -651,6 +651,228 @@ pub fn suggest_links(
     parse_links(&complete(cfg, http, &system, &user, 0.0)?, &open, clips)
 }
 
+// ---------------------------------------------------------------------------
+// Tasks from a pasted text
+// ---------------------------------------------------------------------------
+
+/// Tasks pulled out of one text at most.
+pub const MAX_EXTRACTED: usize = 20;
+/// Texts shorter than this (trimmed, characters) are not worth a call.
+pub const MIN_EXTRACT_CHARS: usize = 15;
+
+/// A task found in a text. `duplicate_of` names an open task that already says the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extracted {
+    pub title: String,
+    pub important: bool,
+    pub duplicate_of: Option<u64>,
+}
+
+/// Lowercase alphanumeric words of a title, so "Call the bank!" and "call  the Bank" match.
+fn words(title: &str) -> Vec<String> {
+    title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Whether two titles say the same thing: the same words, or one inside the other when the
+/// shorter has real content (12 characters), or three quarters of their words shared. Decided
+/// here and not by the model, so a duplicate is never missed or invented by a bad answer.
+fn same_task(a: &str, b: &str) -> bool {
+    let (wa, wb) = (words(a), words(b));
+    if wa.is_empty() || wb.is_empty() {
+        return false;
+    }
+    if wa == wb {
+        return true;
+    }
+    let (ja, jb) = (wa.join(" "), wb.join(" "));
+    let (short, long) = if ja.len() <= jb.len() { (&ja, &jb) } else { (&jb, &ja) };
+    if short.chars().count() >= 12 && long.contains(short.as_str()) {
+        return true;
+    }
+    let mut shared = 0;
+    let mut pool = wb.clone();
+    for w in &wa {
+        if let Some(i) = pool.iter().position(|x| x == w) {
+            pool.swap_remove(i);
+            shared += 1;
+        }
+    }
+    let union = wa.len() + wb.len() - shared;
+    shared * 4 >= union * 3
+}
+
+/// The open task (waiting or in flight) that already says what `title` says, if any.
+pub fn find_duplicate(title: &str, tasks: &[Task]) -> Option<u64> {
+    tasks
+        .iter()
+        .filter(|t| t.status != Status::Done)
+        .find(|t| same_task(title, &t.title))
+        .map(|t| t.id)
+}
+
+const EXTRACT_PROMPT: &str = "You find the action items in a pasted text (an e-mail, a chat message, meeting notes) \
+for the person who pasted it.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"tasks\":[{\"title\":\"<short imperative>\",\"important\":<true|false>}]}\n\
+Rules:\n\
+- Only things the person has to do or follow up on. Not things other people will do, not background, not greetings.\n\
+- Each title is a short imperative phrase of at most 12 words, for example \"Send the signed lease to Dana\". Include a deadline in the title when the text names one.\n\
+- \"important\" is true only for something urgent or with a near deadline.\n\
+- One task per distinct action, in the order they appear. If the text has no action for the person, reply {\"tasks\":[]}.\n\
+- Do not invent actions, names or dates that are not in the text.";
+
+#[derive(Deserialize)]
+struct RawExtracted {
+    #[serde(default)]
+    tasks: Vec<RawTask>,
+}
+
+#[derive(Deserialize)]
+struct RawTask {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    important: bool,
+}
+
+/// The model's tasks as titles the store accepts: trimmed to one line and to the title limit,
+/// not empty, not repeated, at most [`MAX_EXTRACTED`]; each one marked when an open task in
+/// `existing` already says the same.
+pub fn parse_extracted(reply: &str, existing: &[Task]) -> Result<Vec<Extracted>, String> {
+    let raw: RawExtracted = parse(reply)?;
+    let mut out: Vec<Extracted> = Vec::new();
+    for t in raw.tasks {
+        let title = short_text(&t.title, MAX_TITLE_CHARS);
+        if title.is_empty() || out.iter().any(|o| same_task(&o.title, &title)) {
+            continue;
+        }
+        out.push(Extracted {
+            duplicate_of: find_duplicate(&title, existing),
+            title,
+            important: t.important,
+        });
+        if out.len() == MAX_EXTRACTED {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Pull the action items out of `text`. Too short a text needs no server.
+pub fn extract_tasks(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    text: &str,
+    existing: &[Task],
+) -> Result<Vec<Extracted>, String> {
+    if text.trim().chars().count() < MIN_EXTRACT_CHARS {
+        return Ok(Vec::new());
+    }
+    let user = format!("<data>\n{}\n</data>", clip_to(text.trim(), crate::llm::MAX_INPUT_CHARS));
+    let system = format!("{EXTRACT_PROMPT}\n{DATA_RULE}");
+    parse_extracted(&complete(cfg, http, &system, &user, 0.0)?, existing)
+}
+
+// ---------------------------------------------------------------------------
+// Tasks that have gone quiet
+// ---------------------------------------------------------------------------
+
+/// What to do about a task that has gone quiet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// Still matters: do it soon.
+    Do,
+    /// May matter later: set it aside for a while.
+    Defer,
+    /// Probably no longer relevant.
+    Drop,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaleVerdict {
+    pub id: u64,
+    pub verdict: Verdict,
+    pub reason: String,
+}
+
+/// Quiet tasks reviewed in one request, at most.
+pub const MAX_REVIEWED: usize = 10;
+
+const STALE_PROMPT: &str = "Each task below has gone quiet: nobody has touched it for a while. \
+For each one decide what the person should do about it.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"verdicts\":[{\"id\":<task id>,\"verdict\":\"do|defer|drop\",\"reason\":\"<a few words>\"}]}\n\
+do = it still matters and should be done soon. defer = it may matter later, set it aside for now. \
+drop = it probably no longer matters.\n\
+Judge from the wording, how long it has been untouched and whether it looks tied to a date or event that has passed. \
+When unsure, answer defer. Never answer drop for a task marked important.";
+
+#[derive(Deserialize)]
+struct RawVerdicts {
+    #[serde(default)]
+    verdicts: Vec<RawVerdict>,
+}
+
+#[derive(Deserialize)]
+struct RawVerdict {
+    id: u64,
+    verdict: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// The model's verdicts for the tasks in `asked`. An id that was not asked about, or a repeated
+/// one, is dropped; an unknown verdict word is dropped. A task marked important is never
+/// dropped on the model's say-so: that verdict becomes "defer".
+pub fn parse_verdicts(reply: &str, asked: &[&Task]) -> Result<Vec<StaleVerdict>, String> {
+    let raw: RawVerdicts = parse(reply)?;
+    let mut out: Vec<StaleVerdict> = Vec::new();
+    for v in raw.verdicts {
+        let Some(task) = asked.iter().find(|t| t.id == v.id) else {
+            continue;
+        };
+        if out.iter().any(|o| o.id == v.id) {
+            continue;
+        }
+        let verdict = match v.verdict.trim().to_lowercase().as_str() {
+            "do" => Verdict::Do,
+            "defer" => Verdict::Defer,
+            "drop" if task.important => Verdict::Defer,
+            "drop" => Verdict::Drop,
+            _ => continue,
+        };
+        out.push(StaleVerdict {
+            id: v.id,
+            verdict,
+            reason: short_text(&v.reason, MAX_REASON_CHARS),
+        });
+    }
+    Ok(out)
+}
+
+/// Ask what to do about each of `quiet` (at most [`MAX_REVIEWED`] are sent).
+pub fn review_stale(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    quiet: &[&Task],
+    now: i64,
+) -> Result<Vec<StaleVerdict>, String> {
+    let quiet = &quiet[..quiet.len().min(MAX_REVIEWED)];
+    if quiet.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut user = String::from("<data>\n");
+    for t in quiet {
+        user.push_str(&task_line(t, now));
+        user.push('\n');
+    }
+    user.push_str("</data>");
+    let system = format!("{STALE_PROMPT}\n{DATA_RULE}");
+    parse_verdicts(&complete(cfg, http, &system, &user, 0.0)?, quiet)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,5 +1243,111 @@ mod tests {
         let http = Fake::answering(r#"{"links":[]}"#);
         suggest_links(&cfg(), &http, &[task(1, "a")], &many, 0).unwrap();
         assert_eq!(http.user_text().matches("clip=").count(), MAX_LINK_CLIPS);
+    }
+    #[test]
+    fn the_same_task_is_found_by_words_not_by_the_exact_text() {
+        assert!(same_task("Call the bank!", "call  the Bank"));
+        assert!(same_task("Send the signed lease to Dana", "send the signed lease to Dana by Friday"));
+        assert!(same_task("renew passport online", "renew the passport online"));
+        assert!(!same_task("call the bank", "call the dentist"));
+        assert!(!same_task("pay rent", "pay rent for the garage and storage unit"));
+        assert!(!same_task("", "anything"));
+        assert!(!same_task("!!!", "???"));
+    }
+
+    #[test]
+    fn a_duplicate_is_an_open_task_only() {
+        let tasks = vec![open(1, "Call the bank", Status::Done), open(2, "call the dentist", Status::Todo)];
+        assert_eq!(find_duplicate("call the bank", &tasks), None);
+        let tasks = vec![open(1, "Call the bank", Status::Done), open(2, "call the bank", Status::Doing)];
+        assert_eq!(find_duplicate("Call the bank!", &tasks), Some(2));
+    }
+
+    #[test]
+    fn extracted_titles_are_clean_unique_bounded_and_marked_when_they_exist() {
+        let existing = vec![open(7, "Reply to Dana about the lease", Status::Todo)];
+        let reply = r#"{"tasks":[
+            {"title":"  Send the signed\nlease to Dana ","important":true},
+            {"title":"Reply to Dana about the lease"},
+            {"title":"send the signed lease to dana"},
+            {"title":"   "},
+            {"title":"Book the venue","important":false}]}"#;
+        let got = parse_extracted(reply, &existing).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Extracted { title: "Send the signed lease to Dana".into(), important: true, duplicate_of: None },
+                Extracted { title: "Reply to Dana about the lease".into(), important: false, duplicate_of: Some(7) },
+                Extracted { title: "Book the venue".into(), important: false, duplicate_of: None },
+            ]
+        );
+        let long = format!(r#"{{"tasks":[{{"title":"{}"}}]}}"#, "t".repeat(MAX_TITLE_CHARS + 40));
+        assert_eq!(parse_extracted(&long, &[]).unwrap()[0].title.chars().count(), MAX_TITLE_CHARS);
+        let many = format!(
+            r#"{{"tasks":[{}]}}"#,
+            (0..40).map(|i| format!(r#"{{"title":"unique task number {i}x{i}"}}"#)).collect::<Vec<_>>().join(",")
+        );
+        assert_eq!(parse_extracted(&many, &[]).unwrap().len(), MAX_EXTRACTED);
+        assert!(parse_extracted("nothing", &[]).is_err());
+    }
+
+    #[test]
+    fn extracting_sends_the_text_as_data_and_skips_a_tiny_one() {
+        let http = Fake::answering(r#"{"tasks":[{"title":"Send the report"}]}"#);
+        let got = extract_tasks(&cfg(), &http, "  Please send the report by Friday.  ", &[]).unwrap();
+        assert_eq!(got[0].title, "Send the report");
+        assert_eq!(http.user_text(), "<data>\nPlease send the report by Friday.\n</data>");
+        let down = Fake::answering("unused");
+        assert!(extract_tasks(&cfg(), &down, "ok thanks", &[]).unwrap().is_empty());
+        assert!(down.seen.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_extract_text_is_cut_to_the_split_limit() {
+        let http = Fake::answering(r#"{"tasks":[]}"#);
+        let long = "a ".repeat(crate::llm::MAX_INPUT_CHARS);
+        extract_tasks(&cfg(), &http, &long, &[]).unwrap();
+        assert!(http.user_text().chars().count() <= crate::llm::MAX_INPUT_CHARS + 20);
+    }
+
+    #[test]
+    fn verdicts_are_for_asked_tasks_and_an_important_one_is_never_dropped() {
+        let mut vital = open(2, "file the taxes", Status::Todo);
+        vital.important = true;
+        let a = open(1, "old idea", Status::Todo);
+        let asked = [&a, &vital];
+        let reply = r#"{"verdicts":[
+            {"id":1,"verdict":"Drop","reason":" no longer relevant "},
+            {"id":2,"verdict":"drop","reason":"stale"},
+            {"id":2,"verdict":"do","reason":"again"},
+            {"id":9,"verdict":"do","reason":"unknown"},
+            {"id":1,"verdict":"maybe","reason":"x"}]}"#;
+        let got = parse_verdicts(reply, &asked).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                StaleVerdict { id: 1, verdict: Verdict::Drop, reason: "no longer relevant".into() },
+                StaleVerdict { id: 2, verdict: Verdict::Defer, reason: "stale".into() },
+            ]
+        );
+        assert!(parse_verdicts("drop them all", &asked).is_err());
+    }
+
+    #[test]
+    fn the_stale_review_lists_the_quiet_tasks_and_caps_them() {
+        let http = Fake::answering(r#"{"verdicts":[{"id":1,"verdict":"do","reason":"still due"}]}"#);
+        let mut a = open(1, "call the bank", Status::Todo);
+        a.touched_at = 0;
+        let got = review_stale(&cfg(), &http, &[&a], 20 * DAY_MS).unwrap();
+        assert_eq!(got[0].verdict, Verdict::Do);
+        assert!(http.user_text().contains("id=1 | call the bank | waiting | size unknown | kind unknown | untouched 20 d"));
+
+        let down = Fake::answering("unused");
+        assert!(review_stale(&cfg(), &down, &[], 0).unwrap().is_empty());
+        let many: Vec<Task> = (0..30).map(|i| open(i, "t", Status::Todo)).collect();
+        let refs: Vec<&Task> = many.iter().collect();
+        let http = Fake::answering(r#"{"verdicts":[]}"#);
+        review_stale(&cfg(), &http, &refs, 0).unwrap();
+        assert_eq!(http.user_text().matches("id=").count(), MAX_REVIEWED);
     }
 }
