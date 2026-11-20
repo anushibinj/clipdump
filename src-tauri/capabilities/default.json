@@ -25,6 +25,10 @@
     "allow-add-task",
     "allow-update-task",
     "allow-delete-task",
+    "allow-list-notes",
+    "allow-add-note",
+    "allow-update-note",
+    "allow-delete-note",
     "allow-perf-ack"
   ]
 }

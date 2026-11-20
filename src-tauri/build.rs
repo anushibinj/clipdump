@@ -23,6 +23,10 @@ const COMMANDS: &[&str] = &[
     "add_task",
     "update_task",
     "delete_task",
+    "list_notes",
+    "add_note",
+    "update_note",
+    "delete_note",
     "perf_ack",
 ];
 

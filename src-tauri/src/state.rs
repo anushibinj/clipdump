@@ -64,6 +64,8 @@ pub struct AppState {
     /// The task list of the Tasks view (`tasks.rs`). Empty until the history's key
     /// is loaded in `setup`; the commands then answer "not available".
     pub tasks: OnceLock<Arc<crate::tasks::TaskStore>>,
+    /// The notes of the Notes view (`notes.rs`); same start and failure rules as `tasks`.
+    pub notes: OnceLock<Arc<crate::notes::NoteStore>>,
 }
 
 /// Is pinned-bar mode on? Relaxed is enough: it is an independent flag.
