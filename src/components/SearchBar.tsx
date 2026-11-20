@@ -1,5 +1,7 @@
 import { memo, useEffect, type RefObject } from "react";
+import { Pin, PinOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CommandInput } from "@/components/ui/command";
 
 interface SearchBarProps {
@@ -8,6 +10,11 @@ interface SearchBarProps {
   /** Total items in the history (not the number of results). */
   itemCount: number | null;
   paused: boolean;
+  /** The window is pinned: it stays open on blur and after a copy. */
+  pinned: boolean;
+  onTogglePinned: () => void;
+  /** Hide the bar (the same as Esc). */
+  onDismiss: () => void;
   /** Id of the selected row, for `aria-activedescendant` (rows are not cmdk items, see ResultList). */
   activeDescendant?: string;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -23,6 +30,9 @@ export const SearchBar = memo(function SearchBar({
   onQueryChange,
   itemCount,
   paused,
+  pinned,
+  onTogglePinned,
+  onDismiss,
   activeDescendant,
   inputRef,
 }: SearchBarProps) {
@@ -61,6 +71,36 @@ export const SearchBar = memo(function SearchBar({
               {itemCount} {itemCount === 1 ? "item" : "items"}
             </Badge>
           )}
+          {/* tabIndex -1 and no mousedown focus: typing and Tab (preview) stay with the input. */}
+          <div className="ml-1 flex items-center gap-0.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              tabIndex={-1}
+              aria-label={pinned ? "Unpin window" : "Pin window open"}
+              aria-pressed={pinned}
+              title={pinned ? "Unpin: hide when focus is lost" : "Pin: keep the window open"}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onTogglePinned}
+              className={pinned ? "text-foreground" : "text-muted-foreground"}
+            >
+              {pinned ? <Pin className="fill-current" aria-hidden /> : <PinOff aria-hidden />}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              tabIndex={-1}
+              aria-label="Dismiss"
+              title="Dismiss (Esc)"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onDismiss}
+              className="text-muted-foreground"
+            >
+              <X aria-hidden />
+            </Button>
+          </div>
         </div>
       }
     />

@@ -14,6 +14,7 @@ import { TypeFilter } from "@/components/TypeFilter";
 import { useKeyboard } from "@/hooks/useKeyboard";
 import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
+import { useSplit } from "@/hooks/useSplit";
 import {
   clearHistory,
   copyItem,
@@ -23,6 +24,7 @@ import {
   getStats,
   afterPaint,
   hideBar,
+  startDrag,
   onBarHidden,
   onBarShown,
   onHistoryChanged,
@@ -70,8 +72,11 @@ function App() {
   // notices take the footer first, then it comes back).
   const recovery = stats?.recovery && stats.recovery !== recoveryDismissed ? stats.recovery : null;
 
-  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery });
-  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery };
+  const split = useSplit(s.selectedId);
+  const runSplit = split.run;
+
+  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, runSplit });
+  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, runSplit };
 
   // ---- footer messages ----------------------------------------------------
 
@@ -211,6 +216,13 @@ function App() {
         case "togglePreview":
           setPreviewOpen((v) => !v);
           break;
+        case "split":
+          // Only text splits; the pieces show in the preview pane, so open it.
+          if (selected?.kind === "text") {
+            setPreviewOpen(true);
+            c.runSplit();
+          }
+          break;
         case "toggleSettings":
           disarm();
           setView((v) => (v === "settings" ? "search" : "settings"));
@@ -287,6 +299,25 @@ function App() {
     if (view === "search") inputRef.current?.focus();
     else mainRef.current?.focus();
   }, [view]);
+
+  // The window has no title bar: the search row and the filter row are the drag handle. A press on
+  // an input or a button keeps its own meaning.
+  const dragFromHeader = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("input, button, a")) return;
+    e.preventDefault();
+    startDrag().catch(() => {});
+  }, []);
+
+  const togglePinnedWindow = useCallback(() => {
+    const pinned = !latest.current.settings?.pinnedBar;
+    saveSettings({ pinnedBar: pinned }).then((err) => {
+      if (err) showNotice("error", err);
+    });
+  }, [saveSettings, showNotice]);
+
+  const dismiss = useCallback(() => {
+    hideBar().catch(() => {});
+  }, []);
 
   const changeTheme = useCallback((pref: ThemePref) => {
     setThemePref(pref);
@@ -366,17 +397,20 @@ function App() {
               onActivate={onActivate}
               onKeyDownCapture={onKeyDownCapture}
               header={
-                <>
+                <div onMouseDown={dragFromHeader}>
                   <SearchBar
                     inputRef={inputRef}
                     query={s.query}
                     onQueryChange={s.setQuery}
                     itemCount={stats?.items ?? null}
                     paused={settings?.paused ?? false}
+                    pinned={settings?.pinnedBar ?? false}
+                    onTogglePinned={togglePinnedWindow}
+                    onDismiss={dismiss}
                     activeDescendant={s.selectedId === null ? undefined : rowId(s.selectedId)}
                   />
                   <TypeFilter value={s.filter} onChange={s.setFilter} />
-                </>
+                </div>
               }
               empty={
                 s.ready ? (
@@ -390,6 +424,8 @@ function App() {
                     preview={preview.preview}
                     error={preview.error}
                     ocrHint={stats?.ocrHint ?? ""}
+                    split={split}
+                    onError={(m) => showNotice("error", m)}
                   />
                 ) : null
               }
