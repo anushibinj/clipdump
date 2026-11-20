@@ -35,6 +35,8 @@ interface TasksViewProps {
   onTogglePinned: () => void;
 }
 
+const LIST_ID = "task-list";
+
 const PLACEHOLDER = {
   add: "Add a task. End it with ! to mark it important",
   note: "Where did you leave off?",
@@ -60,7 +62,6 @@ export function TasksView({
   const [mode, setMode] = useState<Mode>({ kind: "add" });
   const [showHidden, setShowHidden] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const view = useMemo(
     () => buildTaskView(api.tasks, { showHidden, now: api.now }),
@@ -242,6 +243,10 @@ export function TasksView({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={PLACEHOLDER[mode.kind]}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={LIST_ID}
+            aria-autocomplete="none"
             aria-label={editing ? PLACEHOLDER[mode.kind] : "Add a task"}
             aria-activedescendant={selected === null ? undefined : taskRowId(selected)}
             maxLength={maxLength}
@@ -320,7 +325,7 @@ export function TasksView({
       </div>
 
       <div
-        ref={listRef}
+        id={LIST_ID}
         role="listbox"
         aria-label="Tasks"
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
