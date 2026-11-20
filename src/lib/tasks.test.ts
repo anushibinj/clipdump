@@ -220,6 +220,12 @@ describe("resolveTaskKey", () => {
     expect(resolveTaskKey(key("n"), empty)).toBeNull();
     expect(chord("n", { altKey: true })).toBeNull();
   });
+  it("Alt+Enter takes the assistant's suggestion, except while a title is edited", () => {
+    expect(resolveTaskKey(key("Enter", { altKey: true }), empty)).toEqual({ type: "panelPrimary" });
+    expect(resolveTaskKey(key("Enter", { altKey: true }), typed)).toEqual({ type: "panelPrimary" });
+    expect(resolveTaskKey(key("Enter", { altKey: true }), editing)).toBeNull();
+    expect(resolveTaskKey(key("Enter", { altKey: true, ctrlKey: true }), empty)).toBeNull();
+  });
   it("leaves typing, plain Delete and composition alone", () => {
     expect(resolveTaskKey(key("a"), empty)).toBeNull();
     expect(resolveTaskKey(key("Delete"), typed)).toBeNull();

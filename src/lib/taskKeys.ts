@@ -39,6 +39,8 @@ export type TaskAction =
   | { type: "extract" }
   /** Ctrl+B: set the selected task aside for a week. */
   | { type: "defer" }
+  /** Alt+Enter: take the main suggestion of the assistant's card (start the picked task, add the subtasks, ...). */
+  | { type: "panelPrimary" }
   | { type: "delete" }
   | { type: "move"; delta: number }
   /** Esc: leave an edit, else clear the input, else close the bar. */
@@ -61,6 +63,8 @@ export function resolveTaskKey(e: KeyInfo, state: TaskKeyState): TaskAction | nu
   const letter = (k: string) => e.code === `Key${k.toUpperCase()}` || e.key.toLowerCase() === k;
 
   if (e.key === "Escape" && !ctrl && !alt && !shift) return { type: "escape" };
+
+  if (e.key === "Enter" && alt && !ctrl && !shift) return state.editing ? null : { type: "panelPrimary" };
 
   if (e.key === "Enter" && !alt) {
     if (state.editing) return ctrl || shift ? null : { type: "commitEdit" };
