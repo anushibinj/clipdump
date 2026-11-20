@@ -1030,6 +1030,60 @@ async function a11y(browser, url) {
     await scan("search, clear confirmation");
     await page.keyboard.press("Escape");
 
+    // ---- tasks view: combobox and listbox like the search, names, contrast in every state ------------
+    await page.evaluate(() => window.__clipMock.reset());
+    await settle();
+    await page.keyboard.press("Control+t");
+    await settle(300);
+    const tAria = await page.evaluate(() => {
+      const i = document.querySelector('input[role="combobox"]');
+      const lb = document.querySelector('[aria-label="Tasks"][role="listbox"]');
+      const active = i?.getAttribute("aria-activedescendant");
+      const opt = active ? document.getElementById(active) : null;
+      const wrap = i?.parentElement;
+      return {
+        label: i?.getAttribute("aria-label"),
+        controls: i?.getAttribute("aria-controls"),
+        listboxId: lb?.id,
+        activeRole: opt?.getAttribute("role"),
+        activeSelected: opt?.getAttribute("aria-selected"),
+        options: lb ? lb.querySelectorAll('[role="option"]').length : 0,
+        unnamedOptions: lb ? [...lb.querySelectorAll('[role="option"]')].filter((o) => !o.innerText.trim()).length : -1,
+        focused: document.activeElement === i,
+        ring: wrap ? getComputedStyle(wrap).boxShadow !== "none" : false,
+      };
+    });
+    check("the task input is a named combobox that controls the task list", !!tAria.label && !!tAria.controls && tAria.controls === tAria.listboxId, JSON.stringify(tAria));
+    check("aria-activedescendant points at the selected task", tAria.activeRole === "option" && tAria.activeSelected === "true");
+    check("every task has a name", tAria.options > 0 && tAria.unnamedOptions === 0, JSON.stringify(tAria));
+    check("the task input has focus and shows a focus ring", tAria.focused && tAria.ring, JSON.stringify(tAria));
+    check("every control in the task view has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+    check("task sections are headings", (await page.getByRole("heading", { level: 3 }).count()) >= 2);
+    await scan("tasks, calm view");
+    await page.keyboard.press("Control+h");
+    await settle();
+    await scan("tasks, everything shown");
+    await page.keyboard.press("Control+h");
+    await page.keyboard.press("Control+e");
+    await settle();
+    await scan("tasks, editing a note");
+    await page.keyboard.press("Escape");
+    await page.keyboard.type("Plain task");
+    await page.keyboard.press("Enter");
+    await settle();
+    await scan("tasks, notice about a hidden new task");
+    await page.evaluate(() => window.__clipMock.setTasks([]));
+    await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+    await settle();
+    await scan("tasks, empty list");
+    await page.evaluate(() => (window.__clipMock.control.tasksError = "the tasks are not available"));
+    await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+    await settle();
+    await scan("tasks, unavailable");
+    await page.evaluate(() => (window.__clipMock.control.tasksError = null));
+    await page.keyboard.press("Control+t");
+    await settle();
+
     // ---- settings: dialog semantics, names, focus ring on every Tab stop --------------------------
     await page.evaluate(() => window.__clipMock.reset());
     await settle();
