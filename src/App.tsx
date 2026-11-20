@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ConfirmInline } from "@/components/ConfirmInline";
 import { EmptyState } from "@/components/EmptyState";
-import { KbdHints } from "@/components/KbdHints";
 import { Notice, type NoticeState } from "@/components/Notice";
 import { PreviewPane } from "@/components/PreviewPane";
 import { ResultList } from "@/components/ResultList";
 import { rowId } from "@/components/ResultItem";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
+import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TypeFilter } from "@/components/TypeFilter";
 import { useKeyboard } from "@/hooks/useKeyboard";
@@ -58,6 +58,7 @@ function App() {
   const [stats, setStats] = useState<StatsDto | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
   const [historyTick, setHistoryTick] = useState(0);
   // The sentence the user dismissed, so the recovery notice does not come back on the next open.
@@ -75,8 +76,8 @@ function App() {
   // notices take the footer first, then it comes back).
   const recovery = stats?.recovery && stats.recovery !== recoveryDismissed ? stats.recovery : null;
 
-  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery });
-  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery };
+  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, shortcutsOpen });
+  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, shortcutsOpen };
 
   // ---- footer messages ----------------------------------------------------
 
@@ -168,6 +169,11 @@ function App() {
     (a: Action) => {
       const c = latest.current;
       const selected = c.results.find((r) => r.id === c.selectedId) ?? null;
+      // The shortcuts modal is on top: it only answers to its own key and Esc.
+      if (c.shortcutsOpen && a.type !== "toggleShortcuts") {
+        if (a.type === "escape") setShortcutsOpen(false);
+        return;
+      }
       switch (a.type) {
         case "move":
           c.move(a.delta);
@@ -227,6 +233,9 @@ function App() {
           // Ctrl+Shift+S: the right pane, on its AI split tab.
           changeTab("split");
           setPreviewOpen(true);
+          break;
+        case "toggleShortcuts":
+          setShortcutsOpen((v) => !v);
           break;
         case "toggleSettings":
           disarm();
@@ -338,21 +347,19 @@ function App() {
   const split = useSplit(s.selectedId, paneOpen && rightTab === "split" && selected?.kind === "text");
   const unpinned = stats ? stats.items - stats.pinned : null;
 
-  // The shortcut hints belong to the search view; settings shows the footer only for a message.
-  const footer =
-    view === "settings" && !notice && !recovery ? null : (
-      <footer className="flex min-h-9 shrink-0 items-center border-t px-3 py-1">
-        {confirming ? (
-          <ConfirmInline count={unpinned} windowMs={CONFIRM_WINDOW_MS} />
-        ) : notice ? (
-          <Notice {...notice} onDismiss={dismissNotice} />
-        ) : recovery ? (
-          <Notice kind="error" message={recovery} wrap onDismiss={() => setRecoveryDismissed(recovery)} />
-        ) : (
-          <KbdHints />
-        )}
-      </footer>
-    );
+  // The footer carries messages on the left and the Shortcuts button on the right.
+  const footer = (
+    <footer className="flex min-h-9 shrink-0 items-center gap-3 border-t px-3 py-1">
+      {confirming ? (
+        <ConfirmInline count={unpinned} windowMs={CONFIRM_WINDOW_MS} />
+      ) : notice ? (
+        <Notice {...notice} onDismiss={dismissNotice} />
+      ) : recovery ? (
+        <Notice kind="error" message={recovery} wrap onDismiss={() => setRecoveryDismissed(recovery)} />
+      ) : null}
+      <ShortcutsButton onClick={() => setShortcutsOpen(true)} />
+    </footer>
+  );
 
   // Announced politely by screen readers whenever it changes: the answer to "did my typing find
   // anything", which sighted users get from the list itself. Nothing before the first search.
@@ -443,6 +450,14 @@ function App() {
           )}
         </main>
       </div>
+      <ShortcutsDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          (latest.current.view === "search" ? inputRef : mainRef).current?.focus();
+        }}
+      />
     </TooltipProvider>
   );
 }
