@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Copy, Loader2, Paperclip, Sparkles, Unlink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Task } from "@/lib/ipc";
+import { copyItem, draftResumeNote, errorMessage, getClips, type ClipRef, type Task } from "@/lib/ipc";
+import { createLatest } from "@/lib/latest";
+import type { Async } from "@/lib/taskAi";
 import { MAX_NOTE_CHARS } from "@/lib/tasks";
 import { fullDateTime, relativeTime } from "@/lib/time";
 
@@ -16,14 +18,35 @@ interface TaskNotesProps {
   /** Give focus back to the bar's input (Esc inside the notes). */
   onReturnFocus: () => void;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  /** Bumped each time a draft is asked for (Ctrl+R in the list): the sidebar then asks the assistant. */
+  draftRequest: number;
+  /** Remove the link between the task and a clipboard item. */
+  onUnlink: (taskId: number, clipId: number) => void;
+  /** A copy or a draft failed: say so in the bar's notice. */
+  onFail: (e: unknown) => void;
 }
 
 /**
  * The notes of one task, in a sidebar beside the list. Typing saves itself shortly after you
  * pause, and at once when you pick another task or leave, so nothing needs a Save button.
  */
-export function TaskNotes({ task, now, onSave, onClose, onReturnFocus, textareaRef }: TaskNotesProps) {
+export function TaskNotes({
+  task,
+  now,
+  onSave,
+  onClose,
+  onReturnFocus,
+  textareaRef,
+  draftRequest,
+  onUnlink,
+  onFail,
+}: TaskNotesProps) {
   const [text, setText] = useState(task.note);
+  // The assistant's draft of "where I left off": shown for the person to take or leave, never saved by itself.
+  const [draft, setDraft] = useState<Async<string> | null>(null);
+  const draftTicket = useRef(createLatest());
+  const [clips, setClips] = useState<ClipRef[]>([]);
+  const clipKey = task.clipIds.join(",");
   // The latest unsaved text and where it belongs, flushed on task change and unmount.
   const pending = useRef<{ id: number; note: string } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,6 +69,45 @@ export function TaskNotes({ task, now, onSave, onClose, onReturnFocus, textareaR
     // the text under the caret.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
+
+  const askDraft = () => {
+    const ticket = draftTicket.current.next();
+    setDraft({ status: "loading" });
+    draftResumeNote(task.id).then(
+      (value) => draftTicket.current.isCurrent(ticket) && setDraft({ status: "done", value }),
+      (e: unknown) =>
+        draftTicket.current.isCurrent(ticket) && setDraft({ status: "error", message: errorMessage(e) }),
+    );
+  };
+  const askDraftRef = useRef(askDraft);
+  askDraftRef.current = askDraft;
+
+  // Another task: its draft is not this one's.
+  useEffect(() => {
+    draftTicket.current.next();
+    setDraft(null);
+  }, [task.id]);
+
+  // Ctrl+R in the list asks for a draft for the selected task.
+  useEffect(() => {
+    if (draftRequest > 0) askDraftRef.current();
+  }, [draftRequest]);
+
+  // The linked clipboard items still in the history.
+  useEffect(() => {
+    if (clipKey === "") {
+      setClips([]);
+      return;
+    }
+    let live = true;
+    getClips(clipKey.split(",").map(Number)).then(
+      (found) => live && setClips(found),
+      () => live && setClips([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [clipKey]);
 
   const change = (value: string) => {
     setText(value);
@@ -107,9 +169,99 @@ export function TaskNotes({ task, now, onSave, onClose, onReturnFocus, textareaR
         spellCheck={false}
         className="m-2 min-h-0 flex-1 resize-none rounded-md bg-transparent p-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:bg-foreground/[0.04]"
       />
-      <div className="px-3 pb-2 text-right text-[11px] text-muted-foreground tabular-nums">
-        {text.length}/{MAX_NOTE_CHARS}
+      <div className="flex items-center gap-2 px-3 pb-2 text-[11px] text-muted-foreground">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          tabIndex={-1}
+          disabled={draft?.status === "loading"}
+          title="Draft where you left off from what you copied since (Ctrl+R)"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={askDraft}
+        >
+          {draft?.status === "loading" ? <Loader2 className="animate-spin" aria-hidden /> : <Sparkles aria-hidden />}
+          Draft
+        </Button>
+        <span className="ml-auto tabular-nums">
+          {text.length}/{MAX_NOTE_CHARS}
+        </span>
       </div>
+      {draft && draft.status !== "loading" && (
+        <div className="mx-2 mb-2 rounded-md border bg-foreground/[0.03] p-2 text-xs" role="status">
+          {draft.status === "error" ? (
+            <p className="text-destructive">{draft.message}</p>
+          ) : (
+            <>
+              <p className="leading-4">{draft.value}</p>
+              <div className="mt-1.5 flex gap-1">
+                <Button
+                  type="button"
+                  size="xs"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    change(draft.value);
+                    setDraft(null);
+                  }}
+                >
+                  Use it
+                </Button>
+              </div>
+            </>
+          )}
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            tabIndex={-1}
+            className="mt-1"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setDraft(null)}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
+      {clips.length > 0 && (
+        <div className="border-t px-3 py-2" aria-label="Linked clipboard items">
+          <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+            <Paperclip className="size-3" aria-hidden />
+            Linked clipboard items
+          </p>
+          <ul className="flex max-h-28 flex-col gap-0.5 overflow-y-auto">
+            {clips.map((c) => (
+              <li key={c.id} className="group/clip flex items-center gap-1 text-xs">
+                <span className="min-w-0 flex-1 truncate" title={c.preview}>
+                  {c.kind === "text" ? c.preview : `${c.kind === "image" ? "Image" : "Files"}: ${c.preview}`}
+                </span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-label="Copy it back"
+                  title="Copy it back to the clipboard"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => copyItem(c.id).catch(onFail)}
+                  className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <Copy className="size-3" aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-label="Unlink"
+                  title="Remove the link"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => onUnlink(task.id, c.id)}
+                  className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <Unlink className="size-3" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </aside>
   );
 }

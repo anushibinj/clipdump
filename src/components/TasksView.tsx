@@ -7,23 +7,44 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
-import { ListChecks, ListTodo, Pin, PinOff, Search, X } from "lucide-react";
+import {
+  Link2,
+  ListChecks,
+  ListPlus,
+  ListTodo,
+  Newspaper,
+  Pin,
+  PinOff,
+  Search,
+  Sparkles,
+  WandSparkles,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import { TaskAiPanel, type TaskAiActions } from "@/components/TaskAiPanel";
 import { TaskNotes } from "@/components/TaskNotes";
+import { TaskNudge } from "@/components/TaskNudge";
 import { TaskRow, taskRowId } from "@/components/TaskRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { useTaskAi } from "@/hooks/useTaskAi";
 import type { TasksApi } from "@/hooks/useTasks";
-import { errorMessage, type Task, type TaskPatch } from "@/lib/ipc";
+import { errorMessage, estimateBacklog, type Task, type TaskPatch } from "@/lib/ipc";
 import { readTaskNotesOpen, writeTaskNotesOpen } from "@/lib/pane";
 import { moveIndex } from "@/lib/shortcuts";
 import { resolveTaskKey, type TaskAction } from "@/lib/taskKeys";
+import type { LinkRow } from "@/lib/taskAi";
 import {
+  DEFER_MS,
   MAX_TITLE_CHARS,
+  SNOOZE_MS,
   buildTaskView,
   nextStatus,
   parseQuickAdd,
   previousStatus,
+  quietTasks,
   reselect,
 } from "@/lib/tasks";
 
@@ -74,6 +95,11 @@ export function TasksView({
   const [showHidden, setShowHidden] = useState(false);
   useEffect(() => setShowHidden(false), [collapseSignal]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // "Quick wins": only the tasks estimated as quick. Stays as it is when the bar hides, like the view.
+  const [quickOnly, setQuickOnly] = useState(false);
+  // Bumped when a draft of "where I left off" is asked for; the notes sidebar answers it.
+  const [draftTick, setDraftTick] = useState(0);
+  const ai = useTaskAi(api.refresh);
   const [notesOpen, setNotesOpen] = useState(readTaskNotesOpen);
   const notesRef = useRef<HTMLTextAreaElement | null>(null);
   const setNotes = useCallback((open: boolean) => {
@@ -82,9 +108,10 @@ export function TasksView({
   }, []);
 
   const view = useMemo(
-    () => buildTaskView(api.tasks, { showHidden, now: api.now }),
-    [api.tasks, api.now, showHidden],
+    () => buildTaskView(api.tasks, { showHidden, now: api.now, quickOnly }),
+    [api.tasks, api.now, showHidden, quickOnly],
   );
+  const quiet = useMemo(() => quietTasks(api.tasks, api.now), [api.tasks, api.now]);
 
   // Keep the selection on the same task while the list changes; when it leaves (marked done and
   // hidden, deleted), the task now at its place is selected, so a run of Enters works down a list.
@@ -103,8 +130,10 @@ export function TasksView({
   }, [selected]);
 
   // Read by the stable callbacks below.
-  const latest = useRef({ api, view, selected, text, mode, showHidden });
-  latest.current = { api, view, selected, text, mode, showHidden };
+  const latest = useRef({ api, view, selected, text, mode, showHidden, quickOnly, ai, quiet });
+  latest.current = { api, view, selected, text, mode, showHidden, quickOnly, ai, quiet };
+  // The assistant card's buttons, set below once they exist: `run` takes its main suggestion (Alt+Enter).
+  const actionsRef = useRef<TaskAiActions | null>(null);
 
   const fail = useCallback(
     (e: unknown) => onNotice("error", errorMessage(e)),
@@ -116,6 +145,45 @@ export function TasksView({
       latest.current.api.update(id, patch).then(after, fail);
     },
     [fail],
+  );
+
+  /** Select a task, showing the hidden ones first when it is one of them. */
+  const reveal = useCallback((id: number) => {
+    if (!latest.current.view.rows.some((t) => t.id === id)) {
+      setQuickOnly(false);
+      setShowHidden(true);
+    }
+    setSelectedId(id);
+  }, []);
+
+  /** Add tasks one after the other; resolves to how many were added (a failure is reported and stops). */
+  const addAll = useCallback(
+    async (items: readonly { title: string; important: boolean }[]) => {
+      let added = 0;
+      try {
+        for (const item of items) {
+          await latest.current.api.add(item.title, item.important, false);
+          added += 1;
+        }
+      } catch (e) {
+        fail(e);
+      }
+      if (added > 0)
+        onNotice(
+          "info",
+          `Added ${added} ${added === 1 ? "task" : "tasks"}.${latest.current.showHidden ? "" : " Waiting ones are under Ctrl+H."}`,
+        );
+      return added;
+    },
+    [fail, onNotice],
+  );
+
+  const deferWeek = useCallback(
+    (task: Task) =>
+      change(task.id, { deferredUntil: Date.now() + DEFER_MS }, () =>
+        onNotice("info", "Set aside for a week. It will not nag you until then."),
+      ),
+    [change, onNotice],
   );
 
   const addTyped = useCallback(
@@ -205,6 +273,56 @@ export function TasksView({
         case "toggleHidden":
           setShowHidden((s) => !s);
           break;
+        case "pickNext":
+          latest.current.ai.pickNext();
+          break;
+        case "toggleQuick": {
+          const on = !latest.current.quickOnly;
+          setQuickOnly(on);
+          // Quick wins need estimates: ask for the ones that are missing (they arrive by themselves).
+          if (on && v.unsized > 0)
+            estimateBacklog().then(
+              (n) => n > 0 && onNotice("info", `Estimating ${n} ${n === 1 ? "task" : "tasks"}.`),
+              (e: unknown) => onNotice("info", errorMessage(e)),
+            );
+          break;
+        }
+        case "nextStep":
+          if (task) latest.current.ai.nextStep(task.id);
+          else onNotice("info", "Select a task first.");
+          break;
+        case "draftNote":
+          if (task) {
+            setNotes(true);
+            setDraftTick((n) => n + 1);
+          } else onNotice("info", "Select a task first.");
+          break;
+        case "digest":
+          latest.current.ai.digest(action.period);
+          break;
+        case "links":
+          latest.current.ai.links();
+          break;
+        case "extract":
+          latest.current.ai.openExtract();
+          break;
+        case "defer":
+          if (task) deferWeek(task);
+          break;
+        case "panelPrimary": {
+          const p = latest.current.ai.panel;
+          const actions = actionsRef.current;
+          if (!p || !actions) break;
+          if (p.kind === "pick" && p.result.status === "done" && p.result.value) actions.start(p.result.value.id);
+          else if (p.kind === "steps" && p.result.status === "done" && p.result.value.subtasks.length > 0)
+            actions.addSubtasks(p.result.value.subtasks);
+          else if (p.kind === "links" && p.result.status === "done" && p.result.value.length > 0)
+            actions.link(p.result.value);
+          else if (p.kind === "extract" && p.result?.status === "done") actions.addFound();
+          else if (p.kind === "digest" && p.result.status === "done" && p.result.value.order.length > 0)
+            actions.show(p.result.value.order[0]);
+          break;
+        }
         case "delete":
           if (task) {
             a.remove(task.id).then(() => onNotice("info", "Deleted."), fail);
@@ -221,11 +339,12 @@ export function TasksView({
             setMode({ kind: "add" });
             setText("");
           } else if (latest.current.text !== "") setText("");
+          else if (latest.current.ai.panel) latest.current.ai.close();
           else onClose();
           break;
       }
     },
-    [addTyped, change, fail, onClose, onNotice, setNotes],
+    [addTyped, change, deferWeek, fail, onClose, onNotice, setNotes],
   );
 
   const onKeyDown = useCallback(
@@ -278,6 +397,85 @@ export function TasksView({
     selected === null
       ? null
       : (api.tasks.find((t) => t.id === selected) ?? null);
+
+  const { setPanel, close: closePanel, pickNext, nextStep: askNextStep, digest, links: askLinks } = ai;
+  const aiActions: TaskAiActions = useMemo(
+    () => ({
+      close: closePanel,
+      closeAndFocus: () => {
+        closePanel();
+        returnFocus();
+      },
+      pick: pickNext,
+      start: (id) => change(id, { status: "doing" }, () => reveal(id)),
+      show: reveal,
+      nextStep: askNextStep,
+      addSubtasks: (titles) => {
+        void addAll(titles.map((title) => ({ title, important: false }))).then((added) =>
+          // The ones that went in leave the card; a failure leaves the rest to try again.
+          setPanel((p) =>
+            p && p.kind === "steps" && p.result.status === "done"
+              ? { ...p, result: { status: "done", value: { ...p.result.value, subtasks: p.result.value.subtasks.slice(added) } } }
+              : p,
+          ),
+        );
+      },
+      clearStep: (taskId) => change(taskId, { nextStep: "" }),
+      digest,
+      findLinks: askLinks,
+      link: (rows: LinkRow[]) => {
+        const a = latest.current.api;
+        const byTask = new Map<number, number[]>();
+        for (const r of rows) byTask.set(r.taskId, [...(byTask.get(r.taskId) ?? []), r.clipId]);
+        const writes = Array.from(byTask, ([taskId, clipIds]) => {
+          const task = a.tasks.find((t) => t.id === taskId);
+          if (!task) return Promise.resolve();
+          const merged = Array.from(new Set([...task.clipIds, ...clipIds]));
+          return a.update(taskId, { clipIds: merged }).then(() => undefined);
+        });
+        Promise.all(writes).then(() => {
+          onNotice("info", rows.length === 1 ? "Linked." : `Linked ${rows.length} clipboard items.`);
+          setPanel((p) =>
+            p && p.kind === "links" && p.result.status === "done"
+              ? {
+                  ...p,
+                  result: {
+                    status: "done",
+                    value: p.result.value.filter((r) => !rows.some((x) => x.taskId === r.taskId && x.clipId === r.clipId)),
+                  },
+                }
+              : p,
+          );
+        }, fail);
+      },
+      setExtractText: (value) => setPanel((p) => (p && p.kind === "extract" ? { ...p, text: value } : p)),
+      runExtract: ai.runExtract,
+      toggleFound: (i) =>
+        setPanel((p) =>
+          p && p.kind === "extract" ? { ...p, selected: p.selected.map((on, j) => (j === i ? !on : on)) } : p,
+        ),
+      addFound: () => {
+        const p = latest.current.ai.panel;
+        if (!p || p.kind !== "extract" || p.result?.status !== "done") return;
+        const chosen = p.result.value.tasks.filter((_, i) => p.selected[i]);
+        if (chosen.length === 0) return;
+        void addAll(chosen).then((added) => added > 0 && closePanel());
+      },
+    }),
+    // `ai.runExtract` and the others are stable callbacks; `ai` itself is a new object each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [addAll, askLinks, askNextStep, change, closePanel, digest, fail, onNotice, pickNext, returnFocus, reveal, setPanel],
+  );
+  actionsRef.current = aiActions;
+
+  const nudgeTask = ai.panel === null && !quickOnly && mode.kind === "add" ? (quiet[0] ?? null) : null;
+  const unlink = useCallback(
+    (taskId: number, clipId: number) => {
+      const task = latest.current.api.tasks.find((t) => t.id === taskId);
+      if (task) change(taskId, { clipIds: task.clipIds.filter((c) => c !== clipId) });
+    },
+    [change],
+  );
 
   const editing = mode.kind !== "add";
   const maxLength = MAX_TITLE_CHARS;
@@ -368,14 +566,31 @@ export function TasksView({
           </div>
         </div>
 
-        <div className="flex h-10 items-center justify-between gap-3 border-b px-4 text-xs text-muted-foreground">
-          <span className="truncate tabular-nums">
-            {view.inFlight === 0
-              ? "Nothing in flight"
-              : `${view.inFlight} in flight`}
-            {view.doneRecently > 0 && ` · ${view.doneRecently} done today`}
+        <div className="flex h-10 items-center gap-2 border-b px-4 text-xs text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate tabular-nums">
+            {quickOnly
+              ? `Quick wins${view.unsized > 0 ? ` · ${view.unsized} not estimated yet` : ""}`
+              : view.inFlight === 0
+                ? "Nothing in flight"
+                : `${view.inFlight} in flight`}
+            {!quickOnly && view.doneRecently > 0 && ` · ${view.doneRecently} done today`}
           </span>
-          {(hasExtras || showHidden) && (
+          <div className="flex shrink-0 items-center gap-0.5" role="toolbar" aria-label="Assistant">
+            <ToolButton
+              icon={Zap}
+              label="Quick wins"
+              keys="Ctrl Q"
+              pressed={quickOnly}
+              badge={view.quickCount}
+              onClick={() => run({ type: "toggleQuick" })}
+            />
+            <ToolButton icon={Sparkles} label="What next" keys="Ctrl N" onClick={() => run({ type: "pickNext" })} />
+            <ToolButton icon={WandSparkles} label="Next step for the selected task" keys="Ctrl G" onClick={() => run({ type: "nextStep" })} />
+            <ToolButton icon={Newspaper} label="Digest" keys="Ctrl D" onClick={() => run({ type: "digest", period: "morning" })} />
+            <ToolButton icon={Link2} label="Link recent clipboard items to tasks" keys="Ctrl L" onClick={() => run({ type: "links" })} />
+            <ToolButton icon={ListPlus} label="Tasks from a text" keys="Ctrl K" onClick={() => run({ type: "extract" })} />
+          </div>
+          {(hasExtras || showHidden) && !quickOnly && (
             <button
               type="button"
               tabIndex={-1}
@@ -395,6 +610,24 @@ export function TasksView({
         </div>
       </div>
 
+      {ai.panel && <TaskAiPanel panel={ai.panel} tasks={api.tasks} actions={aiActions} />}
+      {nudgeTask && (
+        <TaskNudge
+          task={nudgeTask}
+          count={quiet.length}
+          now={api.now}
+          verdict={ai.verdicts.get(nudgeTask.id)}
+          asking={ai.reviewing}
+          onDo={(t) => change(t.id, t.status === "doing" ? { note: t.note } : { status: "doing" })}
+          onDefer={deferWeek}
+          onDrop={(t) => api.remove(t.id).then(() => onNotice("info", "Dropped."), fail)}
+          onSnooze={(t) => change(t.id, { deferredUntil: Date.now() + SNOOZE_MS })}
+          onAsk={() => {
+            void ai.review(quiet.slice(0, 10).map((t) => t.id)).then((message) => message && onNotice("error", message));
+          }}
+        />
+      )}
+
       <div className="flex min-h-0 flex-1">
         <div
           id={LIST_ID}
@@ -408,6 +641,8 @@ export function TasksView({
               error={api.error}
               total={api.tasks.length}
               hidden={view.hiddenCount}
+              quick={quickOnly}
+              unsized={view.unsized}
             />
           ) : (
             view.sections.map((s) => (
@@ -443,6 +678,9 @@ export function TasksView({
             }}
             onReturnFocus={returnFocus}
             textareaRef={notesRef}
+            draftRequest={draftTick}
+            onUnlink={unlink}
+            onFail={fail}
           />
         )}
       </div>
@@ -455,11 +693,15 @@ function Empty({
   error,
   total,
   hidden,
+  quick,
+  unsized,
 }: {
   ready: boolean;
   error: string | null;
   total: number;
   hidden: number;
+  quick: boolean;
+  unsized: number;
 }) {
   if (!ready) return null;
   let title: string;
@@ -467,6 +709,12 @@ function Empty({
   if (error) {
     title = "Tasks are not available";
     hint = error;
+  } else if (quick) {
+    title = "No quick wins";
+    hint =
+      unsized > 0
+        ? `${unsized} ${unsized === 1 ? "task has" : "tasks have"} no estimate yet. They appear here as the assistant sizes them. Press Ctrl+Q to see everything.`
+        : "Nothing is estimated as about 15 minutes or less. Press Ctrl+Q to see everything.";
   } else if (total === 0) {
     title = "Nothing on the list";
     hint =
@@ -488,5 +736,41 @@ function Empty({
       <p className="text-sm font-medium">{title}</p>
       <p className="max-w-80 text-xs text-muted-foreground">{hint}</p>
     </div>
+  );
+}
+
+/** One of the assistant's buttons in the status row: an icon, its name and key in the tooltip. */
+function ToolButton({
+  icon: Icon,
+  label,
+  keys,
+  onClick,
+  pressed,
+  badge,
+}: {
+  icon: LucideIcon;
+  label: string;
+  keys: string;
+  onClick: () => void;
+  pressed?: boolean;
+  /** A count shown beside the icon (quick wins). */
+  badge?: number;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      tabIndex={-1}
+      aria-label={label}
+      aria-pressed={pressed}
+      title={`${label} (${keys.replace(" ", "+")})`}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={pressed ? "bg-foreground/[0.1] px-1.5 text-foreground" : "px-1.5 text-muted-foreground"}
+    >
+      <Icon aria-hidden />
+      {badge !== undefined && badge > 0 && <span className="tabular-nums">{badge}</span>}
+    </Button>
   );
 }
