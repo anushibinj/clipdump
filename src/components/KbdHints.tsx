@@ -18,8 +18,8 @@ const HINTS: Hint[] = [
 ];
 
 const TASK_HINTS: Hint[] = [
-  { keys: ["Enter"], label: "add or next step" },
-  { keys: ["Ctrl", "Enter"], label: "start or done" },
+  { keys: ["Enter"], label: "add / next" },
+  { keys: ["Ctrl", "Enter"], label: "start / done" },
   { keys: ["Ctrl", "I"], label: "important", optional: true },
   { keys: ["Ctrl", "E"], label: "note", optional: true },
   { keys: ["Ctrl", "T"], label: "search" },
@@ -34,7 +34,7 @@ export const KbdHints = memo(function KbdHints({ tasks = false }: { tasks?: bool
       {hints.map((h) => (
         <li
           key={h.label}
-          className={h.optional ? "hidden items-center gap-1.5 @min-[560px]:flex" : "flex items-center gap-1.5"}
+          className={h.optional ? "hidden items-center gap-1.5 whitespace-nowrap @min-[560px]:flex" : "flex items-center gap-1.5 whitespace-nowrap"}
         >
           <span className="flex gap-0.5">
             {h.keys.map((k) => (
