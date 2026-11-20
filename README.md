@@ -16,7 +16,7 @@ With the same LLM server set up for AI split, the task list also helps you pick 
 `Ctrl+N` answers "what should I do now?" for the time and energy you have, `Ctrl+Q` shows only the
 quick wins (every task gets an effort estimate in the background), `Ctrl+G` turns a vague task into a
 concrete first step and subtasks, `Ctrl+R` drafts where you left off from what you copied since,
-`Ctrl+D` is today's digest (`Ctrl+Shift+D` the week's recap), `Ctrl+L` links recent clipboard items to
+`Ctrl+D` is today's digest (`Ctrl+Shift+D` the week's recap), `Ctrl+J` links recent clipboard items to
 tasks, `Ctrl+K` finds the tasks in a pasted or just copied text, and a task that has gone quiet gets a
 "still relevant?" nudge. The assistant only suggests; nothing changes until you accept it.
 

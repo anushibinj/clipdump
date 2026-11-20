@@ -17,6 +17,7 @@ import { useKeyboard } from "@/hooks/useKeyboard";
 import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
+import { useFocus } from "@/hooks/useFocus";
 import { useTasks } from "@/hooks/useTasks";
 import { readView, writeView } from "@/lib/view";
 import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
@@ -106,6 +107,15 @@ function App() {
     stickyNotice.current = sticky;
     if (!sticky) noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
+
+  // The focus lock lives here, not in the task view: its countdown and its end announcements keep
+  // working on the search view and while the bar is hidden (a message raised while hidden waits
+  // for the next time the bar is shown).
+  const focusNotice = useCallback(
+    (kind: NoticeState["kind"], message: string) => showNotice(kind, message, document.visibilityState !== "visible"),
+    [showNotice],
+  );
+  const focus = useFocus(tasks.tasks, tasks.ready, focusNotice);
 
   const dismissNotice = useCallback(() => {
     window.clearTimeout(noticeTimer.current);
@@ -424,6 +434,7 @@ function App() {
               <div className="min-h-0 flex-1">
                 <TasksView
                   api={tasks}
+                  focus={focus}
                   collapseSignal={hiddenSignal}
                   inputRef={inputRef}
                   onNotice={showNotice}

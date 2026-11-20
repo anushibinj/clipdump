@@ -397,7 +397,7 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
           <TabsList aria-label="Settings groups">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="capture">Capture</TabsTrigger>
-            <TabsTrigger value="split">Split with AI</TabsTrigger>
+            <TabsTrigger value="ai">AI</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
             <TabsTrigger value="data">Data</TabsTrigger>
           </TabsList>
@@ -506,13 +506,13 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
               </Section>
             </ScrollArea>
           </TabsContent>
-          <TabsContent value="split">
+          <TabsContent value="ai">
             <ScrollArea className="h-full">
               <Section>
               <p className="py-2 text-xs text-muted-foreground">
-                Break a long text into items you can copy one by one (numbers, e-mails, tokens, user names,
-                passwords, anything). Works with any OpenAI compatible server: OpenAI, Ollama, LM Studio, and
-                others. The text of an item is sent to this server only when you press Split on it.
+                Connect an AI model for the AI features in ClipDump, such as splitting a long text into items
+                you can copy one by one. Works with any OpenAI compatible server: OpenAI, Ollama, LM Studio,
+                and others. The text of an item is sent to this server only when you use an AI feature on it.
               </p>
               <p className="pb-2 text-xs text-muted-foreground">
                 The same server runs the task assistant in the task list (Ctrl+T). A new task&apos;s title is sent

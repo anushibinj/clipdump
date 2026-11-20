@@ -82,7 +82,7 @@ one of three words, a title bounded) and a reply that does not check out is an e
   notes sidebar to take or leave. The prompt tells the model to use only clips that relate to the task and never to
   repeat a secret.
 - `Ctrl+D` / `Ctrl+Shift+D` **digest**: a morning briefing or the week's recap with an order to start in; kept 30 minutes.
-- `Ctrl+L` **links**: which recent clipboard items belong to which open task. A linked item shows in the notes sidebar
+- `Ctrl+J` **links**: which recent clipboard items belong to which open task. A linked item shows in the notes sidebar
   (copy it back, unlink). A task keeps 20 links at most; one that left the history is not shown.
 - `Ctrl+K` **tasks from a text**: the action items in a pasted text, or in the newest copied text when the box is empty.
   Duplicates of open tasks are found by code (not by the model) and start unticked.

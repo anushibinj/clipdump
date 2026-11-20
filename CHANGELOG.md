@@ -10,6 +10,18 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Added
 
+- Focus lock for tasks. `Ctrl+L` (or the timer icon on a row) locks the list to one task for 15, 25,
+  30 or 60 minutes, or a number you type. While it runs every other task is dimmed and cannot be
+  changed, selected, or deleted; you can still add new tasks, which wait. The lock survives
+  restarts and ends by itself, when you finish the task, or when you break it: that takes 30 seconds
+  of waiting and starts the streak over.
+- The countdown is also in the window title; a heads-up comes 5 minutes before the end, and a tone
+  (and a system notification, where allowed) when it is over. One pause of up to 5 minutes per session.
+- A parking lot for distractions: `Ctrl+P` while locked, type the thought, Enter. Afterwards each one
+  can be turned into a task or dropped.
+- After a session: "Done, Need more time, Blocked", then a 5 minute break, another session, or skip.
+- Focus stats: a streak counter (sessions in a row without breaking the lock), the time focused today
+  (with the last 7 days on hover), and the total time focused on each task.
 - A task assistant in the task list, using the LLM server already set up for AI split. It only
   suggests; nothing changes until you accept it.
 - `Ctrl+N` answers "what should I do now?" with one task and a reason, for the time (10 minutes,
@@ -22,7 +34,7 @@ All notable changes to Clipdump are listed here. The format follows
 - `Ctrl+R` drafts "where I left off" from what you copied since you last touched the task. It is a
   draft in the notes sidebar: you take it or dismiss it.
 - `Ctrl+D` writes today's digest and `Ctrl+Shift+D` the week's recap, each with the order to start in.
-- `Ctrl+L` suggests which recent clipboard items belong to which task. Linked items show in the
+- `Ctrl+J` suggests which recent clipboard items belong to which task. Linked items show in the
   notes sidebar, where you can copy one back or unlink it.
 - `Ctrl+K` finds the tasks in a pasted text, or in the text you just copied, and flags the ones that
   are already on the list.
@@ -110,7 +122,7 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Changed
 
-- Esc hides the bar even when the right pane is open (the pane is remembered; Tab closes it).
+- Esc hides the bar even when the right pane is open (the pane is remembered; Alt+P closes it).
 - The footer no longer shows the "move" and "settings" shortcut hints; the shortcuts still work.
 - `settings.json` gains `window_positions` and the LLM fields, and the history database gains
   a `splits` table; both are upgraded automatically.

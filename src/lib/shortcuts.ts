@@ -33,7 +33,7 @@ export type Action =
   | { type: "toggleSettings" }
   /** Ctrl+?: open or close the shortcuts help. */
   | { type: "toggleShortcuts" }
-  /** Ctrl+T: between the clipboard search and the task list. */
+  /** Tab or Ctrl+T: between the clipboard search and the task list. */
   | { type: "toggleTasks" }
   | { type: "move"; delta: number }
   | { type: "escape" };
@@ -68,6 +68,10 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && !alt && !shift && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
     return { type: "toggleTasks" };
   }
+  // Tab cycles the app modes: clipboard search <-> tasks. Settings keeps Tab for moving between its controls.
+  if (e.key === "Tab" && !ctrl && !alt && !shift && view !== "settings") {
+    return { type: "toggleTasks" };
+  }
   // The settings and task views have their own fields and keys: only Esc, Ctrl+, Ctrl+? and Ctrl+T act here.
   if (view !== "search") return null;
 
@@ -92,7 +96,9 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (e.key === "Enter" && !alt && !shift) {
     return ctrl ? { type: "copy", paste: false } : { type: "enter" };
   }
-  if (e.key === "Tab" && !ctrl && !alt && !shift) return { type: "togglePreview" };
+  if (alt && !ctrl && !shift && (e.code === "KeyP" || e.key.toLowerCase() === "p")) {
+    return { type: "togglePreview" };
+  }
   if (!ctrl && !alt && !shift) {
     if (e.key === "ArrowDown") return { type: "move", delta: 1 };
     if (e.key === "ArrowUp") return { type: "move", delta: -1 };

@@ -516,7 +516,7 @@ WebView2, so everything below still needs a Windows run.
       inside the window clears and keeps pinned items.
 - [ ] `Alt+1` to `Alt+4` switch the filter. Windows must not move focus to a menu
       or beep on Alt+digit. A typed `img:`, `file:`, `txt:` prefix wins.
-- [ ] `Tab` toggles the preview and never moves focus out of the input.
+- [ ] `Alt+P` toggles the preview, `Tab` switches between the clipboard and the tasks, and neither moves focus out of the input.
 - [ ] `Ctrl+,` toggles settings. `Esc` order: confirmation, settings, preview, hide.
 - [ ] Global conflicts: the global `Ctrl+Shift+Space` still works while the bar
       is focused (it toggles the bar); no other program that registers `Alt+digit`
@@ -1173,7 +1173,7 @@ WebView2 was present.
 - [ ] The installer is unsigned: SmartScreen shows the unknown publisher warning (expected, see
       "Code signing (future step)" in `docs/packaging.md`).
 
-## Window position, Pin and Dismiss, Split with AI (Windows only)
+## Window position, Pin and Dismiss, AI split (Windows only)
 
 Added after Phase 15. The placement math, the settings round trip, the LLM request, parsing and
 validation, and the HTTP client against a local stub server are unit tested on Linux. Nothing that
@@ -1203,7 +1203,7 @@ needs a real window, monitor or LLM has been run.
 - [ ] Dismiss hides the bar (same as Esc) and the clicks do not take the focus out of the search box.
 
 ### AI split
-- [ ] Settings > Split with AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
+- [ ] Settings > AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
       OpenAI (`https://api.openai.com/v1`, a model name, an API key).
 - [ ] Copy a text with several numbers, e-mails and a token (20+ characters). The server log shows the
       request right away, before the bar is opened. Open the bar, find the item, open the pane (Tab) on
@@ -1268,7 +1268,7 @@ list shows how real model output behaves.
       copying a password or token you also copied. "Use it" saves it as the note; closing without it changes nothing.
 - [ ] `Ctrl+D` and `Ctrl+Shift+D` give a digest and a recap that name your real tasks; a second `Ctrl+D` within half
       an hour is instant; "Refresh" asks again. Clicking a task in the order selects it.
-- [ ] Copy two things that belong to two different tasks and one that belongs to none, `Ctrl+L`: only the clear
+- [ ] Copy two things that belong to two different tasks and one that belongs to none, `Ctrl+J`: only the clear
       matches are suggested. "Link all" adds paperclips; the notes list them; the copy button puts the item back on
       the clipboard; "Unlink" removes it. Delete the item from the history: it silently leaves the list.
 - [ ] Copy an e-mail with three requests and press `Ctrl+K` with the box empty: the three are found, the one already
@@ -1281,3 +1281,27 @@ list shows how real model output behaves.
       anything but, at most, give an odd suggestion.
 - [ ] Windows Firewall or a proxy blocking the server: every card ends in the plain "could not reach the LLM server"
       sentence, never with the task text in it.
+### Focus lock
+- [ ] `Ctrl+L` on a task opens the picker (15, 25, 30, 60 or a custom number of minutes; the length used
+      last is selected). Esc closes it. "Lock for N min" puts the task in flight, shows the countdown and
+      dims every other task.
+- [ ] While locked: clicking another task's circle, star or notes icon does nothing; the arrow keys and the
+      mouse cannot select another task; the locked task cannot be deleted or stepped back (a footer
+      message says why). A task typed and added is added waiting, also with `Ctrl+Enter`.
+- [ ] `Ctrl+P` focuses the parking field. Type a thought and Enter: "1 parked". Open the list: "Task" turns
+      it into a task, the cross drops it. Esc returns to the task input.
+- [ ] The countdown also shows in the window title (taskbar hover, Alt+Tab). Switch to the search
+      (`Ctrl+T`) and hide the bar: the countdown goes on.
+- [ ] Quit from the tray and start the app inside the session: the lock and the time left are back. Quit
+      and start the app after the time ran out: the check-in "How did it go?" is shown.
+- [ ] "Pause" freezes the clock (up to 5 minutes, once per session); it resumes by itself after 5 minutes.
+- [ ] "Break the lock…" waits 30 seconds before "Break the lock now" appears; "Keep focusing" cancels. After
+      breaking, the flame counter in the strip is 0 and the tasks are free.
+- [ ] Finish a session (use a 1 minute length): a heads-up is not given for sessions under 5 minutes; for a
+      30 minute session a footer message and a tone come 5 minutes before the end. At the end the tone
+      plays (and a system notification when Windows allows it), the lock is gone, the check-in offers
+      Done, Need more time and Blocked, then a 5 minute break, another session or skip.
+- [ ] Press `Enter` on the empty input with the locked task selected: it is done, the lock is released and
+      counted, and the break is offered.
+- [ ] The strip shows the streak (flame) and "N m focused today"; hovering the flame lists the last 7 days.
+      A task row shows the total time focused on it.

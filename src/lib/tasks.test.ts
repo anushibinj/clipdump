@@ -193,6 +193,8 @@ describe("resolveTaskKey", () => {
     expect(resolveTaskKey(key("i", { ctrlKey: true }), empty)).toEqual({ type: "toggleImportant" });
     expect(resolveTaskKey(key("e", { ctrlKey: true }), empty)).toEqual({ type: "editNote" });
     expect(resolveTaskKey(key("h", { ctrlKey: true }), empty)).toEqual({ type: "toggleHidden" });
+    expect(resolveTaskKey(key("l", { ctrlKey: true }), empty)).toEqual({ type: "focus" });
+    expect(resolveTaskKey(key("p", { ctrlKey: true }), empty)).toEqual({ type: "park" });
     expect(resolveTaskKey(key("F2"), empty)).toEqual({ type: "editTitle" });
     expect(resolveTaskKey(key("Delete", { ctrlKey: true }), empty)).toEqual({ type: "delete" });
     expect(resolveTaskKey(key("Delete", { shiftKey: true }), empty)).toEqual({ type: "delete" });
@@ -209,10 +211,10 @@ describe("resolveTaskKey", () => {
     expect(chord("r")).toEqual({ type: "draftNote" });
     expect(chord("d")).toEqual({ type: "digest", period: "morning" });
     expect(chord("d", { shiftKey: true })).toEqual({ type: "digest", period: "week" });
-    expect(chord("l")).toEqual({ type: "links" });
+    expect(chord("j")).toEqual({ type: "links" });
     expect(chord("k")).toEqual({ type: "extract" });
     expect(chord("b")).toEqual({ type: "defer" });
-    for (const k of ["n", "q", "g", "r", "d", "l", "k", "b"]) {
+    for (const k of ["n", "q", "g", "r", "d", "j", "k", "b"]) {
       expect(resolveTaskKey(key(k, { ctrlKey: true }), editing)).toBeNull();
     }
     expect(resolveTaskKey(key("d", { ctrlKey: true, shiftKey: true }), editing)).toBeNull();

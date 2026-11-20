@@ -33,7 +33,7 @@ export type TaskAction =
   | { type: "draftNote" }
   /** Ctrl+D: this morning's briefing; Ctrl+Shift+D: the week's recap. */
   | { type: "digest"; period: "morning" | "week" }
-  /** Ctrl+L: which recent clipboard items belong to which task. */
+  /** Ctrl+J: which recent clipboard items belong to which task. */
   | { type: "links" }
   /** Ctrl+K: find tasks in a pasted or just copied text. */
   | { type: "extract" }
@@ -41,6 +41,10 @@ export type TaskAction =
   | { type: "defer" }
   /** Alt+Enter: take the main suggestion of the assistant's card (start the picked task, add the subtasks, ...). */
   | { type: "panelPrimary" }
+  /** Ctrl+L: lock the list to the selected task for a while (focus mode). */
+  | { type: "focus" }
+  /** Ctrl+P: write a distraction down instead of acting on it. */
+  | { type: "park" }
   | { type: "delete" }
   | { type: "move"; delta: number }
   /** Esc: leave an edit, else clear the input, else close the bar. */
@@ -85,10 +89,12 @@ export function resolveTaskKey(e: KeyInfo, state: TaskKeyState): TaskAction | nu
       if (letter("g")) return { type: "nextStep" };
       if (letter("r")) return { type: "draftNote" };
       if (letter("d")) return { type: "digest", period: "morning" };
-      if (letter("l")) return { type: "links" };
+      if (letter("j")) return { type: "links" };
       if (letter("k")) return { type: "extract" };
       if (letter("b")) return { type: "defer" };
     }
+    if (letter("l")) return { type: "focus" };
+    if (letter("p")) return { type: "park" };
   }
   if (ctrl && shift && !alt && !state.editing && letter("d")) return { type: "digest", period: "week" };
   if (e.key === "F2" && !ctrl && !alt && !shift) return { type: "editTitle" };

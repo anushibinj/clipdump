@@ -1070,7 +1070,7 @@ async function assistant(browser, url) {
 
   // --- links (Ctrl+L) and the linked items in the notes ----------------------------------------
   await reset();
-  await page.keyboard.press("Control+l");
+  await page.keyboard.press("Control+j");
   await page.waitForSelector('section[aria-label="Clipboard items for your tasks"] li');
   const links = panel("Clipboard items for your tasks");
   check("Ctrl+L suggests a clipboard item for a task", (await links.locator("li").count()) === 1 && (await hasText(links, "it looks related")));
@@ -1421,7 +1421,7 @@ async function a11y(browser, url) {
     await page.keyboard.press("Escape");
     await card("Control+d", 'section[aria-label="Digest"] p.leading-5', "tasks, digest card");
     await page.keyboard.press("Escape");
-    await card("Control+l", 'section[aria-label="Clipboard items for your tasks"] li', "tasks, links card");
+    await card("Control+j", 'section[aria-label="Clipboard items for your tasks"] li', "tasks, links card");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+k");
     await page.keyboard.type("Please send the signed lease to Dana by Friday. We need to book the venue.");
