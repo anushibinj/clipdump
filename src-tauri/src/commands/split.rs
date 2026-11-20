@@ -156,9 +156,7 @@ mod tests {
         copy_snippet::<Recording>(&guard, || 1_000, "Tr0ub4dor&3".to_owned()).unwrap();
         WROTE.with(|w| assert_eq!(w.borrow().last().unwrap(), "Tr0ub4dor&3"));
         assert!(
-            guard
-                .text_echo(1_100, hash_text("Tr0ub4dor&3"))
-                .is_some(),
+            guard.text_echo(1_100, hash_text("Tr0ub4dor&3")).is_some(),
             "the watcher must ignore the update our own write causes"
         );
     }

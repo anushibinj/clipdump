@@ -508,7 +508,10 @@ mod tests {
     #[test]
     fn a_monitor_is_known_by_its_name_or_else_its_geometry() {
         assert_eq!(monitor_key(Some("\\\\.\\DISPLAY2"), FHD), "\\\\.\\DISPLAY2");
-        assert_eq!(monitor_key(None, rect(1920, 0, 2560, 1440)), "2560x1440@1920,0");
+        assert_eq!(
+            monitor_key(None, rect(1920, 0, 2560, 1440)),
+            "2560x1440@1920,0"
+        );
         assert_eq!(monitor_key(Some("  "), FHD), "1920x1080@0,0");
     }
 

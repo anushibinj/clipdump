@@ -1066,7 +1066,10 @@ fn the_llm_key_is_write_only_and_the_url_is_checked() {
     assert_eq!(stored.llm_base_url, "http://localhost:11434/v1");
     assert_eq!(stored.llm_model, "llama3.2");
     assert!(stored.llm_api_key_set);
-    assert_eq!(stored.llm_api_key, None, "the key never goes back to the webview");
+    assert_eq!(
+        stored.llm_api_key, None,
+        "the key never goes back to the webview"
+    );
     assert_eq!(sfx.fx.settings.read().unwrap().llm_api_key, "sk-secret");
     let json = serde_json::to_string(&env.current()).unwrap();
     assert!(!json.contains("sk-secret"));

@@ -70,7 +70,8 @@ pub trait HttpPost {
 /// pasting the full endpoint works too. Only http and https are accepted.
 pub fn endpoint(base: &str) -> Result<String, String> {
     let base = base.trim();
-    if !(base.starts_with("http://") || base.starts_with("https://")) || base.contains(char::is_whitespace)
+    if !(base.starts_with("http://") || base.starts_with("https://"))
+        || base.contains(char::is_whitespace)
     {
         return Err("the server URL must start with http:// or https://".to_owned());
     }
@@ -123,7 +124,9 @@ fn reply_text(body: &str) -> Result<String, String> {
     v.pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| "the server's answer has no message (is the URL an OpenAI compatible API?)".to_owned())
+        .ok_or_else(|| {
+            "the server's answer has no message (is the URL an OpenAI compatible API?)".to_owned()
+        })
 }
 
 /// The JSON object inside a model reply: models wrap it in a code fence or add a
@@ -151,9 +154,10 @@ struct RawPart {
 /// values and anything past [`MAX_PARTS`] are dropped. Labels are trimmed and
 /// shortened; a missing label becomes "Item".
 pub fn parse_parts(reply: &str, original: &str) -> Result<Vec<Part>, String> {
-    let json = json_object(reply).ok_or_else(|| "the model did not answer with a list".to_owned())?;
-    let items: Items =
-        serde_json::from_str(json).map_err(|_| "the model did not answer with a list".to_owned())?;
+    let json =
+        json_object(reply).ok_or_else(|| "the model did not answer with a list".to_owned())?;
+    let items: Items = serde_json::from_str(json)
+        .map_err(|_| "the model did not answer with a list".to_owned())?;
     let mut parts: Vec<Part> = Vec::new();
     for raw in items.items {
         let value = raw.value.trim();
@@ -166,7 +170,11 @@ pub fn parse_parts(reply: &str, original: &str) -> Result<Vec<Part>, String> {
         }
         let label: String = raw.label.trim().chars().take(MAX_LABEL_CHARS).collect();
         parts.push(Part {
-            label: if label.is_empty() { "Item".to_owned() } else { label },
+            label: if label.is_empty() {
+                "Item".to_owned()
+            } else {
+                label
+            },
             value: value.to_owned(),
         });
         if parts.len() == MAX_PARTS {
@@ -204,9 +212,9 @@ impl HttpPost for UreqHttp {
         if let Some(key) = bearer {
             req = req.header("Authorization", &format!("Bearer {key}"));
         }
-        let mut resp = req
-            .send_json(body)
-            .map_err(|_| "could not reach the LLM server (is it running, is the URL right?)".to_owned())?;
+        let mut resp = req.send_json(body).map_err(|_| {
+            "could not reach the LLM server (is it running, is the URL right?)".to_owned()
+        })?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(match status {
@@ -235,12 +243,20 @@ mod tests {
     impl Fake {
         fn answering(content: &str) -> Self {
             let body = json!({ "choices": [{ "message": { "content": content } }] }).to_string();
-            Self { reply: Ok(body), seen: RefCell::default() }
+            Self {
+                reply: Ok(body),
+                seen: RefCell::default(),
+            }
         }
     }
 
     impl HttpPost for Fake {
-        fn post_json(&self, url: &str, bearer: Option<&str>, body: &Value) -> Result<String, String> {
+        fn post_json(
+            &self,
+            url: &str,
+            bearer: Option<&str>,
+            body: &Value,
+        ) -> Result<String, String> {
             self.seen
                 .borrow_mut()
                 .push((url.to_owned(), bearer.map(str::to_owned), body.clone()));
@@ -249,15 +265,26 @@ mod tests {
     }
 
     fn cfg() -> LlmConfig {
-        LlmConfig { base_url: "http://localhost:11434/v1/".into(), model: "m".into(), api_key: String::new() }
+        LlmConfig {
+            base_url: "http://localhost:11434/v1/".into(),
+            model: "m".into(),
+            api_key: String::new(),
+        }
     }
 
-    const TEXT: &str = "Call Ann on +1 555 0100 or mail ann@example.com. user: ann_k pw: Tr0ub4dor&3";
+    const TEXT: &str =
+        "Call Ann on +1 555 0100 or mail ann@example.com. user: ann_k pw: Tr0ub4dor&3";
 
     #[test]
     fn the_endpoint_is_the_base_plus_chat_completions() {
-        assert_eq!(endpoint("http://h:1/v1").unwrap(), "http://h:1/v1/chat/completions");
-        assert_eq!(endpoint(" https://api.openai.com/v1/ ").unwrap(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            endpoint("http://h:1/v1").unwrap(),
+            "http://h:1/v1/chat/completions"
+        );
+        assert_eq!(
+            endpoint(" https://api.openai.com/v1/ ").unwrap(),
+            "https://api.openai.com/v1/chat/completions"
+        );
         assert_eq!(
             endpoint("https://h/v1/chat/completions").unwrap(),
             "https://h/v1/chat/completions"
@@ -284,7 +311,10 @@ mod tests {
         assert_eq!(r["model"], "gpt-x");
         assert_eq!(r["temperature"], 0);
         assert_eq!(r["messages"][0]["role"], "system");
-        assert_eq!(r["messages"][1], json!({ "role": "user", "content": "hello" }));
+        assert_eq!(
+            r["messages"][1],
+            json!({ "role": "user", "content": "hello" })
+        );
     }
 
     #[test]
@@ -295,10 +325,18 @@ mod tests {
             {"label":"Username","value":"ann_k"},
             {"label":"Password","value":"Tr0ub4dor&3"}]}"#;
         let parts = parse_parts(reply, TEXT).unwrap();
-        let got: Vec<_> = parts.iter().map(|p| (p.label.as_str(), p.value.as_str())).collect();
+        let got: Vec<_> = parts
+            .iter()
+            .map(|p| (p.label.as_str(), p.value.as_str()))
+            .collect();
         assert_eq!(
             got,
-            [("Phone", "+1 555 0100"), ("Email", "ann@example.com"), ("Username", "ann_k"), ("Password", "Tr0ub4dor&3")]
+            [
+                ("Phone", "+1 555 0100"),
+                ("Email", "ann@example.com"),
+                ("Username", "ann_k"),
+                ("Password", "Tr0ub4dor&3")
+            ]
         );
     }
 
@@ -318,7 +356,13 @@ mod tests {
     fn fences_prose_and_whitespace_around_the_json_are_tolerated() {
         let reply = "Sure! Here you go:\n```json\n{\"items\":[{\"label\":\" Email \",\"value\":\"  ann@example.com \"}]}\n```\nAnything else?";
         let parts = parse_parts(reply, TEXT).unwrap();
-        assert_eq!(parts, vec![Part { label: "Email".into(), value: "ann@example.com".into() }]);
+        assert_eq!(
+            parts,
+            vec![Part {
+                label: "Email".into(),
+                value: "ann@example.com".into()
+            }]
+        );
     }
 
     #[test]
@@ -328,7 +372,13 @@ mod tests {
             {"label":"User","value":"ann_k"},
             {"label":"Empty","value":"   "}]}"#;
         let parts = parse_parts(reply, TEXT).unwrap();
-        assert_eq!(parts, vec![Part { label: "Item".into(), value: "ann_k".into() }]);
+        assert_eq!(
+            parts,
+            vec![Part {
+                label: "Item".into(),
+                value: "ann_k".into()
+            }]
+        );
     }
 
     #[test]
@@ -340,14 +390,19 @@ mod tests {
     fn a_reply_that_is_not_a_list_is_an_error_without_the_reply_in_it() {
         for bad in ["I cannot help with that", "{\"items\": 3}", "{}", ""] {
             let e = parse_parts(bad, TEXT).unwrap_err();
-            assert!(!e.contains("cannot"), "the reply must not leak into the message");
+            assert!(
+                !e.contains("cannot"),
+                "the reply must not leak into the message"
+            );
         }
     }
 
     #[test]
     fn parts_are_capped() {
         let text: String = (0..150).map(|n| format!("id{n} ")).collect();
-        let items: Vec<Value> = (0..150).map(|n| json!({ "label": "Id", "value": format!("id{n}") })).collect();
+        let items: Vec<Value> = (0..150)
+            .map(|n| json!({ "label": "Id", "value": format!("id{n}") }))
+            .collect();
         let reply = json!({ "items": items }).to_string();
         assert_eq!(parse_parts(&reply, &text).unwrap().len(), MAX_PARTS);
     }
@@ -361,7 +416,9 @@ mod tests {
 
     #[test]
     fn split_posts_to_the_endpoint_with_the_key_and_validates_the_answer() {
-        let http = Fake::answering(r#"{"items":[{"label":"Email","value":"ann@example.com"},{"label":"X","value":"nope"}]}"#);
+        let http = Fake::answering(
+            r#"{"items":[{"label":"Email","value":"ann@example.com"},{"label":"X","value":"nope"}]}"#,
+        );
         let mut c = cfg();
         c.api_key = "sk-test".into();
         let parts = split(&c, TEXT, &http).unwrap();
@@ -388,14 +445,142 @@ mod tests {
 
     #[test]
     fn transport_errors_and_odd_bodies_come_back_as_plain_messages() {
-        let down = Fake { reply: Err("could not reach the LLM server".into()), seen: RefCell::default() };
-        assert!(split(&cfg(), TEXT, &down).unwrap_err().contains("could not reach"));
-        let html = Fake { reply: Ok("<html>".into()), seen: RefCell::default() };
+        let down = Fake {
+            reply: Err("could not reach the LLM server".into()),
+            seen: RefCell::default(),
+        };
+        assert!(
+            split(&cfg(), TEXT, &down)
+                .unwrap_err()
+                .contains("could not reach")
+        );
+        let html = Fake {
+            reply: Ok("<html>".into()),
+            seen: RefCell::default(),
+        };
         assert!(split(&cfg(), TEXT, &html).unwrap_err().contains("JSON"));
-        let empty = Fake { reply: Ok("{\"choices\":[]}".into()), seen: RefCell::default() };
-        assert!(split(&cfg(), TEXT, &empty).unwrap_err().contains("OpenAI compatible"));
+        let empty = Fake {
+            reply: Ok("{\"choices\":[]}".into()),
+            seen: RefCell::default(),
+        };
+        assert!(
+            split(&cfg(), TEXT, &empty)
+                .unwrap_err()
+                .contains("OpenAI compatible")
+        );
         let mut bad = cfg();
         bad.base_url = "nope".into();
         assert!(split(&bad, TEXT, &down).unwrap_err().contains("http"));
+    }
+
+    /// One-shot HTTP server on localhost: reads one request, answers `status` with
+    /// `body`, and hands the request text back through the join handle.
+    fn serve_once(status: &str, body: &str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Read until the headers and the whole body (Content-Length) are in.
+            loop {
+                let n = sock.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf).to_string();
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= head_end + 4 + len || n == 0 {
+                        break;
+                    }
+                } else if n == 0 {
+                    break;
+                }
+            }
+            sock.write_all(reply.as_bytes()).unwrap();
+            String::from_utf8_lossy(&buf).to_string()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn the_real_client_posts_json_with_the_bearer_key_and_returns_the_body() {
+        let content = r#"{"items":[{"label":"Email","value":"ann@example.com"}]}"#;
+        let answer = json!({ "choices": [{ "message": { "content": content } }] }).to_string();
+        let (url, server) = serve_once("200 OK", &answer);
+        let c = LlmConfig {
+            base_url: url,
+            model: "m".into(),
+            api_key: "sk-test".into(),
+        };
+        let parts = split(&c, TEXT, &UreqHttp).unwrap();
+        assert_eq!(
+            parts,
+            vec![Part {
+                label: "Email".into(),
+                value: "ann@example.com".into()
+            }]
+        );
+        let request = server.join().unwrap();
+        let (head, body) = request.split_once("\r\n\r\n").unwrap();
+        let head = head.to_ascii_lowercase();
+        assert!(head.starts_with("post /v1/chat/completions "));
+        assert!(head.contains("authorization: bearer sk-test"));
+        assert!(head.contains("content-type: application/json"));
+        let sent: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(sent["model"], "m");
+        assert_eq!(sent["messages"][1]["content"], TEXT);
+    }
+
+    #[test]
+    fn http_errors_become_plain_messages_without_the_server_text() {
+        for (status, wanted) in [
+            ("401 Unauthorized", "API key"),
+            ("404 Not Found", "model"),
+            ("429 Too Many Requests", "too many"),
+            ("500 Internal Server Error", "error (500)"),
+        ] {
+            let (url, server) = serve_once(status, "{\"error\":\"secret detail\"}");
+            let c = LlmConfig {
+                base_url: url,
+                model: "m".into(),
+                api_key: String::new(),
+            };
+            let e = split(&c, TEXT, &UreqHttp).unwrap_err();
+            server.join().unwrap();
+            assert!(e.contains(wanted), "{status}: {e}");
+            assert!(!e.contains("secret detail"));
+        }
+    }
+
+    #[test]
+    fn an_unreachable_server_is_a_plain_message() {
+        // Bind and drop: the port is closed now.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let c = LlmConfig {
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            model: "m".into(),
+            api_key: String::new(),
+        };
+        assert!(
+            split(&c, TEXT, &UreqHttp)
+                .unwrap_err()
+                .contains("could not reach")
+        );
     }
 }

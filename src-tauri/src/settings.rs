@@ -232,7 +232,10 @@ pub fn tidy_positions(list: &mut Vec<SavedPosition>) {
 /// Remember `x`, `y` for `monitor`, replacing its earlier entry. True when the
 /// list changed.
 pub fn remember_position(list: &mut Vec<SavedPosition>, monitor: &str, x: i32, y: i32) -> bool {
-    if list.iter().any(|p| p.monitor == monitor && p.x == x && p.y == y) {
+    if list
+        .iter()
+        .any(|p| p.monitor == monitor && p.x == x && p.y == y)
+    {
         return false;
     }
     list.push(SavedPosition {
@@ -322,7 +325,11 @@ impl Settings {
         }
         self.ignored_apps = tidy_ignored_apps(&self.ignored_apps, false).unwrap_or_default();
         tidy_positions(&mut self.window_positions);
-        for text in [&mut self.llm_base_url, &mut self.llm_model, &mut self.llm_api_key] {
+        for text in [
+            &mut self.llm_base_url,
+            &mut self.llm_model,
+            &mut self.llm_api_key,
+        ] {
             *text = text.trim().to_owned();
             if text.chars().count() > MAX_LLM_FIELD_CHARS {
                 issues.push("an LLM setting is too long, cleared".to_owned());
@@ -421,7 +428,11 @@ mod tests {
         }
         assert_eq!(l.len(), MAX_WINDOW_POSITIONS);
         assert_eq!(l.last().unwrap().monitor, "m39");
-        let mut junk = vec![SavedPosition { monitor: "  ".into(), x: 0, y: 0 }];
+        let mut junk = vec![SavedPosition {
+            monitor: "  ".into(),
+            x: 0,
+            y: 0,
+        }];
         tidy_positions(&mut junk);
         assert!(junk.is_empty());
     }
@@ -429,7 +440,11 @@ mod tests {
     #[test]
     fn saved_positions_round_trip_through_the_file_format() {
         let s = Settings {
-            window_positions: vec![SavedPosition { monitor: "\\\\.\\DISPLAY2".into(), x: -40, y: 90 }],
+            window_positions: vec![SavedPosition {
+                monitor: "\\\\.\\DISPLAY2".into(),
+                x: -40,
+                y: 90,
+            }],
             ..Settings::default()
         };
         let v = serde_json::to_value(&s).unwrap();
