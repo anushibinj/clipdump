@@ -1225,3 +1225,25 @@ needs a real window, monitor or LLM has been run.
       message contains the text or the server's answer.
 - [ ] A copy from an app on the ignore list is not captured and nothing is sent.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.
+
+### Tasks
+- [ ] `Ctrl+T` in the bar opens the task list with the input focused; `Ctrl+T` again returns to the
+      clipboard search. The first launch shows "Nothing on the list".
+- [ ] Type `Call the bank !` and press Enter: it is added as important, without the `!`, under "Up next".
+      Type `Water the plants` and Enter: a footer message says it is hidden and `Ctrl+H` shows it.
+      `Ctrl+Enter` with text adds the task under "Now".
+- [ ] With two tasks in flight, close the bar and open it with the hotkey: the filter row of the search
+      view names the one touched last and "+1". Click it: the task list opens.
+- [ ] `Enter` on an empty input moves the selected task from waiting to in flight to done; the footer says
+      `Shift+Enter` puts a done task back. A done task disappears from the calm view and is counted as
+      "done today"; `Ctrl+H` lists it.
+- [ ] `Ctrl+E` on a task in flight, type where you left off, Enter: the row shows "Left off: ...". Esc
+      while editing leaves the note as it was and does not hide the bar.
+- [ ] `Ctrl+H` shows the hidden tasks and hides them again; closing and opening the bar hides them again.
+- [ ] Quit from the tray and start the app: every task, note, star and state is back.
+- [ ] `%LOCALAPPDATA%\clipdump\tasks.bin` is not readable as text (task titles are not visible in it).
+      "Clear history" (`Ctrl+Shift+Delete`) leaves the tasks alone.
+- [ ] Damage `tasks.bin` (change a byte): the next start renames it to `tasks.unreadable-<ms>.bin` and
+      starts an empty list; the app and the clipboard history work normally.
+- [ ] Pinned bar mode on the task list: the window stays open while you work in another app, and a task
+      added from the bar shows at once.
