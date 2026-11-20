@@ -139,7 +139,11 @@ pub fn complete(
 ) -> Result<String, String> {
     let url = endpoint(&cfg.base_url)?;
     let bearer = Some(cfg.api_key.as_str()).filter(|k| !k.is_empty());
-    let body = http.post_json(&url, bearer, &build_chat(&cfg.model, system, user, temperature))?;
+    let body = http.post_json(
+        &url,
+        bearer,
+        &build_chat(&cfg.model, system, user, temperature),
+    )?;
     reply_text(&body)
 }
 

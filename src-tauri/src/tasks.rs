@@ -279,6 +279,11 @@ impl TaskStore {
         self.lock().tasks.clone()
     }
 
+    /// Task `id`, if it exists.
+    pub fn get(&self, id: u64) -> Option<Task> {
+        self.lock().tasks.iter().find(|t| t.id == id).cloned()
+    }
+
     /// Write `next` to disk; only when that worked does it replace the list in memory.
     fn commit(&self, state: &mut State, next: State) -> Result<(), TaskError> {
         self.write(&next)?;
@@ -785,7 +790,10 @@ mod tests {
         let clear: TaskPatch =
             serde_json::from_str(r#"{"size":null,"deferredUntil":null}"#).unwrap();
         let t = s.update(t.id, clear, 3).unwrap();
-        assert_eq!((t.size, t.kind, t.deferred_until), (None, Some(Kind::Waiting), None));
+        assert_eq!(
+            (t.size, t.kind, t.deferred_until),
+            (None, Some(Kind::Waiting), None)
+        );
     }
 
     #[test]
