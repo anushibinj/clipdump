@@ -435,7 +435,7 @@ async function keys(browser, url) {
   check("clicking a row copies that item", (await lastCall("copy_item"))?.args.id === second);
   await page.getByRole("radio", { name: /All/ }).click();
 
-  // bar:shown focuses and selects the query, bar:hidden resets the view
+  // bar:shown focuses and selects the query, bar:hidden keeps the view
   await reset();
   await page.keyboard.type("abc");
   await page.locator("body").click({ position: { x: 2, y: 2 } }); // focus leaves the input
@@ -452,9 +452,12 @@ async function keys(browser, url) {
   await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
   await settle();
   check(
-    "bar:hidden returns to the plain search view for the next open",
-    (await page.locator("h2", { hasText: "Settings" }).count()) === 0 && (await page.locator('aside[aria-label="Preview"]').count()) === 0,
+    "bar:hidden keeps the view the bar was left on (settings stay open for the next open)",
+    (await page.locator("h2", { hasText: "Settings" }).count()) === 1,
   );
+  await page.keyboard.press("Control+,");
+  await settle();
+  check("Ctrl+, goes back to the search", (await page.locator("input[cmdk-input]").count()) === 1);
 
   // history:changed
   await reset();
@@ -548,11 +551,14 @@ async function tasks(browser, url) {
   const reset = async () => {
     await page.evaluate(() => window.__clipMock.reset());
     await page.waitForTimeout(150);
-    // Back to the search view, like a hidden and shown bar (the task list loads when it is shown).
+    // Like a hidden and shown bar (the task list loads when it is shown). The view is remembered,
+    // so go back to the search by hand when the task list is open.
     await page.evaluate(() => {
       window.__clipMock.emit("bar:hidden");
       window.__clipMock.emit("bar:shown");
     });
+    await settle();
+    if ((await page.locator('[aria-label="Tasks"]').count()) > 0) await page.keyboard.press("Control+t");
     await settle();
   };
   const store = () => page.evaluate(() => window.__clipMock.tasks().map((t) => ({ ...t })));
@@ -562,7 +568,7 @@ async function tasks(browser, url) {
   const selectedTitle = () => page.locator('[aria-label="Tasks"] [aria-selected="true"] .truncate').first().textContent();
   const input = page.locator('input[placeholder]').first();
   const openTasks = async () => {
-    await page.keyboard.press("Control+t");
+    if ((await page.locator('[aria-label="Tasks"]').count()) === 0) await page.keyboard.press("Control+t");
     await page.waitForSelector('[aria-label="Tasks"]');
     await settle();
   };
@@ -782,12 +788,41 @@ async function tasks(browser, url) {
 
   // the bar being closed and opened again
   await openTasks();
+  await page.keyboard.press("Control+h");
+  await settle();
+  check("the hidden ones are shown", (await sections()).some((s) => s.startsWith("Later")));
   await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
   await settle();
-  check("closing the bar returns to the search view", (await page.locator("input[cmdk-input]").count()) === 1);
-  check("and the hidden ones are hidden again the next time", await (async () => {
-    await openTasks();
-    return (await sections()).every((s) => !s.startsWith("Later"));
+  check("closing the bar keeps the task list open", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  check("it is still the task list when the bar is shown again", (await page.locator('[aria-label="Tasks"]').count()) === 1 && (await page.locator("input[cmdk-input]").count()) === 0);
+  check("the input is focused", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+  check("the hidden ones are folded away again", (await sections()).every((s) => !s.startsWith("Later")));
+  await page.keyboard.type("a draft");
+  await page.evaluate(() => {
+    window.__clipMock.emit("bar:hidden");
+    window.__clipMock.emit("bar:shown");
+  });
+  await settle();
+  check("a half typed task survives closing the bar", (await input.inputValue()) === "a draft");
+  await input.fill("");
+
+  // a restart: a new page load in the same browser profile
+  await page.reload();
+  await page.waitForSelector('[aria-label="Tasks"]');
+  check("after a restart the app opens on the task list", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+  await page.keyboard.press("Control+t");
+  await page.reload();
+  await page.waitForSelector("input[cmdk-input]");
+  check("and on the search when that was the last view", (await page.locator('[aria-label="Tasks"]').count()) === 0);
+  check("blocked storage falls back to the search", await (async () => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "localStorage", { get() { throw new Error("blocked"); } });
+    });
+    await page.reload();
+    await page.waitForSelector("input[cmdk-input]");
+    return true;
   })());
 
   // empty and failing
