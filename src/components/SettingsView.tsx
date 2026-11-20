@@ -133,6 +133,49 @@ function NumberRow({
   );
 }
 
+/** A text field that commits on blur or Enter, and goes back to the stored value when the save is refused. */
+function TextRow({
+  id,
+  label,
+  hint,
+  value,
+  placeholder,
+  type = "text",
+  onCommit,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  value: string;
+  placeholder?: string;
+  type?: "text" | "password";
+  onCommit: (value: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    if (text.trim() !== value) onCommit(text.trim());
+  };
+  return (
+    <Row label={label} hint={hint} htmlFor={id}>
+      <Input
+        id={id}
+        type={type}
+        value={text}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+        className="h-8 w-64 font-mono text-xs"
+      />
+    </Row>
+  );
+}
+
 /** A chord as key caps. */
 function Chord({ chord }: { chord: string }) {
   return (
@@ -455,6 +498,46 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
               onCommit={(mb) => void save({ maxImageBytes: mbToBytes(mb) })}
             />
             <IgnoredApps apps={settings.ignoredApps} onChange={(apps) => void save({ ignoredApps: apps })} />
+          </Section>
+          <Separator />
+
+          <Section title="Split with AI">
+            <p className="py-2 text-xs text-muted-foreground">
+              Break a long text into items you can copy one by one (numbers, e-mails, tokens, user names,
+              passwords, anything). Works with any OpenAI compatible server: OpenAI, Ollama, LM Studio, and
+              others. The text of an item is sent to this server only when you press Split on it.
+            </p>
+            <TextRow
+              id="llm-url"
+              label="Server URL"
+              hint="The API root, for example https://api.openai.com/v1 or http://localhost:11434/v1."
+              value={settings.llmBaseUrl}
+              placeholder="http://localhost:11434/v1"
+              onCommit={(v) => void save({ llmBaseUrl: v })}
+            />
+            <TextRow
+              id="llm-model"
+              label="Model"
+              value={settings.llmModel}
+              placeholder="gpt-4o-mini"
+              onCommit={(v) => void save({ llmModel: v })}
+            />
+            <TextRow
+              id="llm-key"
+              label="API key"
+              hint="Optional for a local server. Stored in settings.json on this computer, unencrypted."
+              type="password"
+              value=""
+              placeholder={settings.llmApiKeySet ? "saved (type to replace)" : "none"}
+              onCommit={(v) => void save({ llmApiKey: v })}
+            />
+            {settings.llmApiKeySet && (
+              <div className="flex justify-end pb-2">
+                <Button type="button" variant="ghost" size="xs" onClick={() => void save({ llmApiKey: "" })}>
+                  Remove saved key
+                </Button>
+              </div>
+            )}
           </Section>
           <Separator />
 
