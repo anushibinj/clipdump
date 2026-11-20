@@ -8,6 +8,8 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-20
+
 ### Added
 
 - The bar can be moved: drag it by the search row or the filter row. The position is
@@ -31,6 +33,13 @@ All notable changes to Clipdump are listed here. The format follows
   stored in `settings.json` (not encrypted) and never returned to the UI. Note that a
   copied text, passwords included, is sent to your server whenever Split is set up
   (apps on the ignore list are never captured, so never sent).
+
+### Changed
+
+- Esc hides the bar even when the right pane is open (the pane is remembered; Tab closes it).
+- The footer no longer shows the "move" and "settings" shortcut hints; the shortcuts still work.
+- `settings.json` gains `window_positions` and the LLM fields, and the history database gains
+  a `splits` table; both are upgraded automatically.
 
 ## [0.1.0] - Unreleased
 
@@ -89,5 +98,6 @@ checklists in `docs/manual-checks.md` are done, treat this as a release candidat
   too; copying always works.
 - Windows only. The macOS and Linux ports are not started.
 
-[Unreleased]: https://github.com/anushibinj/clipdump/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/anushibinj/clipdump/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/anushibinj/clipdump/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/anushibinj/clipdump/releases/tag/v0.1.0
