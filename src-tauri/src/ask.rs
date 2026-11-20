@@ -383,6 +383,9 @@ pub fn plan(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
+    /// The number the model saw this excerpt under (and cites it by): its rank when sent.
+    /// Cited hits are moved to the front, so this is not the position in the list.
+    pub n: usize,
     pub source: Source,
     pub id: u64,
     pub created_at: i64,
@@ -521,9 +524,11 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
     order
         .into_iter()
         .take(MAX_SNIPPETS)
-        .map(|(i, _)| {
+        .enumerate()
+        .map(|(rank, (i, _))| {
             let c = pool[i];
             Hit {
+                n: rank + 1,
                 source: c.source,
                 id: c.id,
                 created_at: c.created_at,

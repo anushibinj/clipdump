@@ -273,8 +273,8 @@ fn a_short_text_is_sent_whole_and_multibyte_text_is_safe() {
 
 fn two_hits() -> Vec<Hit> {
     vec![
-        Hit { source: Source::Clip, id: 20, created_at: at(2026, 11, 6), title: String::new(), excerpt: "lunch at noon?".into(), quote: None, cited: false },
-        Hit { source: Source::Note, id: 10, created_at: at(2026, 11, 6), title: "1:1".into(), excerpt: "Priya wants the Q4 report\nby Friday.".into(), quote: None, cited: false },
+        Hit { n: 1, source: Source::Clip, id: 20, created_at: at(2026, 11, 6), title: String::new(), excerpt: "lunch at noon?".into(), quote: None, cited: false },
+        Hit { n: 2, source: Source::Note, id: 10, created_at: at(2026, 11, 6), title: "1:1".into(), excerpt: "Priya wants the Q4 report\nby Friday.".into(), quote: None, cited: false },
     ]
 }
 
@@ -285,6 +285,7 @@ fn a_cited_and_quoted_answer_is_kept_and_its_hit_moves_up() {
     let answer = parse_answer(reply, &mut hits).unwrap();
     assert_eq!(answer, "Priya wants the Q4 report by Friday [2].");
     assert_eq!(hits[0].id, 10);
+    assert_eq!((hits[0].n, hits[1].n), (2, 1), "numbers stay the ones the answer cites");
     assert!(hits[0].cited && hits[0].quote.as_deref() == Some("Q4 REPORT by friday"));
     assert!(!hits[1].cited && hits[1].quote.is_none());
 }
