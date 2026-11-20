@@ -107,6 +107,20 @@ export interface SettingsDto {
   hotkey: string;
   /** Start the app when the user logs in. */
   startAtLogin: boolean;
+  /** Base URL of an OpenAI compatible server for Split, e.g. "http://localhost:11434/v1". Empty: not set up. */
+  llmBaseUrl: string;
+  /** Model name sent to that server. */
+  llmModel: string;
+  /** Whether an API key is stored. The key itself never comes back from the backend. */
+  llmApiKeySet: boolean;
+  /** Send a new key to store it, "" to remove the stored one, null to keep it. Always null when read. */
+  llmApiKey: string | null;
+}
+
+/** One copyable piece of a split text: what it is, and the exact text to copy. */
+export interface SplitPart {
+  label: string;
+  value: string;
 }
 
 export interface StatsDto {
@@ -203,6 +217,20 @@ export function clearHistory(): Promise<number> {
   return invoke<number>("clear_history");
 }
 
+/**
+ * Ask the configured LLM server to break a text item into copyable pieces. Takes seconds; rejects
+ * with a plain message (use `errorMessage`) when Split is not set up or the server fails. Every
+ * returned value is an exact substring of the item.
+ */
+export function splitItem(id: number): Promise<SplitPart[]> {
+  return invoke<SplitPart[]>("split_item", { id });
+}
+
+/** Put one piece on the clipboard. The bar stays open and nothing is added to the history. */
+export function copyText(text: string): Promise<void> {
+  return invoke<void>("copy_text", { text });
+}
+
 export function getSettings(): Promise<SettingsDto> {
   return invoke<SettingsDto>("get_settings");
 }
@@ -227,6 +255,14 @@ export function openDataFolder(): Promise<void> {
 
 export function hideBar(): Promise<void> {
   return invoke<void>("hide_bar");
+}
+
+/**
+ * Hand the mouse to the OS window drag (call it on mousedown over a drag handle). The backend
+ * remembers where the bar is dropped, per monitor, and opens it there next time.
+ */
+export function startDrag(): Promise<void> {
+  return invoke<void>("start_drag");
 }
 
 /** Backend errors are plain strings; anything else is stringified. */

@@ -43,6 +43,10 @@ const DEFAULT_SETTINGS = {
   paused: false,
   hotkey: "Ctrl+Shift+Space",
   startAtLogin: true,
+  llmBaseUrl: "http://localhost:11434/v1",
+  llmModel: "llama3.2",
+  llmApiKeySet: false,
+  llmApiKey: null as string | null,
 };
 let settings = { ...DEFAULT_SETTINGS };
 
@@ -63,6 +67,10 @@ const control = {
   loginItemError: false,
   /** `get_stats` reports the hotkey as not registered at startup. */
   hotkeyStartupError: null as string | null,
+  /** `split_item` rejects with this message when set. */
+  splitError: null as string | null,
+  /** Simulated LLM time for `split_item`, in ms. */
+  splitDelayMs: 150,
   /** `open_data_folder` rejects with this message when set. */
   openFolderError: null as string | null,
   /** `get_stats` reports that the history was moved aside at startup (the recovery notice). */
@@ -216,6 +224,24 @@ function stats() {
   };
 }
 
+/** A stand-in for the model: pick out e-mails, phone numbers, URLs and key=value tokens, exactly as written. */
+function splitText(text: string): Promise<{ label: string; value: string }[]> {
+  const found: { label: string; value: string; at: number }[] = [];
+  const rules: [string, RegExp][] = [
+    ["Email", /[\w.+-]+@[\w-]+\.[\w.-]+/g],
+    ["URL", /https?:\/\/[^\s,;)]+/g],
+    ["Phone", /\+?\d[\d ()-]{6,}\d/g],
+    ["Token", /\b[A-Za-z0-9_-]{24,}\b/g],
+  ];
+  for (const [label, re] of rules) {
+    for (const m of text.matchAll(re)) found.push({ label, value: m[0], at: m.index ?? 0 });
+  }
+  found.sort((a, b) => a.at - b.at);
+  const seen = new Set<string>();
+  const parts = found.filter((p) => !seen.has(p.value) && seen.add(p.value)).map(({ label, value }) => ({ label, value }));
+  return new Promise((resolve) => setTimeout(() => resolve(parts), control.splitDelayMs));
+}
+
 function run(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "search":
@@ -277,7 +303,9 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       if (next.startAtLogin !== settings.startAtLogin && control.loginItemError) {
         throw "could not change the start at login setting";
       }
-      settings = { ...next };
+      // The key is write-only, like the real backend: null keeps it, "" removes it.
+      const keySet = next.llmApiKey === null ? settings.llmApiKeySet : next.llmApiKey !== "";
+      settings = { ...next, llmApiKey: null, llmApiKeySet: keySet };
       return { ...settings };
     }
     case "get_stats":
@@ -287,6 +315,17 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       return null;
     case "perf_ack":
       return null; // recorded in `control.calls` like every command
+    case "split_item": {
+      const row = find(Number(args.id));
+      if (!settings.llmBaseUrl || !settings.llmModel) throw "set up an LLM server in Settings first";
+      if (row.kind !== "text") throw "only text items can be split";
+      if (control.splitError) throw control.splitError;
+      return splitText(row.text);
+    }
+    case "copy_text":
+      return null;
+    case "start_drag":
+      return null; // the browser has no window to move
     case "hide_bar":
       setTimeout(() => emit("bar:hidden"), 0);
       return null;
