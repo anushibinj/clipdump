@@ -1,7 +1,7 @@
 import { memo, type PointerEvent } from "react";
-import { Check, Circle, CircleDot, Star } from "lucide-react";
+import { Check, Circle, CircleDot, NotebookPen, Star } from "lucide-react";
 import type { Task } from "@/lib/ipc";
-import { fullTime, relativeTime } from "@/lib/time";
+import { fullDateTime, fullTime, relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 /** DOM id of a row, for scroll-into-view and `aria-activedescendant`. */
@@ -19,6 +19,8 @@ interface TaskRowProps {
   /** Click on the status circle: waiting, in flight, done, and around. */
   onAdvance: (id: number) => void;
   onToggleImportant: (id: number) => void;
+  /** Click on the notes icon: open the notes sidebar for this task. */
+  onOpenNotes: (id: number) => void;
 }
 
 const STATUS_LABEL = {
@@ -41,12 +43,13 @@ export const TaskRow = memo(function TaskRow({
   onHover,
   onAdvance,
   onToggleImportant,
+  onOpenNotes,
 }: TaskRowProps) {
   const doing = task.status === "doing";
   const done = task.status === "done";
   const stale = doing && now - task.touchedAt >= STALE_MS;
   const age = done ? (task.doneAt ?? task.touchedAt) : task.touchedAt;
-  const showAge = doing || done;
+  const showAge = stale || done;
   return (
     <div
       id={taskRowId(task.id)}
@@ -119,6 +122,28 @@ export const TaskRow = memo(function TaskRow({
             {relativeTime(age, now)}
           </span>
         )}
+        <span
+          className="text-xs text-muted-foreground tabular-nums"
+          title={`Created ${fullDateTime(task.createdAt)}`}
+          aria-label={`Created ${relativeTime(task.createdAt, now)} ago`}
+        >
+          {relativeTime(task.createdAt, now)}
+        </span>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={task.note !== "" ? "Open notes" : "Add notes"}
+          title="Notes (Ctrl+E)"
+          onClick={() => onOpenNotes(task.id)}
+          className={cn(
+            "rounded p-0.5 transition-opacity",
+            task.note !== ""
+              ? "text-foreground/60"
+              : "text-muted-foreground opacity-0 group-hover/task:opacity-100 group-data-[selected=true]/task:opacity-100",
+          )}
+        >
+          <NotebookPen className="size-3.5" aria-hidden />
+        </button>
         <button
           type="button"
           tabIndex={-1}

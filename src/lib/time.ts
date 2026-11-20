@@ -29,3 +29,13 @@ export function minuteNow(ms: number = Date.now()): number {
 export function fullTime(ms: number): string {
   return new Date(ms).toLocaleString();
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Local date and time as "20-Nov-2025 04:11 PM", for tooltips. */
+export function fullDateTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const h = d.getHours();
+  return `${pad(d.getDate())}-${MONTHS[d.getMonth()]}-${d.getFullYear()} ${pad(h % 12 === 0 ? 12 : h % 12)}:${pad(d.getMinutes())} ${h < 12 ? "AM" : "PM"}`;
+}

@@ -41,3 +41,21 @@ export function writePaneOpen(open: boolean): void {
     // Not persisted; the choice still applies for this session.
   }
 }
+
+const NOTES_KEY = "clipdump.taskNotesOpen";
+
+export function readTaskNotesOpen(): boolean {
+  try {
+    return localStorage.getItem(NOTES_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeTaskNotesOpen(open: boolean): void {
+  try {
+    localStorage.setItem(NOTES_KEY, open ? "1" : "0");
+  } catch {
+    // Not persisted; the choice still applies for this session.
+  }
+}
