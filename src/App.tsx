@@ -15,6 +15,7 @@ import { useKeyboard } from "@/hooks/useKeyboard";
 import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
+import { readRightTab, writeRightTab, type RightTab } from "@/lib/pane";
 import {
   clearHistory,
   copyItem,
@@ -72,11 +73,8 @@ function App() {
   // notices take the footer first, then it comes back).
   const recovery = stats?.recovery && stats.recovery !== recoveryDismissed ? stats.recovery : null;
 
-  const split = useSplit(s.selectedId);
-  const runSplit = split.run;
-
-  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, runSplit });
-  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, runSplit };
+  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery });
+  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery };
 
   // ---- footer messages ----------------------------------------------------
 
@@ -157,6 +155,13 @@ function App() {
     [copy],
   );
 
+  // The right pane's tab (preview or AI split) is remembered across openings and restarts.
+  const [rightTab, setRightTab] = useState<RightTab>(readRightTab);
+  const changeTab = useCallback((tab: RightTab) => {
+    setRightTab(tab);
+    writeRightTab(tab);
+  }, []);
+
   const run = useCallback(
     (a: Action) => {
       const c = latest.current;
@@ -217,11 +222,9 @@ function App() {
           setPreviewOpen((v) => !v);
           break;
         case "split":
-          // Only text splits; the pieces show in the preview pane, so open it.
-          if (selected?.kind === "text") {
-            setPreviewOpen(true);
-            c.runSplit();
-          }
+          // Ctrl+Shift+S: the right pane, on its AI split tab.
+          changeTab("split");
+          setPreviewOpen(true);
           break;
         case "toggleSettings":
           disarm();
@@ -238,7 +241,7 @@ function App() {
           break;
       }
     },
-    [copy, dismissNotice, disarm, loadStats, showNotice],
+    [changeTab, copy, dismissNotice, disarm, loadStats, showNotice],
   );
 
   const onKeyDownCapture = useKeyboard(view, run);
@@ -328,7 +331,10 @@ function App() {
   // ---- render ---------------------------------------------------------------
 
   const selected = s.results.find((r) => r.id === s.selectedId) ?? null;
-  const preview = usePreview(s.selectedId, previewOpen && view === "search", historyTick);
+  const paneOpen = previewOpen && view === "search";
+  const preview = usePreview(s.selectedId, paneOpen && rightTab === "preview", historyTick);
+  // The AI split starts by itself once its tab is showing a text item.
+  const split = useSplit(s.selectedId, paneOpen && rightTab === "split" && selected?.kind === "text");
   const unpinned = stats ? stats.items - stats.pinned : null;
 
   // The shortcut hints belong to the search view; settings shows the footer only for a message.
@@ -424,6 +430,8 @@ function App() {
                     preview={preview.preview}
                     error={preview.error}
                     ocrHint={stats?.ocrHint ?? ""}
+                    tab={rightTab}
+                    onTabChange={changeTab}
                     split={split}
                     onError={(m) => showNotice("error", m)}
                   />

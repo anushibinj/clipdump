@@ -1,58 +1,75 @@
-import { useCallback, useState } from "react";
-import { errorMessage, splitItem, type SplitPart } from "@/lib/ipc";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { errorMessage, getSplit, onSplitUpdated, requestSplit, type SplitStatus } from "@/lib/ipc";
 
-export type SplitState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "done"; parts: SplitPart[] }
-  | { status: "error"; message: string };
-
-const IDLE: SplitState = { status: "idle" };
-/** Results kept, newest last. The content behind an id never changes, so a result stays right. */
-const KEEP = 30;
+/** `pending`: the request for this item has not been answered yet. */
+export type SplitView = SplitStatus | { status: "pending" };
 
 export interface SplitControl {
-  /** The state of `itemId`: what was asked for it, or idle. */
-  state: SplitState;
-  /** Ask the LLM to split `itemId` (no-op while it is already loading). */
-  run: () => void;
-  /** Back to the plain text view of `itemId`, forgetting its result. */
-  reset: () => void;
+  state: SplitView;
+  /** Run the split again, replacing the result (the re-split button). */
+  rerun: () => void;
 }
 
-/**
- * Split state per item. Switching to another item and back shows the earlier result without a
- * new (slow, possibly paid) request, and a response is stored under the id it was asked for, so
- * moving the selection while it loads never paints the pieces on the wrong item.
- */
-export function useSplit(itemId: number | null): SplitControl {
-  const [byId, setById] = useState<ReadonlyMap<number, SplitState>>(new Map());
+/** How long a selection must rest before it is sent: arrowing past items asks for nothing. */
+export const SPLIT_DEBOUNCE_MS = 250;
 
-  const put = useCallback((id: number, state: SplitState | null) => {
-    setById((m) => {
-      const next = new Map(m);
-      next.delete(id); // re-insert at the end: the Map order is the age
-      if (state) next.set(id, state);
-      while (next.size > KEEP) next.delete(next.keys().next().value as number);
-      return next;
-    });
+/**
+ * The split of the selected item, started by itself: once `enabled` (the AI split tab is showing a
+ * text item) and the selection has rested a moment, the backend is asked. It queues the job (two
+ * LLM calls at a time), keeps the result, and tells us through `split:updated` when something
+ * moves, so no polling. A response is applied only if it is for the item still wanted.
+ */
+export function useSplit(itemId: number | null, enabled: boolean): SplitControl {
+  const [shown, setShown] = useState<{ id: number; status: SplitStatus } | null>(null);
+  const wanted = useRef<number | null>(null);
+  wanted.current = enabled ? itemId : null;
+
+  const apply = useCallback((id: number, status: SplitStatus) => {
+    if (wanted.current === id) setShown({ id, status });
   }, []);
 
-  const state = itemId === null ? IDLE : (byId.get(itemId) ?? IDLE);
+  const request = useCallback(
+    (id: number, force: boolean) => {
+      requestSplit(id, force).then(
+        (s) => apply(id, s),
+        (e: unknown) => apply(id, { status: "error", message: errorMessage(e) }),
+      );
+    },
+    [apply],
+  );
 
-  const run = useCallback(() => {
-    if (itemId === null || byId.get(itemId)?.status === "loading") return;
-    const id = itemId;
-    put(id, { status: "loading" });
-    splitItem(id).then(
-      (parts) => put(id, { status: "done", parts }),
-      (e: unknown) => put(id, { status: "error", message: errorMessage(e) }),
-    );
-  }, [itemId, byId, put]);
+  useEffect(() => {
+    if (!enabled || itemId === null) return;
+    const t = window.setTimeout(() => request(itemId, false), SPLIT_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [enabled, itemId, request]);
 
-  const reset = useCallback(() => {
-    if (itemId !== null) put(itemId, null);
-  }, [itemId, put]);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let gone = false;
+    try {
+      onSplitUpdated(() => {
+        const id = wanted.current;
+        if (id !== null) getSplit(id).then((s) => apply(id, s), () => {});
+      }).then(
+        (fn) => (gone ? fn() : (unlisten = fn)),
+        () => {},
+      );
+    } catch {
+      // No event bus (plain browser without the mock): the result shows on the next look.
+    }
+    return () => {
+      gone = true;
+      unlisten?.();
+    };
+  }, [apply]);
 
-  return { state, run, reset };
+  const rerun = useCallback(() => {
+    if (itemId === null) return;
+    setShown({ id: itemId, status: { status: "queued" } });
+    request(itemId, true);
+  }, [itemId, request]);
+
+  const state: SplitView = shown !== null && shown.id === itemId ? shown.status : { status: "pending" };
+  return { state, rerun };
 }

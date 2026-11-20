@@ -1,10 +1,10 @@
 import { memo, type ReactNode } from "react";
-import { FileText, Files, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
+import { FileText, Files, Image as ImageIcon, Sparkles } from "lucide-react";
 import { FileList } from "@/components/FileList";
 import { ImagePreview } from "@/components/ImagePreview";
-import { SplitParts } from "@/components/SplitParts";
-import { Button } from "@/components/ui/button";
+import { SplitTab } from "@/components/SplitTab";
 import type { SplitControl } from "@/hooks/useSplit";
+import type { RightTab } from "@/lib/pane";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatBytes } from "@/lib/bytes";
 import type { PreviewDto, ResultDto } from "@/lib/ipc";
@@ -16,57 +16,49 @@ interface PreviewPaneProps {
   preview: PreviewDto | null;
   error: string | null;
   ocrHint: string;
-  /** Split state of the selected item (text items only). */
+  tab: RightTab;
+  onTabChange: (tab: RightTab) => void;
+  /** The AI split of the selected item (shown on the split tab). */
   split: SplitControl;
   /** A footer message for the bar. */
   onError: (message: string) => void;
 }
 
-function Header({
-  icon: Icon,
-  title,
-  meta,
-  action,
+function TabButton({
+  active,
+  onClick,
+  children,
 }: {
-  icon: typeof FileText;
-  title: string;
-  meta: string;
-  action?: ReactNode;
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
 }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      tabIndex={-1}
+      // Keep the caret in the search input.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+        active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Header({ icon: Icon, title, meta }: { icon: typeof FileText; title: string; meta: string }) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-2 border-b px-3 text-xs">
       <Icon className="size-3.5 text-muted-foreground" aria-hidden />
       <span className="font-medium">{title}</span>
       <span className="ml-auto text-muted-foreground tabular-nums">{meta}</span>
-      {action}
     </div>
-  );
-}
-
-/** The Split button of a text preview: asks the LLM, or goes back to the plain text. */
-function SplitButton({ split }: { split: SplitControl }) {
-  const { status } = split.state;
-  if (status === "done") {
-    return (
-      <Button type="button" variant="ghost" size="xs" tabIndex={-1} onClick={split.reset} onMouseDown={(e) => e.preventDefault()}>
-        Show text
-      </Button>
-    );
-  }
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="xs"
-      tabIndex={-1}
-      disabled={status === "loading"}
-      title="Split into copyable items with your LLM (Ctrl+Shift+S)"
-      onClick={split.run}
-      onMouseDown={(e) => e.preventDefault()}
-    >
-      {status === "loading" ? <Loader2 className="animate-spin" aria-hidden /> : <Sparkles aria-hidden />}
-      {status === "loading" ? "Splitting..." : "Split"}
-    </Button>
   );
 }
 
@@ -80,6 +72,8 @@ export const PreviewPane = memo(function PreviewPane({
   preview,
   error,
   ocrHint,
+  tab,
+  onTabChange,
   split,
   onError,
 }: PreviewPaneProps) {
@@ -89,7 +83,19 @@ export const PreviewPane = memo(function PreviewPane({
       aria-label="Preview"
       className="flex w-[46%] min-w-0 shrink-0 flex-col border-l bg-muted/20"
     >
-      {error ? (
+      <div role="tablist" aria-label="Right pane" className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
+        <TabButton active={tab === "preview"} onClick={() => onTabChange("preview")}>
+          <FileText className="size-3.5" aria-hidden />
+          Preview
+        </TabButton>
+        <TabButton active={tab === "split"} onClick={() => onTabChange("split")}>
+          <Sparkles className="size-3.5" aria-hidden />
+          AI split
+        </TabButton>
+      </div>
+      {tab === "split" ? (
+        <SplitTab kind={result?.kind ?? null} split={split} onError={onError} />
+      ) : error ? (
         <p role="alert" className="p-4 text-xs text-muted-foreground">
           The preview could not be loaded: {error}
         </p>
@@ -107,16 +113,7 @@ export const PreviewPane = memo(function PreviewPane({
                 icon={FileText}
                 title="Text"
                 meta={`${preview.totalChars.toLocaleString()} chars, ${formatBytes(preview.byteSize)}`}
-                action={stale ? null : <SplitButton split={split} />}
               />
-              {split.state.status === "error" && (
-                <p role="alert" className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-red-700 dark:text-destructive">
-                  {split.state.message}
-                </p>
-              )}
-              {split.state.status === "done" && !stale ? (
-                <SplitParts parts={split.state.parts} onError={onError} />
-              ) : (
               <ScrollArea className="min-h-0 flex-1">
                 <pre className="p-3 font-mono text-xs/5 whitespace-pre-wrap break-words select-text">
                   {preview.text}
@@ -127,7 +124,6 @@ export const PreviewPane = memo(function PreviewPane({
                   </p>
                 )}
               </ScrollArea>
-              )}
             </>
           )}
           {preview.kind === "image" && (
