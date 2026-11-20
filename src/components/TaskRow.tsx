@@ -1,5 +1,6 @@
 import { memo, type PointerEvent } from "react";
-import { Check, Circle, CircleDot, NotebookPen, Star } from "lucide-react";
+import { Check, Circle, CircleDot, Lock, NotebookPen, Star, Timer } from "lucide-react";
+import { formatDuration } from "@/lib/focus";
 import type { Task } from "@/lib/ipc";
 import { fullDateTime, fullTime, relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,14 @@ interface TaskRowProps {
   onToggleImportant: (id: number) => void;
   /** Click on the notes icon: open the notes sidebar for this task. */
   onOpenNotes: (id: number) => void;
+  /** Click on the timer icon: lock the list to this task for a while. */
+  onFocus?: (id: number) => void;
+  /** Another task is locked in focus: this one cannot be changed (it shows dimmed). */
+  locked?: boolean;
+  /** This is the task the list is locked to. */
+  focused?: boolean;
+  /** Time focused on this task so far, 0 for none. */
+  focusedMs?: number;
 }
 
 const STATUS_LABEL = {
@@ -44,6 +53,10 @@ export const TaskRow = memo(function TaskRow({
   onAdvance,
   onToggleImportant,
   onOpenNotes,
+  onFocus,
+  locked = false,
+  focused = false,
+  focusedMs = 0,
 }: TaskRowProps) {
   const doing = task.status === "doing";
   const done = task.status === "done";
@@ -58,12 +71,17 @@ export const TaskRow = memo(function TaskRow({
       data-selected={selected}
       data-id={task.id}
       data-status={task.status}
+      data-locked={locked}
+      aria-disabled={locked || undefined}
+      title={locked ? "Locked while you focus on another task" : undefined}
       className={cn(
         "group/task mx-1 flex cursor-default items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
         "scroll-my-1 data-[selected=true]:bg-foreground/[0.07] dark:data-[selected=true]:bg-foreground/[0.1]",
+        locked && "opacity-40",
+        focused && "bg-primary/[0.08] ring-1 ring-primary/40",
       )}
       onPointerMove={(e: PointerEvent) => {
-        if (e.movementX !== 0 || e.movementY !== 0) onHover(task.id);
+        if (!locked && (e.movementX !== 0 || e.movementY !== 0)) onHover(task.id);
       }}
       // Keep keyboard focus in the input.
       onMouseDown={(e) => e.preventDefault()}
@@ -73,6 +91,7 @@ export const TaskRow = memo(function TaskRow({
         tabIndex={-1}
         aria-label={`${STATUS_LABEL[task.status]}: ${task.title}`}
         title={STATUS_LABEL[task.status]}
+        disabled={locked}
         onClick={() => onAdvance(task.id)}
         className="mt-px flex size-[18px] shrink-0 items-center justify-center rounded-full"
       >
@@ -111,6 +130,15 @@ export const TaskRow = memo(function TaskRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5 pt-px">
+        {focusedMs > 0 && (
+          <span
+            className="flex items-center gap-0.5 text-xs text-muted-foreground tabular-nums"
+            title={`Focused ${formatDuration(focusedMs)} in total`}
+          >
+            <Timer className="size-3" aria-hidden />
+            {formatDuration(focusedMs)}
+          </span>
+        )}
         {showAge && (
           <span
             className={cn(
@@ -129,11 +157,30 @@ export const TaskRow = memo(function TaskRow({
         >
           {relativeTime(task.createdAt, now)}
         </span>
+        {focused ? (
+          <Lock className="size-3.5 text-primary" aria-label="Locked in focus" />
+        ) : (
+          !locked &&
+          !done &&
+          onFocus && (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label={`Focus on ${task.title}`}
+              title="Lock in on this task (Ctrl+L)"
+              onClick={() => onFocus(task.id)}
+              className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/task:opacity-100 group-data-[selected=true]/task:opacity-100"
+            >
+              <Timer className="size-3.5" aria-hidden />
+            </button>
+          )
+        )}
         <button
           type="button"
           tabIndex={-1}
           aria-label={task.note !== "" ? "Open notes" : "Add notes"}
           title="Notes (Ctrl+E)"
+          disabled={locked}
           onClick={() => onOpenNotes(task.id)}
           className={cn(
             "rounded p-0.5 transition-opacity",
@@ -150,6 +197,7 @@ export const TaskRow = memo(function TaskRow({
           aria-label={task.important ? "Not important" : "Important"}
           aria-pressed={task.important}
           title={task.important ? "Important (Ctrl+I)" : "Mark important (Ctrl+I)"}
+          disabled={locked}
           onClick={() => onToggleImportant(task.id)}
           className={cn(
             "rounded p-0.5 transition-opacity",
