@@ -5,6 +5,7 @@
 - **Commit small and often.** Make a git commit after every small module or logical unit (one file, one function group, one config change). Ten commits per feature is fine. Never batch a whole phase into one commit. Use Conventional Commit one-liners, e.g. `feat(store): add hash dedup index`.
 - Use **pnpm** for every Node operation (`pnpm install`, `pnpm dlx`, `pnpm tauri dev`). Never use npm or npx.
 - Do not use em dashes in any text, docs, UI copy or comments.
+- **The bar always reopens where it was left.** The last view (search, tasks, settings) and the layout around it (right pane open and its tab, theme) are remembered across openings and restarts (`src/lib/view.ts`, `pane.ts`, `theme.ts`). Never reset a view on `bar:hidden`, on show or at startup; a new view must be added to `VIEWS` so it is restored too. Only transient state may fold away on hide (a pending "press again" confirmation, revealed hidden tasks); typed drafts survive. The user's place is theirs: any new feature restores it instead of sending them back to a default.
 - Speed is the top requirement. When a choice trades speed for convenience, pick speed and note why in a code comment.
 - **The hot path (hotkey, typing, copy) must never touch disk, OCR or image decoding.** Those run on background threads.
 - Local only. No network calls at runtime, no telemetry, no remote fonts or CDNs.
@@ -21,7 +22,7 @@ A background app that records everything copied (text, images, screenshots, file
 3. User types. Results update on every keystroke. Search covers text content, **OCR text extracted from images and screenshots**, and file names/paths.
 4. Arrow keys move selection. **`Ctrl+Enter` copies the selected item to the clipboard and hides the bar.** User pastes anywhere with `Ctrl+V`. Images paste as images, files paste as files (e.g. into Explorer, Slack, email).
 5. Optional (setting, default off): **`Enter` copies AND auto-pastes** into the window that was focused before the bar opened.
-6. `Esc` or clicking outside hides the bar. The bar is never destroyed, only hidden, so the next open is instant.
+6. `Esc` or clicking outside hides the bar. The bar is never destroyed, only hidden, so the next open is instant, and it opens on the view it was left on.
 
 ### What gets captured
 | Type | Windows source | Stored as |
@@ -48,6 +49,22 @@ Files are stored as **references**. If a file is later moved or deleted, the ite
 - `Alt+1` .. `Alt+4`: type filter All / Text / Images / Files. Typed prefixes also work: `img:`, `file:`, `txt:`.
 - `Tab`: toggle preview pane (full text, large image with OCR text below, or file list).
 - `Ctrl+,`: settings.
+
+### Tasks (`Ctrl+T`)
+A task list in the same bar, for the work in progress around the clipboard. Tasks are not clipboard items:
+they live in their own encrypted file (`tasks.bin`), so retention, "Clear history" and the history recovery
+never touch them.
+- States: waiting, in flight, done. Any number of tasks can be in flight; each has an optional "left off" note.
+- The view shows **Now** (all in flight, last touched first) and **Up next** (important waiting tasks, three at
+  most). Everything else (waiting but not important, done today) is one count away: `Ctrl+H` shows it, and it
+  folds away again on the next open. The bar reopens on the tasks view if that is where it was left. A task in flight untouched for a day shows its age in amber.
+- The search view's filter row names the task touched last, so it is in sight when the bar opens.
+- One input does it all: `Enter` adds (a lone trailing `!` marks it important), `Ctrl+Enter` adds and starts;
+  on an empty input `Enter` moves the selected task along, `Shift+Enter` back, `Ctrl+I` toggles important,
+  `Ctrl+E` edits the note, `F2` the title, `Ctrl+Delete` deletes, `Esc` peels an edit, the typed text, then the bar.
+- Limits: 500 tasks, titles 300 characters, notes 1,000; done tasks are dropped after 30 days.
+- Code: `src-tauri/src/tasks.rs` (store, atomic encrypted saves), `commands/tasks.rs`, `src/lib/tasks.ts` (what shows),
+  `src/lib/taskKeys.ts` (keys), `src/components/TasksView.tsx`.
 
 ### Optional "pinned bar" mode (setting)
 Keep the bar permanently visible as a slim always-on-top strip (does not hide on blur). Hotkey then just focuses it.

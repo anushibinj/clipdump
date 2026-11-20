@@ -16,7 +16,7 @@ export interface KeyInfo {
   keyCode?: number;
 }
 
-export type View = "search" | "settings";
+export type View = "search" | "settings" | "tasks";
 
 export type Action =
   | { type: "copy"; paste: boolean }
@@ -33,6 +33,8 @@ export type Action =
   | { type: "toggleSettings" }
   /** Ctrl+?: open or close the shortcuts help. */
   | { type: "toggleShortcuts" }
+  /** Ctrl+T: between the clipboard search and the task list. */
+  | { type: "toggleTasks" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -54,7 +56,8 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   const { ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta } = e;
   if (meta) return null;
 
-  if (e.key === "Escape" && !ctrl && !alt && !shift) return { type: "escape" };
+  // The task view peels its own layers with Esc (an edit, the typed text, then the bar).
+  if (e.key === "Escape" && !ctrl && !alt && !shift && view !== "tasks") return { type: "escape" };
   if (ctrl && !alt && !shift && (e.key === "," || e.code === "Comma")) {
     return { type: "toggleSettings" };
   }
@@ -62,8 +65,11 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && !alt && (e.key === "?" || (shift && e.code === "Slash"))) {
     return { type: "toggleShortcuts" };
   }
-  // The settings view has its own fields: only Esc and Ctrl+, act there.
-  if (view === "settings") return null;
+  if (ctrl && !alt && !shift && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
+    return { type: "toggleTasks" };
+  }
+  // The settings and task views have their own fields and keys: only Esc, Ctrl+, Ctrl+? and Ctrl+T act here.
+  if (view !== "search") return null;
 
   const d = digit(e);
   if (alt && !ctrl && !shift && d !== null && d >= 1 && d <= FILTER_ORDER.length) {

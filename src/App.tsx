@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ConfirmInline } from "@/components/ConfirmInline";
 import { EmptyState } from "@/components/EmptyState";
@@ -9,12 +9,16 @@ import { rowId } from "@/components/ResultItem";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
 import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { TasksButton } from "@/components/TasksButton";
+import { TasksView } from "@/components/TasksView";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TypeFilter } from "@/components/TypeFilter";
 import { useKeyboard } from "@/hooks/useKeyboard";
 import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
+import { useTasks } from "@/hooks/useTasks";
+import { readView, writeView } from "@/lib/view";
 import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
 import {
   clearHistory,
@@ -50,7 +54,17 @@ const NOTICE_MS = 5000;
 
 function App() {
   const s = useSearch();
-  const [view, setView] = useState<View>("search");
+  const tasks = useTasks();
+  // The bar opens on the view it was left on (search, tasks or settings), across openings and
+  // restarts: hiding the bar never resets it (`lib/view.ts`).
+  const [view, setViewState] = useState<View>(readView);
+  const setView = useCallback((next: View | ((v: View) => View)) => {
+    setViewState((v) => {
+      const to = typeof next === "function" ? next(v) : next;
+      writeView(to);
+      return to;
+    });
+  }, []);
   // The right pane stays open or closed the way it was left, across openings and restarts.
   const [previewOpen, setPreviewOpen] = useState(readPaneOpen);
   useEffect(() => writePaneOpen(previewOpen), [previewOpen]);
@@ -61,6 +75,8 @@ function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
   const [historyTick, setHistoryTick] = useState(0);
+  // Counts the times the bar was hidden; the task list folds its revealed extras away on each.
+  const [hiddenSignal, setHiddenSignal] = useState(0);
   // The sentence the user dismissed, so the recovery notice does not come back on the next open.
   const [recoveryDismissed, setRecoveryDismissed] = useState<string | null>(null);
 
@@ -241,6 +257,10 @@ function App() {
           disarm();
           setView((v) => (v === "settings" ? "search" : "settings"));
           break;
+        case "toggleTasks":
+          disarm();
+          setView((v) => (v === "tasks" ? "search" : "tasks"));
+          break;
         case "escape":
           // Layers, innermost first: pending confirmation, settings, the recovery notice (the
           // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is
@@ -259,9 +279,11 @@ function App() {
 
   // ---- events and first load ------------------------------------------------
 
+  const refreshTasks = tasks.refresh;
   useEffect(() => {
     loadSettings();
     loadStats();
+    refreshTasks();
     const subs: Promise<UnlistenFn>[] = [];
     try {
       subs.push(
@@ -281,10 +303,12 @@ function App() {
           }
           loadSettings(); // the tray can pause capture while the bar is hidden
           loadStats();
+          refreshTasks();
         }),
         onBarHidden(() => {
-          // Back to the plain search view for the next open.
-          setView("search");
+          // The view stays as it is: the next open shows it again. Only a pending confirmation
+          // and the task list's revealed extras go back to their calm state.
+          setHiddenSignal((n) => n + 1);
           disarm();
         }),
         onHistoryChanged(() => {
@@ -304,12 +328,12 @@ function App() {
     return () => {
       subs.forEach((p) => p.then((fn) => fn()).catch(() => {}));
     };
-  }, [disarm, loadSettings, loadStats]);
+  }, [disarm, loadSettings, loadStats, refreshTasks]);
 
-  // Keep keyboard focus inside the card: the input in the search view, the card itself in
-  // settings (so Esc and Ctrl+, still reach the key handler when no field is focused).
+  // Keep keyboard focus inside the card: the input in the search and task views, the card itself
+  // in settings (so Esc and Ctrl+, still reach the key handler when no field is focused).
   useEffect(() => {
-    if (view === "search") inputRef.current?.focus();
+    if (view !== "settings") inputRef.current?.focus();
     else mainRef.current?.focus();
   }, [view]);
 
@@ -346,6 +370,10 @@ function App() {
   // The AI split starts by itself once its tab is showing a text item.
   const split = useSplit(s.selectedId, paneOpen && rightTab === "split" && selected?.kind === "text");
   const unpinned = stats ? stats.items - stats.pinned : null;
+  const inFlight = useMemo(
+    () => tasks.tasks.filter((t) => t.status === "doing").sort((a, b) => b.touchedAt - a.touchedAt),
+    [tasks.tasks],
+  );
 
   // The footer carries messages on the left and the Shortcuts button on the right.
   const footer = (
@@ -382,13 +410,30 @@ function App() {
           role={inSettings ? "dialog" : undefined}
           aria-modal={inSettings ? true : undefined}
           aria-label={inSettings ? "Settings" : undefined}
-          onKeyDownCapture={view === "settings" ? onKeyDownCapture : undefined}
+          onKeyDownCapture={view !== "search" ? onKeyDownCapture : undefined}
           className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
         >
           <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
             {inSettings ? "" : resultCount}
           </div>
-          {view === "settings" ? (
+          {view === "tasks" ? (
+            <div className="flex h-full flex-col">
+              <div className="min-h-0 flex-1">
+                <TasksView
+                  api={tasks}
+                  collapseSignal={hiddenSignal}
+                  inputRef={inputRef}
+                  onNotice={showNotice}
+                  onBack={() => setView("search")}
+                  onClose={dismiss}
+                  onDragHeader={dragFromHeader}
+                  pinned={settings?.pinnedBar ?? false}
+                  onTogglePinned={togglePinnedWindow}
+                />
+              </div>
+              {footer}
+            </div>
+          ) : view === "settings" ? (
             <div className="flex h-full flex-col">
               <div className="min-h-0 flex-1">
                 <SettingsView
@@ -423,7 +468,11 @@ function App() {
                     onDismiss={dismiss}
                     activeDescendant={s.selectedId === null ? undefined : rowId(s.selectedId)}
                   />
-                  <TypeFilter value={s.filter} onChange={s.setFilter} />
+                  <TypeFilter
+                    value={s.filter}
+                    onChange={s.setFilter}
+                    trailing={<TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />}
+                  />
                 </div>
               }
               empty={
@@ -451,6 +500,7 @@ function App() {
         </main>
       </div>
       <ShortcutsDialog
+        view={view}
         open={shortcutsOpen}
         onOpenChange={setShortcutsOpen}
         onCloseAutoFocus={(e) => {

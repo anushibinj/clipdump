@@ -1,6 +1,7 @@
 // Browser checks of the UI against the fake backend (src/dev, `vite --mode mock`).
 //
 //   node scripts/ui-check.mjs keys    keyboard flow assertions (exit code 1 on a failure)
+//   node scripts/ui-check.mjs tasks   keyboard and mouse flow of the Tasks view (exit code 1 on a failure)
 //   node scripts/ui-check.mjs perf    keystroke to rendered timings with 1,000 fake items
 //   node scripts/ui-check.mjs a11y    accessibility audit in light and dark: ARIA roles and names of the
 //                                     search view and settings, a live region for the result count,
@@ -434,7 +435,7 @@ async function keys(browser, url) {
   check("clicking a row copies that item", (await lastCall("copy_item"))?.args.id === second);
   await page.getByRole("radio", { name: /All/ }).click();
 
-  // bar:shown focuses and selects the query, bar:hidden resets the view
+  // bar:shown focuses and selects the query, bar:hidden keeps the view
   await reset();
   await page.keyboard.type("abc");
   await page.locator("body").click({ position: { x: 2, y: 2 } }); // focus leaves the input
@@ -451,9 +452,12 @@ async function keys(browser, url) {
   await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
   await settle();
   check(
-    "bar:hidden returns to the plain search view for the next open",
-    (await page.locator("h2", { hasText: "Settings" }).count()) === 0 && (await page.locator('aside[aria-label="Preview"]').count()) === 0,
+    "bar:hidden keeps the view the bar was left on (settings stay open for the next open)",
+    (await page.locator("h2", { hasText: "Settings" }).count()) === 1,
   );
+  await page.keyboard.press("Control+,");
+  await settle();
+  check("Ctrl+, goes back to the search", (await page.locator("input[cmdk-input]").count()) === 1);
 
   // history:changed
   await reset();
@@ -529,6 +533,320 @@ async function keys(browser, url) {
   console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
   await page.context().close();
   return failed;
+}
+
+
+// ---------------------------------------------------------------------------
+// tasks
+// ---------------------------------------------------------------------------
+
+async function tasks(browser, url) {
+  const { page, problems } = await openPage(browser, url);
+  let failed = 0;
+  const check = (name, ok, detail = "") => {
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `  (${detail})`}`);
+    if (!ok) failed += 1;
+  };
+  const settle = () => page.waitForTimeout(120);
+  const reset = async () => {
+    await page.evaluate(() => window.__clipMock.reset());
+    await page.waitForTimeout(150);
+    // Like a hidden and shown bar (the task list loads when it is shown). The view is remembered,
+    // so go back to the search by hand when the task list is open.
+    await page.evaluate(() => {
+      window.__clipMock.emit("bar:hidden");
+      window.__clipMock.emit("bar:shown");
+    });
+    await settle();
+    if ((await page.locator('[aria-label="Tasks"]').count()) > 0) await page.keyboard.press("Control+t");
+    await settle();
+  };
+  const store = () => page.evaluate(() => window.__clipMock.tasks().map((t) => ({ ...t })));
+  const byTitle = async (title) => (await store()).find((t) => t.title === title);
+  const titles = () => page.locator('[aria-label="Tasks"] [role="option"]').evaluateAll((els) => els.map((e) => e.querySelector(".truncate")?.textContent));
+  const sections = () => page.locator('[aria-label="Tasks"] h3').evaluateAll((els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
+  const selectedTitle = () => page.locator('[aria-label="Tasks"] [aria-selected="true"] .truncate').first().textContent();
+  const input = page.locator('input[placeholder]').first();
+  const openTasks = async () => {
+    if ((await page.locator('[aria-label="Tasks"]').count()) === 0) await page.keyboard.press("Control+t");
+    await page.waitForSelector('[aria-label="Tasks"]');
+    await settle();
+  };
+
+  // the way in: a button that names what is in flight, and Ctrl+T
+  const button = page.locator('button[title="Tasks (Ctrl+T)"]');
+  check("the search view names the task touched last", (await button.textContent()).includes("Fix the flaky checkout test"));
+  check("and how many more are in flight", (await button.textContent()).includes("+1"));
+  await openTasks();
+  check("Ctrl+T opens the task list", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+  check("the input is focused", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+
+  // what shows: everything in flight, a few up next, the rest hidden
+  check("sections are Now and Up next", JSON.stringify(await sections()) === JSON.stringify(["Now 2", "Up next 2"]), JSON.stringify(await sections()));
+  check(
+    "tasks that are not important are hidden",
+    !(await titles()).includes("Update the onboarding doc") && !(await titles()).includes("Book the dentist"),
+  );
+  check("the summary counts what is in flight and done", (await page.locator("text=2 in flight").count()) === 1 && (await page.locator("text=1 done today").count()) === 1);
+  check("a button offers the 4 hidden ones", (await page.locator("button", { hasText: "Show 4 hidden" }).count()) === 1);
+  check("the task in flight touched last is first and selected", (await selectedTitle()) === "Fix the flaky checkout test");
+  check("its note shows", (await page.locator("text=Fails only on the second run").count()) === 1);
+
+  // Ctrl+H shows and hides
+  await page.keyboard.press("Control+h");
+  await settle();
+  check("Ctrl+H shows the hidden ones and done", JSON.stringify(await sections()) === JSON.stringify(["Now 2", "Up next 2", "Later 4", "Done 1"]), JSON.stringify(await sections()));
+  check("the button now says Show less", (await page.locator("button", { hasText: "Show less" }).count()) === 1);
+  await page.keyboard.press("Control+h");
+  await settle();
+  check("Ctrl+H again hides them", JSON.stringify(await sections()) === JSON.stringify(["Now 2", "Up next 2"]));
+
+  // arrows
+  await page.keyboard.press("ArrowDown");
+  check("ArrowDown selects the next task", (await selectedTitle()) === "Review the migration PR");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  // Up next is oldest first: the demo task has waited longest.
+  check("ArrowUp wraps to the last", (await selectedTitle()) === "Reply to the vendor about the invoice");
+
+  // capture
+  await page.keyboard.type("Water the plants");
+  await page.keyboard.press("Enter");
+  await settle();
+  const plants = await byTitle("Water the plants");
+  check("Enter adds a waiting task that is not important", plants && plants.status === "todo" && plants.important === false);
+  check("the input is cleared", (await input.inputValue()) === "");
+  check("a task that would be hidden says where it went", (await page.locator("text=Ctrl+H to show them").count()) + (await page.locator("text=press Ctrl+H to show them").count()) >= 1);
+  check("and does not show", !(await titles()).includes("Water the plants"));
+
+  await page.keyboard.type("Call the bank !");
+  await page.keyboard.press("Enter");
+  await settle();
+  const bank = await byTitle("Call the bank");
+  check("a trailing ! marks it important and is not in the title", bank && bank.important === true && bank.status === "todo");
+
+  await page.keyboard.type("Write the release notes");
+  await page.keyboard.press("Control+Enter");
+  await settle();
+  const notes = await byTitle("Write the release notes");
+  check("Ctrl+Enter adds and starts", notes && notes.status === "doing");
+  check("it shows under Now and is selected", (await selectedTitle()) === "Write the release notes");
+  check("the search view button follows what is in flight", await (async () => {
+    await page.keyboard.press("Control+t");
+    await settle();
+    const t = await button.textContent();
+    await page.keyboard.press("Control+t");
+    await settle();
+    return t.includes("Write the release notes") && t.includes("+2");
+  })());
+
+  await page.keyboard.type("ship it!");
+  await page.keyboard.press("Enter");
+  await settle();
+  check("a ! stuck to a word stays in the title", !!(await byTitle("ship it!")) && (await byTitle("ship it!")).important === false);
+
+  // blanks add nothing
+  const count = (await store()).length;
+  await page.keyboard.type("   ");
+  await page.keyboard.press("Enter");
+  await settle();
+  check("blanks add nothing", (await store()).length === count);
+  await input.fill("");
+
+  // advance on an empty input
+  await reset();
+  await openTasks();
+  check("after a reset the first task is selected again", (await selectedTitle()) === "Fix the flaky checkout test");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  check("selected a waiting task", (await selectedTitle()) === "Prepare the Thursday demo", await selectedTitle());
+  await page.keyboard.press("Enter");
+  await settle();
+  check("Enter on an empty input starts the selected waiting task", (await byTitle("Prepare the Thursday demo")).status === "doing");
+  check("it moved under Now", JSON.stringify(await sections()) === JSON.stringify(["Now 3", "Up next 1"]), JSON.stringify(await sections()));
+  check("the selection follows it", (await selectedTitle()) === "Prepare the Thursday demo");
+  await page.keyboard.press("Enter");
+  await settle();
+  const demo = await byTitle("Prepare the Thursday demo");
+  check("Enter again finishes it", demo.status === "done" && demo.doneAt !== null);
+  check("finishing says how to undo", (await page.locator("text=Shift+Enter puts it back").count()) === 1);
+  check("and the done task leaves the calm view", !(await titles()).includes("Prepare the Thursday demo"));
+  check("the neighbor is selected", (await selectedTitle()) !== null);
+  // Undo: show the done ones; done tasks list the latest first, so it is the second row from the end.
+  await page.keyboard.press("Control+h");
+  await settle();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  check("the done task is selected", (await selectedTitle()) === "Prepare the Thursday demo", await selectedTitle());
+  await page.keyboard.press("Shift+Enter");
+  await settle();
+  check("Shift+Enter steps a done task back to in flight", (await byTitle("Prepare the Thursday demo")).status === "doing");
+  await page.keyboard.press("Shift+Enter");
+  await settle();
+  check("and once more back to waiting", (await byTitle("Prepare the Thursday demo")).status === "todo");
+  await page.keyboard.press("Shift+Enter");
+  await settle();
+  check("a waiting task has no step back", (await byTitle("Prepare the Thursday demo")).status === "todo");
+
+  // Ctrl+Enter on an empty input finishes directly
+  await reset();
+  await openTasks();
+  await page.keyboard.press("Control+Enter");
+  await settle();
+  check("Ctrl+Enter on an empty input finishes the selected task", (await byTitle("Fix the flaky checkout test")).status === "done");
+  // Ctrl+Enter on a done task reopens it: show everything, the last row is the oldest done one.
+  await page.keyboard.press("Control+h");
+  await settle();
+  await page.keyboard.press("ArrowUp");
+  check("the last row is a done task", (await selectedTitle()) === "Send the weekly summary", await selectedTitle());
+  await page.keyboard.press("Control+Enter");
+  await settle();
+  check("Ctrl+Enter reopens a done task", (await byTitle("Send the weekly summary")).status === "todo");
+
+  // important and edits
+  await reset();
+  await openTasks();
+  await page.keyboard.press("Control+i");
+  await settle();
+  check("Ctrl+I toggles important", (await byTitle("Fix the flaky checkout test")).important === false);
+  await page.keyboard.press("Control+i");
+  await settle();
+  check("and back", (await byTitle("Fix the flaky checkout test")).important === true);
+
+  await page.keyboard.press("Control+e");
+  await settle();
+  check("Ctrl+E fills the input with the note", (await input.inputValue()) === "Fails only on the second run, check the seed data");
+  check("and says it is editing a note", (await page.locator("text=Where did you leave off?").count()) >= 0 && (await input.getAttribute("placeholder")) === "Where did you leave off?");
+  await input.fill("Found it: the seed runs twice");
+  await page.keyboard.press("Enter");
+  await settle();
+  check("Enter saves the note", (await byTitle("Fix the flaky checkout test")).note === "Found it: the seed runs twice");
+  check("and leaves the edit", (await input.inputValue()) === "" && (await input.getAttribute("placeholder")).startsWith("Add a task"));
+
+  await page.keyboard.press("Control+e");
+  await page.keyboard.type("x");
+  await page.keyboard.press("Escape");
+  await settle();
+  check("Esc cancels an edit without saving", (await byTitle("Fix the flaky checkout test")).note === "Found it: the seed runs twice" && (await input.inputValue()) === "");
+  check("and does not hide the bar", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+
+  await page.keyboard.press("F2");
+  await input.fill("Fix the flaky payment test");
+  await page.keyboard.press("Enter");
+  await settle();
+  check("F2 edits the title", !!(await byTitle("Fix the flaky payment test")));
+  await page.keyboard.press("F2");
+  await input.fill("  ");
+  await page.keyboard.press("Enter");
+  await settle();
+  check("an empty title is refused", !!(await byTitle("Fix the flaky payment test")) && (await page.locator("text=needs a title").count()) >= 1);
+  await page.keyboard.press("Escape");
+
+  // Esc peels layers
+  await page.keyboard.type("half typed");
+  await page.keyboard.press("Escape");
+  check("Esc clears typed text first", (await input.inputValue()) === "");
+  await page.evaluate(() => (window.__clipMock.control.calls.length = 0));
+  await page.keyboard.press("Escape");
+  await settle();
+  check("then Esc hides the bar", (await page.evaluate(() => window.__clipMock.control.calls.some((c) => c.cmd === "hide_bar"))) === true);
+
+  // delete
+  await reset();
+  await openTasks();
+  const before = (await store()).length;
+  await page.keyboard.press("Control+Delete");
+  await settle();
+  check("Ctrl+Delete deletes the selected task", (await store()).length === before - 1 && !(await byTitle("Fix the flaky checkout test")));
+  check("plain Delete is left to the input", await (async () => {
+    await page.keyboard.type("abc");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Delete");
+    const v = await input.inputValue();
+    await input.fill("");
+    return v === "bc" && (await store()).length === before - 1;
+  })());
+
+  // mouse
+  await reset();
+  await openTasks();
+  await page.locator('[role="option"]', { hasText: "Prepare the Thursday demo" }).hover();
+  await page.locator('button[aria-label^="Start: Prepare the Thursday demo"]').click();
+  await settle();
+  check("clicking the status circle starts a waiting task", (await byTitle("Prepare the Thursday demo")).status === "doing");
+  check("and keeps focus in the input", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+  await page.locator('[role="option"]', { hasText: "Prepare the Thursday demo" }).hover();
+  await page.locator('[role="option"]', { hasText: "Prepare the Thursday demo" }).locator("button[aria-pressed]").click();
+  await settle();
+  check("clicking the star toggles important", (await byTitle("Prepare the Thursday demo")).important === false);
+  await page.locator("button", { hasText: /Show \d+ hidden/ }).click();
+  await settle();
+  check("clicking Show hidden shows them", (await sections()).some((s) => s.startsWith("Later")));
+  await page.locator("button", { hasText: "Search" }).first().click();
+  await settle();
+  check("the Search button goes back", (await page.locator('[aria-label="Tasks"]').count()) === 0 && (await page.locator("input[cmdk-input]").count()) === 1);
+
+  // the bar being closed and opened again
+  await openTasks();
+  await page.keyboard.press("Control+h");
+  await settle();
+  check("the hidden ones are shown", (await sections()).some((s) => s.startsWith("Later")));
+  await page.evaluate(() => window.__clipMock.emit("bar:hidden"));
+  await settle();
+  check("closing the bar keeps the task list open", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  check("it is still the task list when the bar is shown again", (await page.locator('[aria-label="Tasks"]').count()) === 1 && (await page.locator("input[cmdk-input]").count()) === 0);
+  check("the input is focused", await page.evaluate(() => document.activeElement?.tagName === "INPUT"));
+  check("the hidden ones are folded away again", (await sections()).every((s) => !s.startsWith("Later")));
+  await page.keyboard.type("a draft");
+  await page.evaluate(() => {
+    window.__clipMock.emit("bar:hidden");
+    window.__clipMock.emit("bar:shown");
+  });
+  await settle();
+  check("a half typed task survives closing the bar", (await input.inputValue()) === "a draft");
+  await input.fill("");
+
+  // a restart: a new page load in the same browser profile
+  await page.reload();
+  await page.waitForSelector('[aria-label="Tasks"]');
+  check("after a restart the app opens on the task list", (await page.locator('[aria-label="Tasks"]').count()) === 1);
+  await page.keyboard.press("Control+t");
+  await page.reload();
+  await page.waitForSelector("input[cmdk-input]");
+  check("and on the search when that was the last view", (await page.locator('[aria-label="Tasks"]').count()) === 0);
+  check("blocked storage falls back to the search", await (async () => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "localStorage", { get() { throw new Error("blocked"); } });
+    });
+    await page.reload();
+    await page.waitForSelector("input[cmdk-input]");
+    return true;
+  })());
+
+  // empty and failing
+  await reset();
+  await page.evaluate(() => window.__clipMock.setTasks([]));
+  await openTasks();
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  check("an empty list says how to start", (await page.locator("text=Nothing on the list").count()) === 1);
+  check("the button reads Tasks when nothing is in flight", await (async () => {
+    await page.keyboard.press("Control+t");
+    await settle();
+    return (await button.textContent()).trim().startsWith("Tasks");
+  })());
+  await page.evaluate(() => (window.__clipMock.control.tasksError = "the tasks are not available"));
+  await page.keyboard.press("Control+t");
+  await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+  await settle();
+  check("an unavailable store says so, with the reason", (await page.getByText("Tasks are not available", { exact: true }).count()) === 1 && (await page.getByText("the tasks are not available", { exact: true }).count()) === 1);
+
+  check("no console errors or page errors", problems.length === 0, problems.join(" | "));
+  await page.context().close();
+  console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
+  return failed === 0 ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +1064,60 @@ async function a11y(browser, url) {
     await settle();
     await scan("search, clear confirmation");
     await page.keyboard.press("Escape");
+
+    // ---- tasks view: combobox and listbox like the search, names, contrast in every state ------------
+    await page.evaluate(() => window.__clipMock.reset());
+    await settle();
+    await page.keyboard.press("Control+t");
+    await settle(300);
+    const tAria = await page.evaluate(() => {
+      const i = document.querySelector('input[role="combobox"]');
+      const lb = document.querySelector('[aria-label="Tasks"][role="listbox"]');
+      const active = i?.getAttribute("aria-activedescendant");
+      const opt = active ? document.getElementById(active) : null;
+      const wrap = i?.parentElement;
+      return {
+        label: i?.getAttribute("aria-label"),
+        controls: i?.getAttribute("aria-controls"),
+        listboxId: lb?.id,
+        activeRole: opt?.getAttribute("role"),
+        activeSelected: opt?.getAttribute("aria-selected"),
+        options: lb ? lb.querySelectorAll('[role="option"]').length : 0,
+        unnamedOptions: lb ? [...lb.querySelectorAll('[role="option"]')].filter((o) => !o.innerText.trim()).length : -1,
+        focused: document.activeElement === i,
+        ring: wrap ? getComputedStyle(wrap).boxShadow !== "none" : false,
+      };
+    });
+    check("the task input is a named combobox that controls the task list", !!tAria.label && !!tAria.controls && tAria.controls === tAria.listboxId, JSON.stringify(tAria));
+    check("aria-activedescendant points at the selected task", tAria.activeRole === "option" && tAria.activeSelected === "true");
+    check("every task has a name", tAria.options > 0 && tAria.unnamedOptions === 0, JSON.stringify(tAria));
+    check("the task input has focus and shows a focus ring", tAria.focused && tAria.ring, JSON.stringify(tAria));
+    check("every control in the task view has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+    check("task sections are headings", (await page.getByRole("heading", { level: 3 }).count()) >= 2);
+    await scan("tasks, calm view");
+    await page.keyboard.press("Control+h");
+    await settle();
+    await scan("tasks, everything shown");
+    await page.keyboard.press("Control+h");
+    await page.keyboard.press("Control+e");
+    await settle();
+    await scan("tasks, editing a note");
+    await page.keyboard.press("Escape");
+    await page.keyboard.type("Plain task");
+    await page.keyboard.press("Enter");
+    await settle();
+    await scan("tasks, notice about a hidden new task");
+    await page.evaluate(() => window.__clipMock.setTasks([]));
+    await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+    await settle();
+    await scan("tasks, empty list");
+    await page.evaluate(() => (window.__clipMock.control.tasksError = "the tasks are not available"));
+    await page.evaluate(() => window.__clipMock.emit("bar:shown"));
+    await settle();
+    await scan("tasks, unavailable");
+    await page.evaluate(() => (window.__clipMock.control.tasksError = null));
+    await page.keyboard.press("Control+t");
+    await settle();
 
     // ---- settings: dialog semantics, names, focus ring on every Tab stop --------------------------
     await page.evaluate(() => window.__clipMock.reset());
@@ -1080,10 +1452,11 @@ const browser = await chromium.launch();
 let code = 1;
 try {
   if (mode === "keys") code = await keys(browser, server.url);
+  else if (mode === "tasks") code = await tasks(browser, server.url);
   else if (mode === "perf") code = await perf(browser, server.url);
   else if (mode === "a11y") code = await a11y(browser, server.url);
   else if (mode === "shots") code = await shots(browser, server.url);
-  else console.log("usage: node scripts/ui-check.mjs keys|a11y|perf|shots [--url URL] [--out DIR]");
+  else console.log("usage: node scripts/ui-check.mjs keys|tasks|a11y|perf|shots [--url URL] [--out DIR]");
 } finally {
   await browser.close();
   await server.stop();

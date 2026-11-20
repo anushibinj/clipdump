@@ -21,6 +21,10 @@
     "allow-get-split",
     "allow-copy-text",
     "allow-open-data-folder",
+    "allow-list-tasks",
+    "allow-add-task",
+    "allow-update-task",
+    "allow-delete-task",
     "allow-perf-ack"
   ]
 }

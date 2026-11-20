@@ -19,6 +19,10 @@ const COMMANDS: &[&str] = &[
     "get_split",
     "copy_text",
     "open_data_folder",
+    "list_tasks",
+    "add_task",
+    "update_task",
+    "delete_task",
     "perf_ack",
 ];
 

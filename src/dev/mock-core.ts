@@ -50,6 +50,117 @@ const DEFAULT_SETTINGS = {
 };
 let settings = { ...DEFAULT_SETTINGS };
 
+// ---------------------------------------------------------------------------
+// Tasks (the same rules as src-tauri/src/tasks.rs)
+// ---------------------------------------------------------------------------
+
+interface MockTask {
+  id: number;
+  title: string;
+  note: string;
+  status: "todo" | "doing" | "done";
+  important: boolean;
+  createdAt: number;
+  touchedAt: number;
+  doneAt: number | null;
+}
+
+const HOUR = 3_600_000;
+function seedTasks(): MockTask[] {
+  const t = (
+    id: number,
+    title: string,
+    status: MockTask["status"],
+    important: boolean,
+    agoH: number,
+    note = "",
+    doneAgoH: number | null = null,
+  ): MockTask => ({
+    id,
+    title,
+    note,
+    status,
+    important,
+    createdAt: NOW - (agoH + 20) * HOUR,
+    touchedAt: NOW - agoH * HOUR,
+    doneAt: doneAgoH === null ? null : NOW - doneAgoH * HOUR,
+  });
+  return [
+    t(1, "Fix the flaky checkout test", "doing", true, 0.2, "Fails only on the second run, check the seed data"),
+    t(2, "Review the migration PR", "doing", true, 30, "Left at the rollback script"),
+    t(3, "Reply to the vendor about the invoice", "todo", true, 3),
+    t(4, "Prepare the Thursday demo", "todo", true, 5),
+    t(5, "Update the onboarding doc", "todo", false, 8),
+    t(6, "Look into the slow dashboard query", "todo", false, 12),
+    t(7, "Rename the staging buckets", "todo", false, 40),
+    t(8, "Book the dentist", "todo", false, 60),
+    t(9, "Send the weekly summary", "done", false, 2, "", 1),
+  ];
+}
+let tasks: MockTask[] = seedTasks();
+let nextTaskId = 100;
+
+const TASK_TITLE_MAX = 300;
+const TASK_NOTE_MAX = 1000;
+
+function taskTitle(raw: unknown): string {
+  const title = String(raw ?? "").trim();
+  if (title === "") throw "the task needs a title";
+  if (Array.from(title).length > TASK_TITLE_MAX) throw "the title is too long";
+  return title;
+}
+
+function setTaskStatus(t: MockTask, status: MockTask["status"]) {
+  t.status = status;
+  t.doneAt = status === "done" ? Date.now() : null;
+}
+
+function runTask(cmd: string, args: Record<string, unknown>): unknown {
+  switch (cmd) {
+    case "list_tasks":
+      return tasks.map((t) => ({ ...t }));
+    case "add_task": {
+      const title = taskTitle(args.title);
+      if (tasks.length >= 500 && !tasks.some((t) => t.status === "done")) {
+        throw "too many tasks, delete or finish some first";
+      }
+      const now = Date.now();
+      const t: MockTask = {
+        id: nextTaskId++,
+        title,
+        note: "",
+        status: args.start ? "doing" : "todo",
+        important: Boolean(args.important),
+        createdAt: now,
+        touchedAt: now,
+        doneAt: null,
+      };
+      tasks.push(t);
+      return { ...t };
+    }
+    case "update_task": {
+      const t = tasks.find((x) => x.id === Number(args.id));
+      if (!t) throw "task not found";
+      const patch = (args.patch ?? {}) as Partial<MockTask>;
+      const title = patch.title === undefined ? undefined : taskTitle(patch.title);
+      const note = patch.note === undefined ? undefined : String(patch.note).trim();
+      if (note !== undefined && Array.from(note).length > TASK_NOTE_MAX) throw "the note is too long";
+      if (title !== undefined) t.title = title;
+      if (note !== undefined) t.note = note;
+      if (patch.important !== undefined) t.important = Boolean(patch.important);
+      if (patch.status !== undefined) setTaskStatus(t, patch.status);
+      t.touchedAt = Date.now();
+      return { ...t };
+    }
+    case "delete_task": {
+      const before = tasks.length;
+      tasks = tasks.filter((t) => t.id !== Number(args.id));
+      return tasks.length !== before;
+    }
+  }
+  throw `${cmd} not allowed`;
+}
+
 const control = {
   /** Every command the page called, in order. */
   calls: [] as { cmd: string; args: unknown }[],
@@ -77,6 +188,8 @@ const control = {
   recovery: null as string | null,
   /** `get_stats` reports `--perf` (the page then sends `perf_ack` timings). */
   perf: false,
+  /** Every task command rejects with this message when set (the real ones do when the store could not start). */
+  tasksError: null as string | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -356,6 +469,12 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       const row = find(Number(args.id));
       return splits.get(row.text) ?? { status: "none" };
     }
+    case "list_tasks":
+    case "add_task":
+    case "update_task":
+    case "delete_task":
+      if (control.tasksError) throw control.tasksError;
+      return runTask(cmd, args);
     case "copy_text":
       return null;
     case "start_drag":
@@ -420,9 +539,17 @@ const hooks = {
     control.openFolderError = null;
     control.recovery = null;
     control.perf = false;
+    control.tasksError = null;
+    tasks = seedTasks();
+    nextTaskId = 100;
     load(200);
     changed();
   },
+  /** Replace the task list (an empty array for a fresh start). */
+  setTasks(list: MockTask[]) {
+    tasks = list.map((t) => ({ ...t }));
+  },
+  tasks: () => tasks,
   /** Add one text item on top, like a new clipboard capture. */
   capture(text: string) {
     const id = nextId++;

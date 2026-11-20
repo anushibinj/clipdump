@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { TypeFilter as Filter } from "@/lib/ipc";
@@ -14,12 +14,14 @@ const LABELS: Record<Filter, string> = {
 interface TypeFilterProps {
   value: Filter;
   onChange: (value: Filter) => void;
+  /** Right end of the row (the way into the task list). */
+  trailing?: ReactNode;
 }
 
 /** All / Text / Images / Files, bound to Alt+1..4 (the key handling lives in useKeyboard). */
-export const TypeFilter = memo(function TypeFilter({ value, onChange }: TypeFilterProps) {
+export const TypeFilter = memo(function TypeFilter({ value, onChange, trailing }: TypeFilterProps) {
   return (
-    <div className="flex h-10 items-center border-b px-3">
+    <div className="flex h-10 items-center justify-between gap-2 border-b px-3">
       <ToggleGroup
         type="single"
         size="sm"
@@ -44,6 +46,7 @@ export const TypeFilter = memo(function TypeFilter({ value, onChange }: TypeFilt
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
+      {trailing}
     </div>
   );
 });

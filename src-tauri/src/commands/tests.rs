@@ -1433,7 +1433,8 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
     let from_lib = sorted(
         handler
             .split(',')
-            .map(|c| c.trim().trim_start_matches("commands::").to_owned())
+            // `commands::search` and `commands::tasks::list_tasks` both name the command by its last segment.
+            .map(|c| c.trim().rsplit("::").next().unwrap_or_default().to_owned())
             .filter(|c| !c.is_empty())
             .collect(),
     );
@@ -1450,7 +1451,7 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
             .collect(),
     );
 
-    assert_eq!(from_build.len(), 16);
+    assert_eq!(from_build.len(), 20);
     assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
     assert_eq!(
         from_build, from_cap,

@@ -8,6 +8,10 @@ Move the bar by dragging it (it remembers its place per monitor), pin it open or
 two icons top right, and, with an OpenAI compatible server set up in Settings, split a long text into
 separately copyable items on the right pane's **AI split** tab, ready by the time you open the bar (`Ctrl+Shift+S`).
 
+`Ctrl+T` switches the bar to a task list kept next to the history: capture a task with one line and
+`Enter`, see everything in flight at a glance with a note on where you left off, and keep the tasks that
+are not important out of sight until you ask for them (`Ctrl+H`).
+
 Status: version 0.1.0, not released. The code is tested on Linux and cross-checked against the Windows
 APIs; it has not been run on Windows yet (`docs/manual-checks.md` lists what is left to verify).
 The plan is in `PLAN.md`.

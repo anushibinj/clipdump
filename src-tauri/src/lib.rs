@@ -38,6 +38,8 @@ mod shutdown;
 // The queue of LLM splits, two at a time.
 mod splitter;
 mod state;
+// The task list of the Tasks view, kept apart from the clipboard history.
+mod tasks;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
 // commands (Phase 9) are its other callers; until then part of its API is unused.
 #[allow(dead_code)]
@@ -115,6 +117,10 @@ pub fn run() {
             commands::get_split,
             commands::copy_text,
             commands::open_data_folder,
+            commands::tasks::list_tasks,
+            commands::tasks::add_task,
+            commands::tasks::update_task,
+            commands::tasks::delete_task,
             commands::perf_ack
         ])
         .manage(AppState::default())
@@ -299,6 +305,26 @@ fn start_splitter(
     }));
 }
 
+/// Open the task list with the history's cipher. A failure here only turns the Tasks
+/// view off (its commands answer "not available"); it never stops the app.
+fn start_tasks(
+    app: &tauri::App,
+    dir: &std::path::Path,
+    persist: &std::sync::Arc<persist::Persist>,
+) {
+    use std::sync::Arc;
+    let now = commands::tasks::system_now_ms();
+    let (tasks, moved) = tasks::TaskStore::open(dir, persist.crypto().clone(), now);
+    if let Some(to) = moved {
+        // The list could not be read (damaged, or made with another data key); it is kept.
+        eprintln!(
+            "clipdump: the task list was unreadable and was moved to {}",
+            to.display()
+        );
+    }
+    let _ = app.state::<AppState>().tasks.set(Arc::new(tasks));
+}
+
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow
 /// memory without limit; the watcher drops (and logs) instead of blocking.
 const INGEST_QUEUE: usize = 64;
@@ -386,6 +412,7 @@ fn start_ingest(
         announce_recovery(app, &recovery);
     }
     let persist = Arc::clone(store.persist());
+    start_tasks(app, &dir, &persist);
     if perf::enabled() {
         perf::record(
             perf::Event::StartupLoad,

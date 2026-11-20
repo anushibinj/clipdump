@@ -61,6 +61,9 @@ pub struct AppState {
     /// File existence checks for search rows and previews, cached for 2 seconds
     /// so typing never repeats a `stat` (see `search::paths`).
     pub paths: Arc<CachedPathChecker>,
+    /// The task list of the Tasks view (`tasks.rs`). Empty until the history's key
+    /// is loaded in `setup`; the commands then answer "not available".
+    pub tasks: OnceLock<Arc<crate::tasks::TaskStore>>,
 }
 
 /// Is pinned-bar mode on? Relaxed is enough: it is an independent flag.
