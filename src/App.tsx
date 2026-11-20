@@ -9,6 +9,8 @@ import { rowId } from "@/components/ResultItem";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
 import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { NotesButton } from "@/components/NotesButton";
+import { NotesView } from "@/components/NotesView";
 import { TasksButton } from "@/components/TasksButton";
 import { TasksView } from "@/components/TasksView";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,6 +20,7 @@ import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
 import { useFocus } from "@/hooks/useFocus";
+import { useNotes } from "@/hooks/useNotes";
 import { useTasks } from "@/hooks/useTasks";
 import { readView, writeView } from "@/lib/view";
 import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
@@ -56,6 +59,7 @@ const NOTICE_MS = 5000;
 function App() {
   const s = useSearch();
   const tasks = useTasks();
+  const notes = useNotes();
   // The bar opens on the view it was left on (search, tasks or settings), across openings and
   // restarts: hiding the bar never resets it (`lib/view.ts`).
   const [view, setViewState] = useState<View>(readView);
@@ -271,6 +275,10 @@ function App() {
           disarm();
           setView((v) => (v === "tasks" ? "search" : "tasks"));
           break;
+        case "toggleNotes":
+          disarm();
+          setView((v) => (v === "notes" ? "search" : "notes"));
+          break;
         case "escape":
           // Layers, innermost first: pending confirmation, settings, the recovery notice (the
           // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is
@@ -290,10 +298,12 @@ function App() {
   // ---- events and first load ------------------------------------------------
 
   const refreshTasks = tasks.refresh;
+  const refreshNotes = notes.refresh;
   useEffect(() => {
     loadSettings();
     loadStats();
     refreshTasks();
+    refreshNotes();
     const subs: Promise<UnlistenFn>[] = [];
     try {
       subs.push(
@@ -314,6 +324,7 @@ function App() {
           loadSettings(); // the tray can pause capture while the bar is hidden
           loadStats();
           refreshTasks();
+          refreshNotes();
         }),
         onBarHidden(() => {
           // The view stays as it is: the next open shows it again. Only a pending confirmation
@@ -338,7 +349,7 @@ function App() {
     return () => {
       subs.forEach((p) => p.then((fn) => fn()).catch(() => {}));
     };
-  }, [disarm, loadSettings, loadStats, refreshTasks]);
+  }, [disarm, loadSettings, loadStats, refreshTasks, refreshNotes]);
 
   // Keep keyboard focus inside the card: the input in the search and task views, the card itself
   // in settings (so Esc and Ctrl+, still reach the key handler when no field is focused).
@@ -444,6 +455,22 @@ function App() {
               </div>
               {footer}
             </div>
+          ) : view === "notes" ? (
+            <div className="flex h-full flex-col">
+              <div className="min-h-0 flex-1">
+                <NotesView
+                  api={notes}
+                  inputRef={inputRef}
+                  onNotice={showNotice}
+                  onBack={() => setView("search")}
+                  onClose={dismiss}
+                  onDragHeader={dragFromHeader}
+                  pinned={settings?.pinnedBar ?? false}
+                  onTogglePinned={togglePinnedWindow}
+                />
+              </div>
+              {footer}
+            </div>
           ) : view === "settings" ? (
             <div className="flex h-full flex-col">
               <div className="min-h-0 flex-1">
@@ -482,7 +509,12 @@ function App() {
                   <TypeFilter
                     value={s.filter}
                     onChange={s.setFilter}
-                    trailing={<TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />}
+                    trailing={
+                      <div className="flex min-w-0 items-center gap-0.5">
+                        <NotesButton count={notes.notes.length} onClick={() => setView("notes")} />
+                        <TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />
+                      </div>
+                    }
                   />
                 </div>
               }
