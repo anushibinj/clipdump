@@ -37,6 +37,7 @@ mod bounds_tests;
 pub mod config;
 pub mod copy;
 pub mod folder;
+pub mod notes;
 pub mod preview;
 pub mod split;
 pub mod tasks;
