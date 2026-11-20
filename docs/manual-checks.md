@@ -473,8 +473,8 @@ WebView2, so everything below still needs a Windows run.
       press the hotkey again: the old query is selected and typing replaces it.
       Repeat 20 times quickly; focus must never be lost.
 - [ ] Tray "Settings" shows the bar with the settings view; `Esc` goes back to
-      search, `Esc` again hides the bar. After the bar hides while settings or
-      the preview was open, the next open starts on the plain search view.
+      search, `Esc` again hides the bar. After the bar hides while settings, the
+      task list or the preview was open, the next open shows the same view again.
 - [ ] Click outside the bar: it hides (unless "Pinned bar" is on, then it stays
       and the hotkey only focuses it).
 - [ ] Clicking a filter, a hint or an empty spot in the card does not take the
@@ -1240,6 +1240,9 @@ needs a real window, monitor or LLM has been run.
 - [ ] `Ctrl+E` on a task in flight, type where you left off, Enter: the row shows "Left off: ...". Esc
       while editing leaves the note as it was and does not hide the bar.
 - [ ] `Ctrl+H` shows the hidden tasks and hides them again; closing and opening the bar hides them again.
+- [ ] Leave the bar on the task list, press Esc, open it with the hotkey: it opens on the task list with the
+      input focused and a half typed task still there. Quit and start the app: same. Switch to the search
+      (`Ctrl+T`), hide, open: it opens on the search.
 - [ ] Quit from the tray and start the app: every task, note, star and state is back.
 - [ ] `%LOCALAPPDATA%\clipdump\tasks.bin` is not readable as text (task titles are not visible in it).
       "Clear history" (`Ctrl+Shift+Delete`) leaves the tasks alone.

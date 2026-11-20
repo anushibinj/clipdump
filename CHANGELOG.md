@@ -20,10 +20,13 @@ All notable changes to Clipdump are listed here. The format follows
   more are in flight), so it is in sight every time the bar opens.
 - Tasks that are not important stay out of the way. The list shows **Now** and a short **Up next**
   (important tasks, three at most); the rest, and the tasks finished today, are one count away
-  ("Show 4 hidden"), toggled with `Ctrl+H`, and are hidden again the next time the bar opens.
+  ("Show 4 hidden"), toggled with `Ctrl+H`.
 - Moving a task along is one key: `Enter` on an empty input goes waiting, in flight, done;
   `Shift+Enter` steps back; `Ctrl+I` toggles important; `F2` edits the title;
   `Ctrl+Delete` deletes. Marking a task done says how to undo it.
+- The bar reopens on the view it was left on, across openings and restarts: leave it on the task
+  list and it opens on the task list. Only the revealed hidden tasks fold away again on each open;
+  a half typed task stays.
 - Tasks are stored encrypted with the history's data key in their own file (`tasks.bin`), so
   "Clear history" and a history recovery never touch them. Finished tasks are dropped after 30 days.
 
