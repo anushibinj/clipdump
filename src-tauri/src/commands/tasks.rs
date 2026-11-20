@@ -70,17 +70,59 @@ pub fn add_task(
     important: bool,
     start: bool,
 ) -> Result<Task, String> {
-    add_task_to(&tasks(&app)?, &title, important, start, system_now_ms())
+    add_task_to(
+        tasks(&app)?.as_ref(),
+        &title,
+        important,
+        start,
+        system_now_ms(),
+    )
 }
 
 /// Change the fields in `patch` (title, note, status, important). Returns the task as stored.
 #[tauri::command(async)]
 pub fn update_task(app: AppHandle, id: u64, patch: TaskPatch) -> Result<Task, String> {
-    update_task_in(&tasks(&app)?, id, patch, system_now_ms())
+    update_task_in(tasks(&app)?.as_ref(), id, patch, system_now_ms())
 }
 
 /// Delete a task. Resolves to whether it existed.
 #[tauri::command(async)]
 pub fn delete_task(app: AppHandle, id: u64) -> Result<bool, String> {
     tasks(&app)?.delete(id).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store(dir: &std::path::Path, key: u8) -> TaskStore {
+        let crypto = Arc::new(Crypto::from_key(&[key; 32]));
+        TaskStore::open(dir, crypto, 0).0
+    }
+
+    #[test]
+    fn tasks_are_sealed_with_the_history_cipher_and_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(dir.path(), 7);
+        let t = add_task_to(&s, "renew the passport", true, false, 10).unwrap();
+        let raw = std::fs::read(dir.path().join(crate::tasks::FILE)).unwrap();
+        assert!(!String::from_utf8_lossy(&raw).contains("passport"));
+        assert_eq!(store(dir.path(), 7).list(), vec![t]);
+    }
+
+    #[test]
+    fn errors_are_plain_sentences_without_task_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(dir.path(), 7);
+        assert_eq!(
+            add_task_to(&s, "  ", false, false, 0).unwrap_err(),
+            "the task needs a title"
+        );
+        let secret = TaskPatch {
+            title: Some("x".repeat(400)),
+            ..Default::default()
+        };
+        let err = update_task_in(&s, 1, secret, 0).unwrap_err();
+        assert!(!err.contains("xxx"));
+    }
 }
