@@ -8,6 +8,25 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A task list inside the bar, one key away: `Ctrl+T` switches between the clipboard search and
+  the tasks (and back), from any view. Type a task and press `Enter` to add it; end it with ` !`
+  to mark it important; `Ctrl+Enter` adds it and starts it right away.
+- Everything you are working on is in view at once. The **Now** section lists every task in
+  flight, most recently touched first, each with a "Left off" note (`Ctrl+E`) so picking it up
+  again after a switch takes no thinking. A task in flight that has not been touched for a day
+  shows its age in amber. The search view's filter row names the task touched last (and how many
+  more are in flight), so it is in sight every time the bar opens.
+- Tasks that are not important stay out of the way. The list shows **Now** and a short **Up next**
+  (important tasks, three at most); the rest, and the tasks finished today, are one count away
+  ("Show 4 hidden"), toggled with `Ctrl+H`, and are hidden again the next time the bar opens.
+- Moving a task along is one key: `Enter` on an empty input goes waiting, in flight, done;
+  `Shift+Enter` steps back; `Ctrl+I` toggles important; `F2` edits the title;
+  `Ctrl+Delete` deletes. Marking a task done says how to undo it.
+- Tasks are stored encrypted with the history's data key in their own file (`tasks.bin`), so
+  "Clear history" and a history recovery never touch them. Finished tasks are dropped after 30 days.
+
 ## [0.1.2] - 2026-11-20
 
 ### Added
