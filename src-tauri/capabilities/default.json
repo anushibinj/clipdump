@@ -35,6 +35,7 @@
     "allow-extract-tasks",
     "allow-review-stale-tasks",
     "allow-get-clips",
+    "allow-ask-everything",
     "allow-list-notes",
     "allow-add-note",
     "allow-update-note",

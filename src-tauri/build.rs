@@ -33,6 +33,7 @@ const COMMANDS: &[&str] = &[
     "extract_tasks",
     "review_stale_tasks",
     "get_clips",
+    "ask_everything",
     "list_notes",
     "add_note",
     "update_note",

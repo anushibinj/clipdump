@@ -1451,7 +1451,7 @@ fn build_rs_handler_and_capability_list_the_same_commands() {
             .collect(),
     );
 
-    assert_eq!(from_build.len(), 34);
+    assert_eq!(from_build.len(), 35);
     assert_eq!(from_build, from_lib, "build.rs vs generate_handler!");
     assert_eq!(
         from_build, from_cap,
