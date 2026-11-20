@@ -309,6 +309,52 @@ export function deleteTask(id: number): Promise<boolean> {
   return invoke<boolean>("delete_task", { id });
 }
 
+// ---------------------------------------------------------------------------
+// Notes (src-tauri/src/notes.rs, commands/notes.rs)
+// ---------------------------------------------------------------------------
+
+export interface Note {
+  id: number;
+  /** Optional: empty when the note has none. */
+  title: string;
+  body: string;
+  pinned: boolean;
+  /** Lowercase, no spaces, no duplicates. */
+  tags: string[];
+  /** Unix ms. */
+  createdAt: number;
+  /** Unix ms of the last change of any kind. */
+  updatedAt: number;
+}
+
+/** The fields `updateNote` can change; a field left out stays as it is. */
+export interface NotePatch {
+  title?: string;
+  body?: string;
+  pinned?: boolean;
+  tags?: string[];
+}
+
+/** Every note, in the order they were added. */
+export function listNotes(): Promise<Note[]> {
+  return invoke<Note[]>("list_notes");
+}
+
+/** Add a note; every field may be empty. Rejects with a plain message (use `errorMessage`). */
+export function addNote(title = "", body = "", tags: string[] = []): Promise<Note> {
+  return invoke<Note>("add_note", { title, body, tags });
+}
+
+/** Resolves to the note as stored. */
+export function updateNote(id: number, patch: NotePatch): Promise<Note> {
+  return invoke<Note>("update_note", { id, patch });
+}
+
+/** Resolves to whether the note existed. */
+export function deleteNote(id: number): Promise<boolean> {
+  return invoke<boolean>("delete_note", { id });
+}
+
 export function getStats(): Promise<StatsDto> {
   return invoke<StatsDto>("get_stats");
 }
