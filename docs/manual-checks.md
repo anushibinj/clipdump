@@ -1250,3 +1250,28 @@ needs a real window, monitor or LLM has been run.
       starts an empty list; the app and the clipboard history work normally.
 - [ ] Pinned bar mode on the task list: the window stays open while you work in another app, and a task
       added from the bar shows at once.
+
+### Focus lock
+- [ ] `Ctrl+L` on a task opens the picker (15, 25, 30, 60 or a custom number of minutes; the length used
+      last is selected). Esc closes it. "Lock for N min" puts the task in flight, shows the countdown and
+      dims every other task.
+- [ ] While locked: clicking another task's circle, star or notes icon does nothing; the arrow keys and the
+      mouse cannot select another task; the locked task cannot be deleted or stepped back (a footer
+      message says why). A task typed and added is added waiting, also with `Ctrl+Enter`.
+- [ ] `Ctrl+P` focuses the parking field. Type a thought and Enter: "1 parked". Open the list: "Task" turns
+      it into a task, the cross drops it. Esc returns to the task input.
+- [ ] The countdown also shows in the window title (taskbar hover, Alt+Tab). Switch to the search
+      (`Ctrl+T`) and hide the bar: the countdown goes on.
+- [ ] Quit from the tray and start the app inside the session: the lock and the time left are back. Quit
+      and start the app after the time ran out: the check-in "How did it go?" is shown.
+- [ ] "Pause" freezes the clock (up to 5 minutes, once per session); it resumes by itself after 5 minutes.
+- [ ] "Break the lock…" waits 30 seconds before "Break the lock now" appears; "Keep focusing" cancels. After
+      breaking, the flame counter in the strip is 0 and the tasks are free.
+- [ ] Finish a session (use a 1 minute length): a heads-up is not given for sessions under 5 minutes; for a
+      30 minute session a footer message and a tone come 5 minutes before the end. At the end the tone
+      plays (and a system notification when Windows allows it), the lock is gone, the check-in offers
+      Done, Need more time and Blocked, then a 5 minute break, another session or skip.
+- [ ] Press `Enter` on the empty input with the locked task selected: it is done, the lock is released and
+      counted, and the break is offered.
+- [ ] The strip shows the streak (flame) and "N m focused today"; hovering the flame lists the last 7 days.
+      A task row shows the total time focused on it.
