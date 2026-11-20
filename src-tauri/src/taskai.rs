@@ -558,6 +558,99 @@ pub fn digest(
     parse_digest(&complete(cfg, http, &system, &user, 0.3)?, &open)
 }
 
+// ---------------------------------------------------------------------------
+// Links between clipboard items and tasks
+// ---------------------------------------------------------------------------
+
+/// Clips and open tasks looked at in one link request, at most.
+pub const MAX_LINK_CLIPS: usize = 20;
+/// Link suggestions returned at most.
+pub const MAX_LINK_SUGGESTIONS: usize = 10;
+
+/// A clipboard item the model thinks belongs to a task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkSuggestion {
+    pub task_id: u64,
+    pub clip_id: u64,
+    pub reason: String,
+}
+
+const LINK_PROMPT: &str = "You match recently copied clipboard items to the tasks they belong to.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"links\":[{\"task\":<task id>,\"clip\":<clip id>,\"reason\":\"<a few words>\"}]}\n\
+Rules:\n\
+- Link a clip to a task only when it clearly belongs to it: the same topic, a page, file, number or error message the task needs. \
+Most clips belong to no task; leave those out. An empty list is a good answer.\n\
+- Use only ids from the lists. Never link one clip to more than one task.";
+
+#[derive(Deserialize)]
+struct RawLinks {
+    #[serde(default)]
+    links: Vec<RawLink>,
+}
+
+#[derive(Deserialize)]
+struct RawLink {
+    task: u64,
+    clip: u64,
+    #[serde(default)]
+    reason: String,
+}
+
+/// The model's links, kept only when the task is one of `tasks` and the clip one of `clips`,
+/// the task is not linked to that clip already, and the clip is not used twice.
+pub fn parse_links(reply: &str, tasks: &[&Task], clips: &[ClipLine]) -> Result<Vec<LinkSuggestion>, String> {
+    let raw: RawLinks = parse(reply)?;
+    let mut out: Vec<LinkSuggestion> = Vec::new();
+    for l in raw.links {
+        let Some(task) = tasks.iter().find(|t| t.id == l.task) else {
+            continue;
+        };
+        if !clips.iter().any(|c| c.id == l.clip)
+            || task.clip_ids.contains(&l.clip)
+            || out.iter().any(|o| o.clip_id == l.clip)
+        {
+            continue;
+        }
+        out.push(LinkSuggestion {
+            task_id: l.task,
+            clip_id: l.clip,
+            reason: short_text(&l.reason, MAX_REASON_CHARS),
+        });
+        if out.len() == MAX_LINK_SUGGESTIONS {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Which of the recent `clips` belong to which open task. Nothing to match, no server call.
+pub fn suggest_links(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    tasks: &[Task],
+    clips: &[ClipLine],
+    now: i64,
+) -> Result<Vec<LinkSuggestion>, String> {
+    let open = open_sorted(tasks);
+    let clips = &clips[..clips.len().min(MAX_LINK_CLIPS)];
+    if open.is_empty() || clips.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut user = String::from("<data>\nTasks:\n");
+    for t in &open {
+        user.push_str(&task_line(t, now));
+        user.push('\n');
+    }
+    user.push_str("Clipboard items, newest first:\n");
+    for c in clips {
+        user.push_str(&clip_line(c, now));
+        user.push('\n');
+    }
+    user.push_str("</data>");
+    let system = format!("{LINK_PROMPT}\n{DATA_RULE}");
+    parse_links(&complete(cfg, http, &system, &user, 0.0)?, &open, clips)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,5 +970,56 @@ mod tests {
         let got = digest(&cfg(), &down, &[], DigestKind::Morning, 0).unwrap();
         assert_eq!(got.summary, "Nothing on the list yet.");
         assert!(got.order.is_empty() && down.seen.borrow().is_empty());
+    }
+    #[test]
+    fn links_need_known_ids_and_never_repeat_a_clip_or_a_link() {
+        let mut a = open(1, "renew passport", Status::Todo);
+        a.clip_ids = vec![11];
+        let b = open(2, "book flights", Status::Doing);
+        let tasks = [&a, &b];
+        let clips = vec![clip(10, 0, "passport office hours"), clip(11, 0, "form"), clip(12, 0, "flight")];
+        let reply = r#"{"links":[
+            {"task":1,"clip":10,"reason":" opening hours "},
+            {"task":1,"clip":11,"reason":"already linked"},
+            {"task":9,"clip":12,"reason":"no such task"},
+            {"task":2,"clip":99,"reason":"no such clip"},
+            {"task":2,"clip":12,"reason":"fares"},
+            {"task":1,"clip":12,"reason":"same clip again"}]}"#;
+        let got = parse_links(reply, &tasks, &clips).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                LinkSuggestion { task_id: 1, clip_id: 10, reason: "opening hours".into() },
+                LinkSuggestion { task_id: 2, clip_id: 12, reason: "fares".into() },
+            ]
+        );
+        assert!(parse_links(r#"{"links":[]}"#, &tasks, &clips).unwrap().is_empty());
+        assert!(parse_links("none", &tasks, &clips).is_err());
+    }
+
+    #[test]
+    fn the_link_request_lists_open_tasks_and_recent_clips() {
+        let http = Fake::answering(r#"{"links":[{"task":1,"clip":5,"reason":"x"}]}"#);
+        let tasks = vec![open(1, "write RFC", Status::Todo), open(2, "old", Status::Done)];
+        let clips = vec![clip(5, 0, "RFC template")];
+        let got = suggest_links(&cfg(), &http, &tasks, &clips, 120_000).unwrap();
+        assert_eq!(got.len(), 1);
+        let user = http.user_text();
+        assert!(user.contains("id=1 | write RFC"));
+        assert!(!user.contains("old"));
+        assert!(user.contains("clip=5 | 2 min ago | text | RFC template"));
+    }
+
+    #[test]
+    fn nothing_to_match_needs_no_server() {
+        let down = Fake::answering("unused");
+        assert!(suggest_links(&cfg(), &down, &[], &[clip(1, 0, "x")], 0).unwrap().is_empty());
+        assert!(suggest_links(&cfg(), &down, &[task(1, "a")], &[], 0).unwrap().is_empty());
+        assert!(down.seen.borrow().is_empty());
+        // Only the newest clips are looked at.
+        let many: Vec<ClipLine> = (0..50).map(|i| clip(i, 0, "x")).collect();
+        let http = Fake::answering(r#"{"links":[]}"#);
+        suggest_links(&cfg(), &http, &[task(1, "a")], &many, 0).unwrap();
+        assert_eq!(http.user_text().matches("clip=").count(), MAX_LINK_CLIPS);
     }
 }
