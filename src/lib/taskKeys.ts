@@ -23,6 +23,10 @@ export type TaskAction =
   /** Enter while editing. */
   | { type: "commitEdit" }
   | { type: "toggleHidden" }
+  /** Ctrl+L: lock the list to the selected task for a while (focus mode). */
+  | { type: "focus" }
+  /** Ctrl+P: write a distraction down instead of acting on it. */
+  | { type: "park" }
   | { type: "delete" }
   | { type: "move"; delta: number }
   /** Esc: leave an edit, else clear the input, else close the bar. */
@@ -58,6 +62,8 @@ export function resolveTaskKey(e: KeyInfo, state: TaskKeyState): TaskAction | nu
     if (letter("i")) return { type: "toggleImportant" };
     if (letter("e")) return { type: "editNote" };
     if (letter("h")) return { type: "toggleHidden" };
+    if (letter("l")) return { type: "focus" };
+    if (letter("p")) return { type: "park" };
   }
   if (e.key === "F2" && !ctrl && !alt && !shift) return { type: "editTitle" };
   if (e.key === "Delete" && !alt && (ctrl || shift)) return { type: "delete" };

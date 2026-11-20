@@ -181,6 +181,8 @@ describe("resolveTaskKey", () => {
     expect(resolveTaskKey(key("i", { ctrlKey: true }), empty)).toEqual({ type: "toggleImportant" });
     expect(resolveTaskKey(key("e", { ctrlKey: true }), empty)).toEqual({ type: "editNote" });
     expect(resolveTaskKey(key("h", { ctrlKey: true }), empty)).toEqual({ type: "toggleHidden" });
+    expect(resolveTaskKey(key("l", { ctrlKey: true }), empty)).toEqual({ type: "focus" });
+    expect(resolveTaskKey(key("p", { ctrlKey: true }), empty)).toEqual({ type: "park" });
     expect(resolveTaskKey(key("F2"), empty)).toEqual({ type: "editTitle" });
     expect(resolveTaskKey(key("Delete", { ctrlKey: true }), empty)).toEqual({ type: "delete" });
     expect(resolveTaskKey(key("Delete", { shiftKey: true }), empty)).toEqual({ type: "delete" });
