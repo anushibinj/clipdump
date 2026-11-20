@@ -147,3 +147,16 @@ describe("moveIndex", () => {
     expect(moveIndex(0, -1, 1)).toBe(0);
   });
 });
+
+describe("Ctrl+N and the notes view", () => {
+  it("Ctrl+N toggles the notes from every view", () => {
+    for (const v of ["search", "tasks", "notes", "settings"] as const) {
+      expect(resolveShortcut(k("n", ctrl), v)).toEqual({ type: "toggleNotes" });
+    }
+  });
+  it("the notes view keeps its own Esc and keys", () => {
+    expect(resolveShortcut(k("Escape"), "notes")).toBeNull();
+    expect(resolveShortcut(k("Enter", ctrl), "notes")).toBeNull();
+    expect(resolveShortcut(k("p", ctrl), "notes")).toBeNull();
+  });
+});
