@@ -3,9 +3,16 @@ import type { Task } from "./ipc";
 import { resolveShortcut, type KeyInfo } from "./shortcuts";
 import { resolveTaskKey } from "./taskKeys";
 import {
+  DEFER_MS,
   DONE_WINDOW_MS,
   NEXT_VISIBLE,
+  QUIET_DOING_MS,
+  QUIET_WAITING_MS,
   buildTaskView,
+  defaultSelection,
+  isDeferred,
+  isQuiet,
+  quietTasks,
   nextStatus,
   parseQuickAdd,
   previousStatus,
@@ -217,5 +224,89 @@ describe("resolveShortcut with the task view", () => {
   it("still closes with Esc elsewhere", () => {
     expect(resolveShortcut(key("Escape"), "search")).toEqual({ type: "escape" });
     expect(resolveShortcut(key("Escape"), "settings")).toEqual({ type: "escape" });
+  });
+});
+
+describe("quick wins", () => {
+  it("shows every quick task, in flight first, important first, then the one waiting longest", () => {
+    const running = task({ status: "doing", size: "quick" });
+    const plain = task({ size: "quick", createdAt: NOW - 9000 });
+    const old = task({ size: "quick", createdAt: NOW - 90000 });
+    const star = task({ size: "quick", important: true, createdAt: NOW - 100 });
+    const long = task({ size: "long", important: true });
+    const unknown = task({ important: true });
+    const v = buildTaskView([long, unknown, plain, star, running, old], {
+      showHidden: false,
+      now: NOW,
+      quickOnly: true,
+    });
+    expect(v.sections.map((s) => s.key)).toEqual(["now", "quick"]);
+    expect(ids(v.rows)).toEqual([running.id, star.id, old.id, plain.id]);
+    expect(v.hiddenCount).toBe(0);
+  });
+
+  it("does not fold quick tasks away the way the calm view folds the later ones", () => {
+    const many = Array.from({ length: NEXT_VISIBLE + 3 }, () => task({ size: "quick" }));
+    const calm = buildTaskView(many, { showHidden: false, now: NOW });
+    expect(calm.rows.length).toBe(0);
+    const quick = buildTaskView(many, { showHidden: false, now: NOW, quickOnly: true });
+    expect(quick.rows).toHaveLength(NEXT_VISIBLE + 3);
+  });
+
+  it("leaves out done tasks and tasks set aside, and counts quick wins and the unestimated", () => {
+    const aside = task({ size: "quick", deferredUntil: NOW + 1000 });
+    const back = task({ size: "quick", deferredUntil: NOW - 1000 });
+    const done = task({ size: "quick", status: "done", doneAt: NOW - 1000 });
+    const none = task();
+    const v = buildTaskView([aside, back, done, none], { showHidden: true, now: NOW, quickOnly: true });
+    expect(ids(v.rows)).toEqual([back.id]);
+    expect(v.quickCount).toBe(1);
+    expect(v.unsized).toBe(1);
+    // The counts are the same with the filter off.
+    const all = buildTaskView([aside, back, done, none], { showHidden: true, now: NOW });
+    expect([all.quickCount, all.unsized]).toEqual([1, 1]);
+  });
+});
+
+describe("tasks that have gone quiet", () => {
+  it("is a task in flight untouched for days, or a waiting one untouched for weeks", () => {
+    const doingOld = task({ status: "doing", touchedAt: NOW - QUIET_DOING_MS });
+    const doingNew = task({ status: "doing", touchedAt: NOW - QUIET_DOING_MS + 1 });
+    const waitingOld = task({ touchedAt: NOW - QUIET_WAITING_MS });
+    const waitingNew = task({ touchedAt: NOW - QUIET_DOING_MS * 2 });
+    const done = task({ status: "done", touchedAt: 0, doneAt: 0 });
+    expect([doingOld, doingNew, waitingOld, waitingNew, done].map((t) => isQuiet(t, NOW))).toEqual([
+      true,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("is not nagged about while set aside, and is again once the day has come", () => {
+    const t = task({ touchedAt: 0, deferredUntil: NOW + DEFER_MS });
+    expect(isDeferred(t, NOW)).toBe(true);
+    expect(isQuiet(t, NOW)).toBe(false);
+    expect(isQuiet(t, NOW + DEFER_MS)).toBe(true);
+    expect(isDeferred(task(), NOW)).toBe(false);
+  });
+
+  it("lists the longest quiet first", () => {
+    const a = task({ touchedAt: NOW - QUIET_WAITING_MS - 5000 });
+    const b = task({ touchedAt: NOW - QUIET_WAITING_MS - 9000 });
+    const fresh = task();
+    expect(ids(quietTasks([a, fresh, b], NOW))).toEqual([b.id, a.id]);
+  });
+});
+
+describe("tasks found in a text", () => {
+  it("starts with the new ones ticked and the ones already on the list not", () => {
+    expect(
+      defaultSelection([
+        { title: "a", important: false, duplicateOf: null },
+        { title: "b", important: true, duplicateOf: 7 },
+      ]),
+    ).toEqual([true, false]);
   });
 });
