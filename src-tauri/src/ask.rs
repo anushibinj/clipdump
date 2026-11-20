@@ -34,8 +34,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::llm::{HttpPost, LlmConfig, clip_to, complete, json_object};
 
@@ -114,7 +114,15 @@ impl Candidate {
         text: &str,
     ) -> Self {
         let lower: Arc<str> = Arc::from(text.to_lowercase());
-        Self::with_lower(source, id, created_at, touched_at, title, Arc::from(text), lower)
+        Self::with_lower(
+            source,
+            id,
+            created_at,
+            touched_at,
+            title,
+            Arc::from(text),
+            lower,
+        )
     }
 
     /// Like [`Candidate::new`] with the lowercase twin already at hand (a clipboard item
@@ -202,7 +210,11 @@ fn parse_ymd(s: &str) -> Option<i64> {
     let y: i64 = it.next()?.trim().parse().ok()?;
     let m: i64 = it.next()?.trim().parse().ok()?;
     let d: i64 = it.next()?.trim().parse().ok()?;
-    if it.next().is_some() || !(2000..=2100).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+    if it.next().is_some()
+        || !(2000..=2100).contains(&y)
+        || !(1..=12).contains(&m)
+        || !(1..=31).contains(&d)
+    {
         return None;
     }
     let days = days_from_civil(y, m, d);
@@ -331,13 +343,77 @@ pub fn fallback_plan() -> Plan {
 
 /// Words too common to find anything.
 const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "that", "this", "what", "which", "who", "whom", "was", "were", "are",
-    "did", "does", "has", "have", "had", "with", "from", "about", "when", "where", "how", "why",
-    "you", "your", "his", "her", "its", "our", "their", "they", "them", "she", "him", "thing",
-    "things", "some", "any", "there", "then", "than", "ago", "told", "tell", "said", "say",
-    "can", "could", "would", "should", "into", "out", "all", "get", "got", "last", "week",
-    "weeks", "day", "days", "month", "months", "year", "years", "yesterday", "today", "recently",
-    "remember", "find", "show",
+    "the",
+    "and",
+    "for",
+    "that",
+    "this",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "was",
+    "were",
+    "are",
+    "did",
+    "does",
+    "has",
+    "have",
+    "had",
+    "with",
+    "from",
+    "about",
+    "when",
+    "where",
+    "how",
+    "why",
+    "you",
+    "your",
+    "his",
+    "her",
+    "its",
+    "our",
+    "their",
+    "they",
+    "them",
+    "she",
+    "him",
+    "thing",
+    "things",
+    "some",
+    "any",
+    "there",
+    "then",
+    "than",
+    "ago",
+    "told",
+    "tell",
+    "said",
+    "say",
+    "can",
+    "could",
+    "would",
+    "should",
+    "into",
+    "out",
+    "all",
+    "get",
+    "got",
+    "last",
+    "week",
+    "weeks",
+    "day",
+    "days",
+    "month",
+    "months",
+    "year",
+    "years",
+    "yesterday",
+    "today",
+    "recently",
+    "remember",
+    "find",
+    "show",
 ];
 
 /// The question's own words that can find something: lowercase, three letters or more, no
@@ -345,7 +421,9 @@ const STOPWORDS: &[&str] = &[
 pub fn question_words(question: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for w in question.split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-') {
-        let w = w.trim_matches(|c: char| c == '\'' || c == '-').to_lowercase();
+        let w = w
+            .trim_matches(|c: char| c == '\'' || c == '-')
+            .to_lowercase();
         if w.chars().count() >= 3 && !STOPWORDS.contains(&w.as_str()) && !out.contains(&w) {
             out.push(w);
         }
@@ -411,14 +489,16 @@ fn excerpt(text: &str, lower: &str, words: &[&str], max: usize) -> String {
         None
     };
     let first_char = at.map_or(0, |b| text[..b].chars().count().saturating_sub(max / 4));
-    let mut start = text.char_indices().nth(first_char).map_or(text.len(), |(i, _)| i);
+    let mut start = text
+        .char_indices()
+        .nth(first_char)
+        .map_or(text.len(), |(i, _)| i);
     // Begin at a word, not in the middle of one.
-    if start > 0 {
-        if let Some(sp) = text[start..].find(char::is_whitespace) {
-            if sp < 20 {
-                start += sp;
-            }
-        }
+    if start > 0
+        && let Some(sp) = text[start..].find(char::is_whitespace)
+        && sp < 20
+    {
+        start += sp;
     }
     let body = text[start..].trim_start();
     let cut = clip_to(body, max);
@@ -484,10 +564,7 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
         .enumerate()
         .filter_map(|(i, c)| Some((i, score(c))).filter(|(_, s)| *s > 0))
         .collect();
-    scored.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then_with(|| by_newest(pool[a.0], pool[b.0]))
-    });
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| by_newest(pool[a.0], pool[b.0])));
 
     let (inside, outside): (Vec<_>, Vec<_>) = match plan.range {
         Some(r) => scored.iter().partition(|(i, _)| in_range(pool[*i], r)),
@@ -532,8 +609,11 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
                 source: c.source,
                 id: c.id,
                 created_at: c.created_at,
-                title: clip_to(&c.title.split_whitespace().collect::<Vec<_>>().join(" "), TITLE_CHARS)
-                    .to_owned(),
+                title: clip_to(
+                    &c.title.split_whitespace().collect::<Vec<_>>().join(" "),
+                    TITLE_CHARS,
+                )
+                .to_owned(),
                 excerpt: excerpt(&c.text, &c.lower, &words, SNIPPET_CHARS),
                 quote: None,
                 cited: false,
@@ -575,7 +655,10 @@ struct RawSource {
 
 /// Whitespace collapsed and lowercased, for comparing a quote with an excerpt.
 fn norm(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// `[n]` markers in `answer` that do not name a cited hit are removed; the rest stay.
@@ -591,7 +674,8 @@ fn strip_unverified_markers(answer: &str, cited: &[usize]) -> String {
             break;
         };
         let inner = &tail[1..close];
-        let is_number = !inner.is_empty() && inner.len() <= 3 && inner.bytes().all(|b| b.is_ascii_digit());
+        let is_number =
+            !inner.is_empty() && inner.len() <= 3 && inner.bytes().all(|b| b.is_ascii_digit());
         if is_number && !cited.contains(&inner.parse::<usize>().unwrap_or(0)) {
             // Drop the marker and the space before it, if any.
             if out.ends_with(' ') {

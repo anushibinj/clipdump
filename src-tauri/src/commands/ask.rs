@@ -40,7 +40,14 @@ pub fn note_candidate(n: &Note) -> Candidate {
         text.push_str("\nTags: ");
         text.push_str(&n.tags.join(", "));
     }
-    Candidate::new(Source::Note, n.id, n.created_at, n.updated_at, &n.title, &text)
+    Candidate::new(
+        Source::Note,
+        n.id,
+        n.created_at,
+        n.updated_at,
+        &n.title,
+        &text,
+    )
 }
 
 /// A task as a searchable item: where it stands, where it was left off, its next step.
@@ -173,7 +180,10 @@ mod tests {
     #[test]
     fn a_note_is_searchable_by_title_body_and_tags() {
         let c = note_candidate(&note());
-        assert_eq!((c.source, c.id, c.created_at, c.touched_at), (Source::Note, 3, 10, 20));
+        assert_eq!(
+            (c.source, c.id, c.created_at, c.touched_at),
+            (Source::Note, 3, 10, 20)
+        );
         assert_eq!(c.title, "1:1");
         assert_eq!(&*c.text, "Priya wants the report\nTags: work, boss");
         assert!(c.lower.contains("tags: work, boss"));
@@ -182,10 +192,17 @@ mod tests {
     #[test]
     fn a_task_carries_its_state_and_a_done_task_is_dated_by_its_finish() {
         let c = task_candidate(&task(Status::Doing));
-        assert_eq!(&*c.text, "Status: in flight, important\nLeft off: waiting for numbers\nNext step: Ask finance");
+        assert_eq!(
+            &*c.text,
+            "Status: in flight, important\nLeft off: waiting for numbers\nNext step: Ask finance"
+        );
         assert_eq!((c.created_at, c.touched_at), (100, 200));
         assert_eq!(task_candidate(&task(Status::Done)).touched_at, 500);
-        assert!(task_candidate(&task(Status::Todo)).text.starts_with("Status: waiting"));
+        assert!(
+            task_candidate(&task(Status::Todo))
+                .text
+                .starts_with("Status: waiting")
+        );
     }
 
     #[test]
@@ -198,8 +215,16 @@ mod tests {
         let all = candidates(&[note()], &[task(Status::Todo)], &fx.store);
         let clips: Vec<_> = all.iter().filter(|c| c.source == Source::Clip).collect();
         assert_eq!(all.len(), 2 + clips.len());
-        assert!(clips.iter().any(|c| c.text.contains("hunter2") && c.lower.contains("wi-fi")));
-        assert!(clips.iter().all(|c| !c.text.contains('/') && !c.text.contains('\\')),
-            "a file list is sent as names, never as paths");
+        assert!(
+            clips
+                .iter()
+                .any(|c| c.text.contains("hunter2") && c.lower.contains("wi-fi"))
+        );
+        assert!(
+            clips
+                .iter()
+                .all(|c| !c.text.contains('/') && !c.text.contains('\\')),
+            "a file list is sent as names, never as paths"
+        );
     }
 }
