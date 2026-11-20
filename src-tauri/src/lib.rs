@@ -123,6 +123,16 @@ pub fn run() {
             commands::tasks::add_task,
             commands::tasks::update_task,
             commands::tasks::delete_task,
+            commands::task_ai::estimate_task,
+            commands::task_ai::estimate_backlog,
+            commands::task_ai::pick_next_task,
+            commands::task_ai::suggest_next_step,
+            commands::task_ai::draft_resume_note,
+            commands::task_ai::task_digest,
+            commands::task_ai::suggest_task_links,
+            commands::task_ai::extract_tasks,
+            commands::task_ai::review_stale_tasks,
+            commands::task_ai::get_clips,
             commands::perf_ack
         ])
         .manage(AppState::default())
@@ -325,6 +335,7 @@ fn start_tasks(
         );
     }
     let _ = app.state::<AppState>().tasks.set(Arc::new(tasks));
+    commands::task_ai::start_estimator(app.handle());
 }
 
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow

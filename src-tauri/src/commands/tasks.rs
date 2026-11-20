@@ -28,7 +28,7 @@ pub fn system_now_ms() -> i64 {
 }
 
 /// The task store, or a plain error when it could not start (it needs the history's key).
-fn tasks(app: &AppHandle) -> Result<Arc<TaskStore>, String> {
+pub(super) fn tasks(app: &AppHandle) -> Result<Arc<TaskStore>, String> {
     app.state::<AppState>()
         .tasks
         .get()
@@ -70,13 +70,16 @@ pub fn add_task(
     important: bool,
     start: bool,
 ) -> Result<Task, String> {
-    add_task_to(
+    let task = add_task_to(
         tasks(&app)?.as_ref(),
         &title,
         important,
         start,
         system_now_ms(),
-    )
+    )?;
+    // With an LLM server set up, a new task gets its effort estimate in the background.
+    super::task_ai::queue_estimate(&app, task.id);
+    Ok(task)
 }
 
 /// Change the fields in `patch` (title, note, status, important). Returns the task as stored.

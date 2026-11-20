@@ -25,6 +25,16 @@
     "allow-add-task",
     "allow-update-task",
     "allow-delete-task",
+    "allow-estimate-task",
+    "allow-estimate-backlog",
+    "allow-pick-next-task",
+    "allow-suggest-next-step",
+    "allow-draft-resume-note",
+    "allow-task-digest",
+    "allow-suggest-task-links",
+    "allow-extract-tasks",
+    "allow-review-stale-tasks",
+    "allow-get-clips",
     "allow-perf-ack"
   ]
 }

@@ -23,6 +23,16 @@ const COMMANDS: &[&str] = &[
     "add_task",
     "update_task",
     "delete_task",
+    "estimate_task",
+    "estimate_backlog",
+    "pick_next_task",
+    "suggest_next_step",
+    "draft_resume_note",
+    "task_digest",
+    "suggest_task_links",
+    "extract_tasks",
+    "review_stale_tasks",
+    "get_clips",
     "perf_ack",
 ];
 

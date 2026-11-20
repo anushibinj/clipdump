@@ -39,6 +39,7 @@ pub mod copy;
 pub mod folder;
 pub mod preview;
 pub mod split;
+pub mod task_ai;
 pub mod tasks;
 #[cfg(test)]
 mod tests;
