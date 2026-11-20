@@ -159,6 +159,177 @@ pub fn estimate(cfg: &LlmConfig, http: &dyn HttpPost, task: &Task) -> Result<Est
     parse_estimate(&complete(cfg, http, &system, &user, 0.0)?)
 }
 
+// ---------------------------------------------------------------------------
+// What should I do now?
+// ---------------------------------------------------------------------------
+
+/// How much energy the person has, which steers the pick toward lighter or heavier tasks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Energy {
+    Low,
+    Normal,
+    High,
+}
+
+/// The task the model chose and a short why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pick {
+    pub id: u64,
+    pub reason: String,
+}
+
+/// The tasks a pick can come from: everything in flight, and waiting tasks that are not
+/// deferred. Done tasks never. Most promising first (in flight, important, oldest), at most
+/// [`MAX_LISTED`].
+pub fn pick_candidates(tasks: &[Task], now: i64) -> Vec<&Task> {
+    let mut list: Vec<&Task> = tasks
+        .iter()
+        .filter(|t| match t.status {
+            Status::Doing => true,
+            Status::Todo => t.deferred_until.is_none_or(|until| until <= now),
+            Status::Done => false,
+        })
+        .collect();
+    list.sort_by_key(|t| (t.status != Status::Doing, !t.important, t.created_at, t.id));
+    list.truncate(MAX_LISTED);
+    list
+}
+
+const PICK_PROMPT: &str = "You help a person choose the single best task to do next from their list.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"id\":<the task's id>,\"reason\":\"<one short sentence: why this one, now>\"}\n\
+Rules:\n\
+- Choose only an id that appears in the list.\n\
+- Prefer a task already in flight when the person has time to carry on, then important tasks, then tasks that have waited longest.\n\
+- When the person has limited minutes, choose a task whose size fits (quick is about 15 minutes, short up to an hour, long more).\n\
+- When energy is low, prefer quick, mechanical tasks; when it is high, prefer deep ones.\n\
+- Avoid tasks of kind waiting unless nothing else is possible.\n\
+- Write the reason for the person, plainly, without repeating the whole title.";
+
+#[derive(Deserialize)]
+struct RawPick {
+    id: u64,
+    #[serde(default)]
+    reason: String,
+}
+
+/// The model's pick, accepted only when its id is one of `candidates`.
+pub fn parse_pick(reply: &str, candidates: &[&Task]) -> Result<Pick, String> {
+    let raw: RawPick = parse(reply)?;
+    if !candidates.iter().any(|t| t.id == raw.id) {
+        return Err("the model picked a task that is not on the list".to_owned());
+    }
+    Ok(Pick {
+        id: raw.id,
+        reason: short_text(&raw.reason, MAX_REASON_CHARS),
+    })
+}
+
+/// Choose the task to do now. `None` when there is nothing open; with exactly one candidate
+/// there is nothing to decide and the server is not asked.
+pub fn pick_next(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    tasks: &[Task],
+    now: i64,
+    minutes: Option<u32>,
+    energy: Energy,
+) -> Result<Option<Pick>, String> {
+    let candidates = pick_candidates(tasks, now);
+    match candidates.as_slice() {
+        [] => return Ok(None),
+        [only] => {
+            return Ok(Some(Pick {
+                id: only.id,
+                reason: "It is the only open task.".to_owned(),
+            }));
+        }
+        _ => {}
+    }
+    let mut user = String::new();
+    match minutes {
+        Some(m) => user.push_str(&format!("Time available: {} minutes\n", m.clamp(1, 480))),
+        None => user.push_str("Time available: not said\n"),
+    }
+    user.push_str(match energy {
+        Energy::Low => "Energy: low\n",
+        Energy::Normal => "Energy: normal\n",
+        Energy::High => "Energy: high\n",
+    });
+    user.push_str("<data>\n");
+    for t in &candidates {
+        user.push_str(&task_line(t, now));
+        user.push('\n');
+    }
+    user.push_str("</data>");
+    let system = format!("{PICK_PROMPT}\n{DATA_RULE}");
+    parse_pick(&complete(cfg, http, &system, &user, 0.2)?, &candidates).map(Some)
+}
+
+// ---------------------------------------------------------------------------
+// Next action and subtasks
+// ---------------------------------------------------------------------------
+
+/// A concrete first step for a task, and, for a big one, the steps after it as separate tasks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NextAction {
+    pub step: String,
+    pub subtasks: Vec<String>,
+}
+
+/// Subtasks offered at most.
+pub const MAX_SUBTASKS: usize = 8;
+
+const NEXT_ACTION_PROMPT: &str = "You turn one vague to-do item into something a person can start on right now.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"step\":\"<the first concrete physical action>\",\"subtasks\":[\"<step title>\"]}\n\
+Rules:\n\
+- \"step\" is one imperative sentence of at most 25 words naming a real first action, for example \"Open the login handler and reproduce the 401 with a bad token\", \
+not \"work on login\". Use the note, if there is one, to start where the person left off.\n\
+- \"subtasks\" breaks the whole item into 2 to 6 ordered steps, each a short imperative title, only when the item is big enough to need it. \
+When it is small or already concrete, use an empty list.\n\
+- Do not invent facts, names or numbers that are not in the item.";
+
+#[derive(Deserialize)]
+struct RawNextAction {
+    #[serde(default)]
+    step: String,
+    #[serde(default)]
+    subtasks: Vec<String>,
+}
+
+/// The model's answer, bounded: the step fits a task's `next_step`, every subtask fits a title,
+/// empty, repeated and title-copying subtasks are dropped. An answer with no step is an error.
+pub fn parse_next_action(reply: &str, task: &Task) -> Result<NextAction, String> {
+    let raw: RawNextAction = parse(reply)?;
+    let step = short_text(&raw.step, MAX_STEP_CHARS);
+    if step.is_empty() {
+        return Err("the model did not suggest a step".to_owned());
+    }
+    let mut subtasks: Vec<String> = Vec::new();
+    for s in raw.subtasks {
+        let s = short_text(&s, MAX_TITLE_CHARS);
+        if s.is_empty() || s.eq_ignore_ascii_case(task.title.trim()) || subtasks.contains(&s) {
+            continue;
+        }
+        subtasks.push(s);
+        if subtasks.len() == MAX_SUBTASKS {
+            break;
+        }
+    }
+    Ok(NextAction { step, subtasks })
+}
+
+/// Suggest the next step (and a breakdown) for `task`.
+pub fn next_action(cfg: &LlmConfig, http: &dyn HttpPost, task: &Task) -> Result<NextAction, String> {
+    let mut user = format!("<data>\nTask: {}", one_line(&task.title, LINE_CHARS));
+    if !task.note.is_empty() {
+        user.push_str(&format!("\nWhere the person left off: {}", one_line(&task.note, LINE_CHARS)));
+    }
+    user.push_str("\n</data>");
+    let system = format!("{NEXT_ACTION_PROMPT}\n{DATA_RULE}");
+    parse_next_action(&complete(cfg, http, &system, &user, 0.2)?, task)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +450,103 @@ mod tests {
         let t = task(1, &"x".repeat(MAX_TITLE_CHARS));
         estimate(&cfg(), &http, &t).unwrap();
         assert!(http.user_text().chars().count() < LINE_CHARS + 30);
+    }
+    fn open(id: u64, title: &str, status: Status) -> Task {
+        Task {
+            status,
+            ..task(id, title)
+        }
+    }
+
+    #[test]
+    fn candidates_are_open_not_deferred_and_most_promising_first() {
+        let mut deferred = open(1, "later", Status::Todo);
+        deferred.deferred_until = Some(1_000);
+        let mut important = open(3, "important", Status::Todo);
+        important.important = true;
+        let mut old = open(4, "old", Status::Todo);
+        old.created_at = -5;
+        let tasks = vec![
+            deferred,
+            open(2, "done", Status::Done),
+            important,
+            old,
+            open(5, "running", Status::Doing),
+            open(6, "new", Status::Todo),
+        ];
+        let ids = |now| pick_candidates(&tasks, now).iter().map(|t| t.id).collect::<Vec<_>>();
+        // In flight, then important, then oldest; the deferred one is out until its day.
+        assert_eq!(ids(0), vec![5, 3, 4, 6]);
+        assert_eq!(ids(1_000), vec![5, 3, 4, 1, 6]);
+    }
+
+    #[test]
+    fn a_pick_must_be_one_of_the_candidates() {
+        let a = open(1, "a", Status::Todo);
+        let b = open(2, "b", Status::Todo);
+        let c = [&a, &b];
+        let ok = parse_pick(r#"{"id":2,"reason":"  quick\nand   easy "}"#, &c).unwrap();
+        assert_eq!(ok, Pick { id: 2, reason: "quick and easy".into() });
+        assert!(parse_pick(r#"{"id":9,"reason":"x"}"#, &c).is_err());
+        assert!(parse_pick("the second one", &c).is_err());
+        // A missing reason is fine.
+        assert_eq!(parse_pick(r#"{"id":1}"#, &c).unwrap().reason, "");
+    }
+
+    #[test]
+    fn picking_tells_the_model_the_time_and_energy_and_lists_the_tasks() {
+        let http = Fake::answering(r#"{"id":2,"reason":"fits in ten minutes"}"#);
+        let mut b = open(2, "pay the invoice", Status::Todo);
+        b.size = Some(Size::Quick);
+        let tasks = vec![open(1, "write the plan", Status::Todo), b];
+        let got = pick_next(&cfg(), &http, &tasks, 0, Some(10), Energy::Low).unwrap();
+        assert_eq!(got.unwrap().id, 2);
+        let user = http.user_text();
+        assert!(user.starts_with("Time available: 10 minutes\nEnergy: low\n<data>\n"));
+        assert!(user.contains("id=2 | pay the invoice | waiting | size quick"));
+        assert!(user.ends_with("</data>"));
+    }
+
+    #[test]
+    fn nothing_open_or_one_task_needs_no_server() {
+        let down = Fake::answering("unused");
+        assert_eq!(pick_next(&cfg(), &down, &[], 0, None, Energy::Normal).unwrap(), None);
+        let one = vec![open(4, "only", Status::Todo), open(5, "done", Status::Done)];
+        let got = pick_next(&cfg(), &down, &one, 0, None, Energy::Normal).unwrap().unwrap();
+        assert_eq!(got.id, 4);
+        assert!(down.seen.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_next_action_is_bounded_and_cleaned() {
+        let t = task(1, "Fix login");
+        let reply = r#"{"step":"  Open the handler\nand reproduce the 401 ","subtasks":
+            ["Reproduce the 401"," ","fix login","Reproduce the 401","Add a test"]}"#;
+        let got = parse_next_action(reply, &t).unwrap();
+        assert_eq!(got.step, "Open the handler and reproduce the 401");
+        assert_eq!(got.subtasks, vec!["Reproduce the 401", "Add a test"]);
+
+        let many = format!(
+            r#"{{"step":"go","subtasks":[{}]}}"#,
+            (0..20).map(|i| format!("\"s{i}\"")).collect::<Vec<_>>().join(",")
+        );
+        assert_eq!(parse_next_action(&many, &t).unwrap().subtasks.len(), MAX_SUBTASKS);
+        let long = format!(r#"{{"step":"{}"}}"#, "w".repeat(MAX_STEP_CHARS + 50));
+        assert_eq!(parse_next_action(&long, &t).unwrap().step.chars().count(), MAX_STEP_CHARS);
+        assert!(parse_next_action(r#"{"step":"  ","subtasks":["a"]}"#, &t).is_err());
+        assert!(parse_next_action("no idea", &t).is_err());
+    }
+
+    #[test]
+    fn the_next_action_request_carries_the_title_and_where_the_person_left_off() {
+        let http = Fake::answering(r#"{"step":"Open the file","subtasks":[]}"#);
+        let mut t = task(1, "taxes");
+        t.note = "found the forms".into();
+        let got = next_action(&cfg(), &http, &t).unwrap();
+        assert_eq!(got, NextAction { step: "Open the file".into(), subtasks: vec![] });
+        assert_eq!(
+            http.user_text(),
+            "<data>\nTask: taxes\nWhere the person left off: found the forms\n</data>"
+        );
     }
 }
