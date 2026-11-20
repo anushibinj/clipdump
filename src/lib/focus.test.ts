@@ -215,7 +215,7 @@ describe("parking lot", () => {
     ]);
     d = unpark(d, 1);
     expect(d.parked.map((p) => p.id)).toEqual([2]);
-    expect(park(d, "again", T0).parked.at(-1)?.id).toBe(3);
+    expect(park(d, "again", T0).parked[1].id).toBe(3);
   });
   it("ignores blanks, cuts long text and stops at the cap", () => {
     expect(park(emptyFocus(), "   ", T0).parked).toEqual([]);
