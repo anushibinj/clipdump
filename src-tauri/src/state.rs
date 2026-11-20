@@ -64,6 +64,9 @@ pub struct AppState {
     /// The task list of the Tasks view (`tasks.rs`). Empty until the history's key
     /// is loaded in `setup`; the commands then answer "not available".
     pub tasks: OnceLock<Arc<crate::tasks::TaskStore>>,
+    /// Ids of new tasks waiting for the background estimator (`commands::task_ai`). Empty
+    /// until `start_estimator` runs.
+    pub task_estimates: OnceLock<std::sync::mpsc::Sender<u64>>,
 }
 
 /// Is pinned-bar mode on? Relaxed is enough: it is an independent flag.

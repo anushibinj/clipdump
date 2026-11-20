@@ -21,3 +21,6 @@ pub const HISTORY_RECOVERED: &str = "history:recovered";
 /// A split job started or finished (`splitter.rs`). No payload: the UI asks
 /// `get_split` again for the item it shows.
 pub const SPLIT_UPDATED: &str = "split:updated";
+/// A task changed behind the webview's back: the background estimator finished one
+/// (`commands::task_ai`). No payload: the UI calls `list_tasks` again.
+pub const TASKS_UPDATED: &str = "tasks:updated";
