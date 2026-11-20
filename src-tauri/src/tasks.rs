@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// File name inside the data directory.
 pub const FILE: &str = "tasks.bin";
@@ -30,6 +30,10 @@ pub const MAX_TASKS: usize = 500;
 pub const MAX_TITLE_CHARS: usize = 300;
 /// Longest note ("where I left off"), in characters.
 pub const MAX_NOTE_CHARS: usize = 1000;
+/// Longest suggested next step, in characters.
+pub const MAX_STEP_CHARS: usize = 300;
+/// Clipboard items one task can be linked to.
+pub const MAX_LINKS: usize = 20;
 /// Finished tasks older than this are dropped when the list is loaded (30 days).
 pub const DONE_KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
@@ -50,6 +54,31 @@ pub enum Status {
     Done,
 }
 
+/// How long a task takes, as estimated by the LLM (or set by hand): what the
+/// "quick wins" filter looks at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Size {
+    /// About 15 minutes or less.
+    Quick,
+    /// Up to about an hour.
+    Short,
+    /// More than an hour.
+    Long,
+}
+
+/// What kind of work a task is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// Small, mechanical, can be done between other things.
+    Quick,
+    /// Needs a block of focus.
+    Deep,
+    /// Blocked on someone or something else.
+    Waiting,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -65,6 +94,31 @@ pub struct Task {
     pub touched_at: i64,
     /// Unix ms, set while the task is done.
     pub done_at: Option<i64>,
+    /// Estimated effort. Set by the LLM after the task is added; none until then.
+    /// The fields below all default, so a `tasks.bin` from before they existed still loads.
+    #[serde(default)]
+    pub size: Option<Size>,
+    #[serde(default)]
+    pub kind: Option<Kind>,
+    /// A concrete first step suggested by the LLM. Empty when there is none.
+    #[serde(default)]
+    pub next_step: String,
+    /// Clipboard items (history ids) that belong to this task. An id whose item has
+    /// since left the history is simply not shown.
+    #[serde(default)]
+    pub clip_ids: Vec<u64>,
+    /// Unix ms. Until then the task is not nagged about as stale.
+    #[serde(default)]
+    pub deferred_until: Option<i64>,
+}
+
+/// A JSON field that can be absent (leave alone), null (clear) or a value (set).
+fn set_or_clear<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 /// The fields `update` can change; a missing field stays as it is.
@@ -75,6 +129,33 @@ pub struct TaskPatch {
     pub note: Option<String>,
     pub status: Option<Status>,
     pub important: Option<bool>,
+    /// `null` clears the estimate.
+    #[serde(default, deserialize_with = "set_or_clear")]
+    pub size: Option<Option<Size>>,
+    #[serde(default, deserialize_with = "set_or_clear")]
+    pub kind: Option<Option<Kind>>,
+    /// An empty string clears the suggestion.
+    pub next_step: Option<String>,
+    /// Replaces the linked items.
+    pub clip_ids: Option<Vec<u64>>,
+    /// `null` clears the deferral.
+    #[serde(default, deserialize_with = "set_or_clear")]
+    pub deferred_until: Option<Option<i64>>,
+}
+
+impl TaskPatch {
+    /// Whether the patch changes something the person did or decided (a title, a note, a
+    /// status, importance, a link, a deferral). Estimates and suggestions come from the LLM,
+    /// and must not make an untouched task look touched: that would hide it from the
+    /// "gone quiet" nudge.
+    fn is_a_touch(&self) -> bool {
+        self.title.is_some()
+            || self.note.is_some()
+            || self.status.is_some()
+            || self.important.is_some()
+            || self.clip_ids.is_some()
+            || self.deferred_until.is_some()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +163,8 @@ pub enum TaskError {
     EmptyTitle,
     TitleTooLong,
     NoteTooLong,
+    StepTooLong,
+    TooManyLinks,
     NotFound,
     Full,
     Save,
@@ -93,6 +176,8 @@ impl std::fmt::Display for TaskError {
             Self::EmptyTitle => "the task needs a title",
             Self::TitleTooLong => "the title is too long",
             Self::NoteTooLong => "the note is too long",
+            Self::StepTooLong => "the suggested step is too long",
+            Self::TooManyLinks => "too many linked clipboard items",
             Self::NotFound => "task not found",
             Self::Full => "too many tasks, delete or finish some first",
             Self::Save => "could not save the tasks",
@@ -257,6 +342,11 @@ impl TaskStore {
             created_at: now_ms,
             touched_at: now_ms,
             done_at: None,
+            size: None,
+            kind: None,
+            next_step: String::new(),
+            clip_ids: Vec::new(),
+            deferred_until: None,
         };
         next.next_id += 1;
         next.tasks.push(task.clone());
@@ -279,6 +369,27 @@ impl TaskStore {
             .as_deref()
             .map(|n| trimmed(n, MAX_NOTE_CHARS, TaskError::NoteTooLong))
             .transpose()?;
+        let step = patch
+            .next_step
+            .as_deref()
+            .map(|s| trimmed(s, MAX_STEP_CHARS, TaskError::StepTooLong))
+            .transpose()?;
+        let links = match &patch.clip_ids {
+            None => None,
+            Some(ids) => {
+                let mut kept: Vec<u64> = Vec::new();
+                for id in ids {
+                    if !kept.contains(id) {
+                        kept.push(*id);
+                    }
+                }
+                if kept.len() > MAX_LINKS {
+                    return Err(TaskError::TooManyLinks);
+                }
+                Some(kept)
+            }
+        };
+        let touch = patch.is_a_touch();
 
         let mut guard = self.lock();
         let mut next = guard.clone();
@@ -300,7 +411,24 @@ impl TaskStore {
             task.status = status;
             task.done_at = (status == Status::Done).then_some(now_ms);
         }
-        task.touched_at = now_ms;
+        if let Some(size) = patch.size {
+            task.size = size;
+        }
+        if let Some(kind) = patch.kind {
+            task.kind = kind;
+        }
+        if let Some(step) = step {
+            task.next_step = step;
+        }
+        if let Some(links) = links {
+            task.clip_ids = links;
+        }
+        if let Some(until) = patch.deferred_until {
+            task.deferred_until = until;
+        }
+        if touch {
+            task.touched_at = now_ms;
+        }
         let updated = task.clone();
         self.commit(&mut guard, next)?;
         Ok(updated)
@@ -579,8 +707,17 @@ mod tests {
             created_at: 1,
             touched_at: 2,
             done_at: None,
+            size: Some(Size::Quick),
+            kind: None,
+            next_step: String::new(),
+            clip_ids: vec![4],
+            deferred_until: None,
         };
         let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["size"], "quick");
+        assert!(v["kind"].is_null());
+        assert_eq!(v["clipIds"], serde_json::json!([4]));
+        assert_eq!(v["nextStep"], "");
         assert_eq!(v["status"], "doing");
         assert_eq!(v["createdAt"], 1);
         assert_eq!(v["touchedAt"], 2);
@@ -589,5 +726,107 @@ mod tests {
         assert_eq!(p.status, Some(Status::Done));
         assert_eq!(p.important, Some(false));
         assert!(p.title.is_none());
+    }
+
+    #[test]
+    fn estimates_and_suggestions_do_not_touch_the_task() {
+        let d = dir();
+        let (s, _) = open(d.path(), 1, 0);
+        let t = s.add("a", false, true, 10).unwrap();
+        let t2 = s
+            .update(
+                t.id,
+                TaskPatch {
+                    size: Some(Some(Size::Quick)),
+                    kind: Some(Some(Kind::Deep)),
+                    next_step: Some("  open the file ".into()),
+                    ..Default::default()
+                },
+                9_000,
+            )
+            .unwrap();
+        assert_eq!(t2.size, Some(Size::Quick));
+        assert_eq!(t2.kind, Some(Kind::Deep));
+        assert_eq!(t2.next_step, "open the file");
+        // The LLM filled these in; the person did nothing, so it is still untouched.
+        assert_eq!(t2.touched_at, 10);
+        // A link, a deferral and a note are the person's doing.
+        for patch in [
+            TaskPatch {
+                clip_ids: Some(vec![3]),
+                ..Default::default()
+            },
+            TaskPatch {
+                deferred_until: Some(Some(5)),
+                ..Default::default()
+            },
+        ] {
+            let before = s.list()[0].touched_at;
+            let after = s.update(t.id, patch, before + 100).unwrap().touched_at;
+            assert_eq!(after, before + 100);
+        }
+    }
+
+    #[test]
+    fn null_clears_and_absent_leaves_alone() {
+        let d = dir();
+        let (s, _) = open(d.path(), 1, 0);
+        let t = s.add("a", false, false, 0).unwrap();
+        let set: TaskPatch =
+            serde_json::from_str(r#"{"size":"long","kind":"waiting","deferredUntil":50}"#).unwrap();
+        let t = s.update(t.id, set, 1).unwrap();
+        assert_eq!(
+            (t.size, t.kind, t.deferred_until),
+            (Some(Size::Long), Some(Kind::Waiting), Some(50))
+        );
+        let leave: TaskPatch = serde_json::from_str(r#"{"important":true}"#).unwrap();
+        let t = s.update(t.id, leave, 2).unwrap();
+        assert_eq!(t.size, Some(Size::Long));
+        let clear: TaskPatch =
+            serde_json::from_str(r#"{"size":null,"deferredUntil":null}"#).unwrap();
+        let t = s.update(t.id, clear, 3).unwrap();
+        assert_eq!((t.size, t.kind, t.deferred_until), (None, Some(Kind::Waiting), None));
+    }
+
+    #[test]
+    fn links_are_deduplicated_and_capped_and_the_step_is_bounded() {
+        let d = dir();
+        let (s, _) = open(d.path(), 1, 0);
+        let t = s.add("a", false, false, 0).unwrap();
+        let t = s
+            .update(
+                t.id,
+                TaskPatch {
+                    clip_ids: Some(vec![5, 6, 5]),
+                    ..Default::default()
+                },
+                1,
+            )
+            .unwrap();
+        assert_eq!(t.clip_ids, vec![5, 6]);
+        let many = TaskPatch {
+            clip_ids: Some((0..=MAX_LINKS as u64).collect()),
+            ..Default::default()
+        };
+        assert_eq!(s.update(t.id, many, 2), Err(TaskError::TooManyLinks));
+        let long = TaskPatch {
+            next_step: Some("s".repeat(MAX_STEP_CHARS + 1)),
+            ..Default::default()
+        };
+        assert_eq!(s.update(t.id, long, 2), Err(TaskError::StepTooLong));
+        assert_eq!(s.list()[0].clip_ids, vec![5, 6]);
+    }
+
+    #[test]
+    fn a_list_saved_before_the_ai_fields_still_loads() {
+        let d = dir();
+        let old = r#"{"nextId":3,"tasks":[{"id":2,"title":"old","note":"","status":"todo",
+            "important":false,"createdAt":1,"touchedAt":1,"doneAt":null}]}"#;
+        fs::write(d.path().join(FILE), Fake(1).seal(old.as_bytes()).unwrap()).unwrap();
+        let (s, moved) = open(d.path(), 1, 5);
+        assert!(moved.is_none());
+        let t = &s.list()[0];
+        assert_eq!(t.title, "old");
+        assert!(t.size.is_none() && t.next_step.is_empty() && t.clip_ids.is_empty());
     }
 }
