@@ -6,7 +6,48 @@ use crate::llm::{self, HttpPost, LlmConfig, Part};
 use crate::model::{ClipKind, Payload};
 use crate::platform::ClipboardWriter;
 use crate::platform::self_write::SelfWriteGuard;
+use crate::splitter::Status;
 use crate::store::Store;
+use serde::Serialize;
+
+/// Where a split stands, as the webview sees it (`status` is the tag).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum SplitStatusDto {
+    /// Never asked for.
+    None,
+    Queued,
+    Running,
+    Done {
+        parts: Vec<Part>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+impl From<Option<Status>> for SplitStatusDto {
+    fn from(s: Option<Status>) -> Self {
+        match s {
+            None => Self::None,
+            Some(Status::Queued) => Self::Queued,
+            Some(Status::Running) => Self::Running,
+            Some(Status::Done(parts)) => Self::Done { parts },
+            Some(Status::Failed(message)) => Self::Error { message },
+        }
+    }
+}
+
+/// Check that item `id` can be split (Split is set up, it is text) and return
+/// its content hash, the key of its result.
+pub fn splittable_hash(store: &Store, cfg: Option<&LlmConfig>, id: u64) -> Result<u128, String> {
+    cfg.ok_or("set up an LLM server in Settings first")?;
+    let item = store.get(id).ok_or("item not found")?;
+    if item.kind != ClipKind::Text {
+        return Err("only text items can be split".to_owned());
+    }
+    Ok(item.hash)
+}
 
 /// The most text `copy_text` accepts. A piece is a number or a token, never a book;
 /// the cap only stops a runaway caller.
@@ -132,6 +173,47 @@ mod tests {
                 .contains("not found")
         );
         assert_eq!(*http.1.borrow(), 0);
+    }
+
+    #[test]
+    fn the_status_json_is_tagged_by_status() {
+        let v = |s: Option<Status>| serde_json::to_value(SplitStatusDto::from(s)).unwrap();
+        assert_eq!(v(None), json!({ "status": "none" }));
+        assert_eq!(v(Some(Status::Queued)), json!({ "status": "queued" }));
+        assert_eq!(v(Some(Status::Running)), json!({ "status": "running" }));
+        assert_eq!(
+            v(Some(Status::Done(vec![Part {
+                label: "A".into(),
+                value: "b".into()
+            }]))),
+            json!({ "status": "done", "parts": [{ "label": "A", "value": "b" }] })
+        );
+        assert_eq!(
+            v(Some(Status::Failed("no".into()))),
+            json!({ "status": "error", "message": "no" })
+        );
+    }
+
+    #[test]
+    fn only_text_with_a_server_gets_a_key() {
+        let fx = Fx::new();
+        let text = fx.text("some text to split");
+        let hash = fx.store.get(text).unwrap().hash;
+        assert_eq!(splittable_hash(&fx.store, Some(&cfg()), text), Ok(hash));
+        assert!(
+            splittable_hash(&fx.store, None, text)
+                .unwrap_err()
+                .contains("Settings")
+        );
+        assert!(splittable_hash(&fx.store, Some(&cfg()), 999_999).is_err());
+        let Inserted::New(files) = fx.store.insert(fake_files(1, fx.now())) else {
+            panic!("a new item");
+        };
+        assert!(
+            splittable_hash(&fx.store, Some(&cfg()), files)
+                .unwrap_err()
+                .contains("only text")
+        );
     }
 
     struct Recording;

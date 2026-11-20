@@ -28,6 +28,9 @@ pub const MAX_PARTS: usize = 100;
 /// Longest label and longest value kept (characters).
 const MAX_LABEL_CHARS: usize = 40;
 const MAX_VALUE_CHARS: usize = 2_000;
+/// Texts shorter than this (trimmed, in characters) are not worth a call: a lone
+/// token or number has nothing to split, and the call costs time and money.
+pub const MIN_SPLIT_CHARS: usize = 20;
 /// How long the whole request may take.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -188,7 +191,7 @@ pub fn parse_parts(reply: &str, original: &str) -> Result<Vec<Part>, String> {
 pub fn split(cfg: &LlmConfig, text: &str, http: &dyn HttpPost) -> Result<Vec<Part>, String> {
     let url = endpoint(&cfg.base_url)?;
     let sent = clip(text);
-    if sent.trim().is_empty() {
+    if sent.trim().chars().count() < MIN_SPLIT_CHARS {
         return Ok(Vec::new());
     }
     let bearer = Some(cfg.api_key.as_str()).filter(|k| !k.is_empty());
@@ -437,9 +440,14 @@ mod tests {
     }
 
     #[test]
-    fn blank_text_never_reaches_the_server() {
+    fn blank_and_tiny_text_never_reaches_the_server() {
         let http = Fake::answering(r#"{"items":[]}"#);
         assert!(split(&cfg(), " \n ", &http).unwrap().is_empty());
+        assert!(
+            split(&cfg(), "  ann@example.com ", &http)
+                .unwrap()
+                .is_empty()
+        );
         assert!(http.seen.borrow().is_empty());
     }
 

@@ -35,6 +35,8 @@ pub mod search;
 mod settings;
 // Ordered, idempotent, time bounded shutdown (Phase 13).
 mod shutdown;
+// The queue of LLM splits, two at a time.
+mod splitter;
 mod state;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
 // commands (Phase 9) are its other callers; until then part of its API is unused.
@@ -109,7 +111,8 @@ pub fn run() {
             commands::get_stats,
             commands::hide_bar,
             commands::start_drag,
-            commands::split_item,
+            commands::request_split,
+            commands::get_split,
             commands::copy_text,
             commands::open_data_folder,
             commands::perf_ack
@@ -159,6 +162,7 @@ pub fn run() {
                     hotkey::register_at_startup(&hotkey::PluginRegistrar(app.handle()), &key);
                 *state.hotkey_error.lock().unwrap() = note;
             }
+            start_splitter(app);
             tray::build(app)?;
             start_capture(app);
             if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
@@ -242,6 +246,37 @@ fn load_settings(app: &tauri::App) {
         Err(e) => eprintln!("clipdump: settings saver not started: {e}"),
     }
     *state.settings.write().unwrap() = startup.settings;
+}
+
+/// Start the queue behind Split. Its jobs read the store and the settings when
+/// they run (not when they are queued), so a changed server or model applies to
+/// the next job.
+fn start_splitter(app: &tauri::App) {
+    use std::sync::Arc;
+    use tauri::Emitter;
+    let run_app = app.handle().clone();
+    let run = move |id: u64| {
+        let store = run_app
+            .try_state::<Arc<store::Store>>()
+            .map(|s| Arc::clone(s.inner()))
+            .ok_or_else(|| "the history is not available".to_owned())?;
+        let cfg = llm::LlmConfig::from_settings(
+            &run_app
+                .state::<AppState>()
+                .settings
+                .read()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+        commands::split::split_text_item(&store, cfg.as_ref(), &llm::UreqHttp, id)
+    };
+    let notify_app = app.handle().clone();
+    let changed = move || {
+        let _ = notify_app.emit_to(window::LABEL, events::SPLIT_UPDATED, ());
+    };
+    let _ = app
+        .state::<AppState>()
+        .splitter
+        .set(splitter::Splitter::start(splitter::WORKERS, run, changed));
 }
 
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow

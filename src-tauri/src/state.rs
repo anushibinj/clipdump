@@ -56,6 +56,8 @@ pub struct AppState {
     /// While set, move events are saved as the bar's position for its monitor
     /// (the programmatic moves of `window.rs` never count).
     pub user_dragging: AtomicBool,
+    /// The queue of LLM splits (`splitter.rs`). Empty until `setup` starts it.
+    pub splitter: OnceLock<crate::splitter::Splitter>,
     /// File existence checks for search rows and previews, cached for 2 seconds
     /// so typing never repeats a `stat` (see `search::paths`).
     pub paths: Arc<CachedPathChecker>,

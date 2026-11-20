@@ -267,18 +267,38 @@ pub fn start_drag(app: AppHandle) {
     window::start_user_drag(&app);
 }
 
-/// Break the text item `id` into the pieces worth copying separately, with the
-/// user's own LLM server (see `llm.rs`). Runs on a pool thread: the request can
-/// take many seconds and must never block the window.
+/// Ask for the text item `id` to be split into copyable pieces by the user's own
+/// LLM server (see `llm.rs`) and return where it stands. The call itself runs in
+/// the split queue (`splitter.rs`, two at a time); the webview hears
+/// `split:updated` when something moves. `force` runs it again even if it is done
+/// or failed (the re-split button).
 #[tauri::command(async)]
-pub fn split_item(app: AppHandle, id: u64) -> Result<Vec<crate::llm::Part>, String> {
+pub fn request_split(
+    app: AppHandle,
+    id: u64,
+    force: bool,
+) -> Result<split::SplitStatusDto, String> {
     let store = store(&app)?;
-    let cfg = {
-        let state = app.state::<AppState>();
-        let s = state.settings.read().unwrap_or_else(|e| e.into_inner());
-        crate::llm::LlmConfig::from_settings(&s)
-    };
-    split::split_text_item(&store, cfg.as_ref(), &crate::llm::UreqHttp, id)
+    let state = app.state::<AppState>();
+    let cfg = crate::llm::LlmConfig::from_settings(
+        &state.settings.read().unwrap_or_else(|e| e.into_inner()),
+    );
+    let hash = split::splittable_hash(&store, cfg.as_ref(), id)?;
+    let splitter = state.splitter.get().ok_or("splitting is not available")?;
+    Ok(Some(splitter.request(id, hash, force)).into())
+}
+
+/// Where the split of item `id` stands, without starting one.
+#[tauri::command(async)]
+pub fn get_split(app: AppHandle, id: u64) -> Result<split::SplitStatusDto, String> {
+    let store = store(&app)?;
+    let state = app.state::<AppState>();
+    let item = store.get(id).ok_or("item not found")?;
+    Ok(state
+        .splitter
+        .get()
+        .and_then(|s| s.status(item.hash))
+        .into())
 }
 
 /// Put one piece of a split text on the clipboard. The bar stays open (the next
