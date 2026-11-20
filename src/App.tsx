@@ -18,6 +18,7 @@ import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
 import { useTasks } from "@/hooks/useTasks";
+import { readView, writeView } from "@/lib/view";
 import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
 import {
   clearHistory,
@@ -54,7 +55,16 @@ const NOTICE_MS = 5000;
 function App() {
   const s = useSearch();
   const tasks = useTasks();
-  const [view, setView] = useState<View>("search");
+  // The bar opens on the view it was left on (search, tasks or settings), across openings and
+  // restarts: hiding the bar never resets it (`lib/view.ts`).
+  const [view, setViewState] = useState<View>(readView);
+  const setView = useCallback((next: View | ((v: View) => View)) => {
+    setViewState((v) => {
+      const to = typeof next === "function" ? next(v) : next;
+      writeView(to);
+      return to;
+    });
+  }, []);
   // The right pane stays open or closed the way it was left, across openings and restarts.
   const [previewOpen, setPreviewOpen] = useState(readPaneOpen);
   useEffect(() => writePaneOpen(previewOpen), [previewOpen]);
@@ -64,6 +74,8 @@ function App() {
   const [confirming, setConfirming] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
   const [historyTick, setHistoryTick] = useState(0);
+  // Counts the times the bar was hidden; the task list folds its revealed extras away on each.
+  const [hiddenSignal, setHiddenSignal] = useState(0);
   // The sentence the user dismissed, so the recovery notice does not come back on the next open.
   const [recoveryDismissed, setRecoveryDismissed] = useState<string | null>(null);
 
@@ -285,8 +297,9 @@ function App() {
           refreshTasks();
         }),
         onBarHidden(() => {
-          // Back to the plain search view for the next open.
-          setView("search");
+          // The view stays as it is: the next open shows it again. Only a pending confirmation
+          // and the task list's revealed extras go back to their calm state.
+          setHiddenSignal((n) => n + 1);
           disarm();
         }),
         onHistoryChanged(() => {
@@ -401,6 +414,7 @@ function App() {
               <div className="min-h-0 flex-1">
                 <TasksView
                   api={tasks}
+                  collapseSignal={hiddenSignal}
                   inputRef={inputRef}
                   onNotice={showNotice}
                   onBack={() => setView("search")}
