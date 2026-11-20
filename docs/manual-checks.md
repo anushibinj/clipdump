@@ -516,7 +516,7 @@ WebView2, so everything below still needs a Windows run.
       inside the window clears and keeps pinned items.
 - [ ] `Alt+1` to `Alt+4` switch the filter. Windows must not move focus to a menu
       or beep on Alt+digit. A typed `img:`, `file:`, `txt:` prefix wins.
-- [ ] `Tab` toggles the preview and never moves focus out of the input.
+- [ ] `Alt+P` toggles the preview, `Tab` switches between the clipboard and the tasks, and neither moves focus out of the input.
 - [ ] `Ctrl+,` toggles settings. `Esc` order: confirmation, settings, preview, hide.
 - [ ] Global conflicts: the global `Ctrl+Shift+Space` still works while the bar
       is focused (it toggles the bar); no other program that registers `Alt+digit`

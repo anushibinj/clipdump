@@ -98,7 +98,7 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Changed
 
-- Esc hides the bar even when the right pane is open (the pane is remembered; Tab closes it).
+- Esc hides the bar even when the right pane is open (the pane is remembered; Alt+P closes it).
 - The footer no longer shows the "move" and "settings" shortcut hints; the shortcuts still work.
 - `settings.json` gains `window_positions` and the LLM fields, and the history database gains
   a `splits` table; both are upgraded automatically.
