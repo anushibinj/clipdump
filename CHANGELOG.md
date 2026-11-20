@@ -8,6 +8,21 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Focus lock for tasks. `Ctrl+L` (or the timer icon on a row) locks the list to one task for 15, 25,
+  30 or 60 minutes, or a number you type. While it runs every other task is dimmed and cannot be
+  changed, selected, or deleted; you can still add new tasks, which wait. The lock survives
+  restarts and ends by itself, when you finish the task, or when you break it: that takes 30 seconds
+  of waiting and starts the streak over.
+- The countdown is also in the window title; a heads-up comes 5 minutes before the end, and a tone
+  (and a system notification, where allowed) when it is over. One pause of up to 5 minutes per session.
+- A parking lot for distractions: `Ctrl+P` while locked, type the thought, Enter. Afterwards each one
+  can be turned into a task or dropped.
+- After a session: "Done, Need more time, Blocked", then a 5 minute break, another session, or skip.
+- Focus stats: a streak counter (sessions in a row without breaking the lock), the time focused today
+  (with the last 7 days on hover), and the total time focused on each task.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added
