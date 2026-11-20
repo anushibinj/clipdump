@@ -458,6 +458,67 @@ function noteBody(raw: unknown): string {
   return body;
 }
 
+// ---------------------------------------------------------------------------
+// Ask (a keyword stand-in for the plan, retrieve, answer and verify steps of ask.rs)
+// ---------------------------------------------------------------------------
+
+const ASK_STOP = new Set(["what", "was", "that", "thing", "the", "did", "for", "and", "told", "ago", "about", "week", "weeks", "last", "month"]);
+
+function runAsk(question: unknown): unknown {
+  const q = String(question ?? "").trim();
+  if (q === "") throw "type a question first";
+  requireLlm();
+  const words = q
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}-]+/u)
+    .filter((w) => w.length >= 3 && !ASK_STOP.has(w));
+  type Cand = { source: "note" | "task" | "clip"; id: number; createdAt: number; title: string; text: string };
+  const all: Cand[] = [
+    ...notes.map((n) => ({ source: "note" as const, id: n.id, createdAt: n.createdAt, title: n.title, text: n.body })),
+    ...tasks.map((t) => ({ source: "task" as const, id: t.id, createdAt: t.createdAt, title: t.title, text: t.note })),
+    ...rows
+      .filter((r) => r.kind !== "files" && r.text.trim() !== "")
+      .slice(0, 400)
+      .map((r) => ({ source: "clip" as const, id: r.id, createdAt: r.createdAt, title: "", text: r.text.slice(0, 600) })),
+  ];
+  const scored = all
+    .map((c) => ({ c, score: words.filter((w) => (c.title + " " + c.text).toLowerCase().includes(w)).length }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || b.c.createdAt - a.c.createdAt)
+    .slice(0, 8);
+  const searched = {
+    from: null,
+    to: null,
+    terms: words.slice(0, 12),
+    sources: ["note", "task", "clip"],
+    scanned: all.length,
+  };
+  const hits = scored.map(({ c }, i) => ({
+    n: i + 1,
+    source: c.source,
+    id: c.id,
+    createdAt: c.createdAt,
+    title: c.title,
+    excerpt: c.text,
+    quote: null as string | null,
+    cited: false,
+  }));
+  const top = hits[0];
+  if (!top) {
+    return { found: false, answer: "I could not find that in your notes, tasks or clipboard history.", hits, searched };
+  }
+  // The quote is the first line of the best hit that holds a question word, like a verified quote.
+  const line = top.excerpt.split("\n").find((l) => words.some((w) => l.toLowerCase().includes(w))) ?? top.excerpt;
+  top.quote = line.trim();
+  top.cited = true;
+  return {
+    found: true,
+    answer: `Closest match: ${top.quote} [${top.n}]`,
+    hits,
+    searched,
+  };
+}
+
 function runNote(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "list_notes":
@@ -793,6 +854,8 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "get_clips":
       if (control.tasksError) throw control.tasksError;
       return runTask(cmd, args);
+    case "ask_everything":
+      return runAsk(args.question);
     case "list_notes":
     case "add_note":
     case "update_note":
