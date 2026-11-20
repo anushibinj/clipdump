@@ -149,12 +149,15 @@ names used in `hooks.nsh` still exist.
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-5. The workflow `.github/workflows/build-windows.yml` runs on the tag, on `windows-latest`: install,
-   `pnpm check:version`, a check that the tag is `vX.Y.Z`, `pnpm tsc --noEmit`, `pnpm test`,
-   `cargo test`, `pnpm tauri build`, a line with the installer size in the run summary, upload of the
-   installer as the artifact `clipdump-windows-installer`. A second job (the only one with
-   `contents: write`) creates a **draft** GitHub release with the installer attached and generated
-   notes. Open the draft, paste the changelog section, and publish it by hand.
+5. The workflow `.github/workflows/release.yml` runs on the tag. A `checks` job on Windows runs install,
+   `pnpm check:version`, a check that the tag is `vX.Y.Z`, `pnpm tsc --noEmit`, `pnpm test` and
+   `cargo test`. Then a `build` matrix runs `pnpm tauri build --target <triple> --bundles <list>` for:
+   Windows x64, x86 and arm64 (NSIS `.exe`), macOS Apple silicon and Intel (`.dmg`, the Intel one cross
+   compiled), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`). Each leg lists its installer sizes in the
+   run summary and uploads them as the artifact `clipdump-<name>`. A last job (the only one with
+   `contents: write`) creates a **draft** GitHub release with every installer attached and generated
+   notes. Open the draft, paste the changelog section, and publish it by hand. The macOS and Windows
+   installers are unsigned.
 6. Run the Phase 15 checklist in `docs/manual-checks.md` on a clean Windows machine or VM with the
    downloaded installer before announcing anything.
 

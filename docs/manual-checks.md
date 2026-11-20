@@ -1162,7 +1162,7 @@ WebView2 was present.
       installing") keeps the data and keeps the `Run` value.
 
 ### Release workflow (needs the repository on GitHub)
-- [ ] Actions, "build-windows", "Run workflow" on a branch: all steps green, the artifact
+- [ ] Actions, "release", "Run workflow" on a branch: all steps green, the artifact
       `clipdump-windows-installer` holds the installer, the run summary shows its size, no release is
       created.
 - [ ] Push a tag `v0.1.0` (or a `v0.1.0-test` tag on a scratch branch, then delete the tag and the

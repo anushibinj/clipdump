@@ -38,4 +38,4 @@ cd src-tauri && cargo test
 
 Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, add the
 `CHANGELOG.md` entry, check with `pnpm check:version`, then push a tag `vX.Y.Z`. The
-`build-windows` workflow builds the installer and drafts the release. See `docs/packaging.md`.
+`release` workflow builds the installers for every platform and drafts the release. See `docs/packaging.md`.
