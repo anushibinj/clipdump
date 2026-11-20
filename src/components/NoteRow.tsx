@@ -1,4 +1,4 @@
-import { memo, type PointerEvent } from "react";
+import { memo } from "react";
 import { Pin } from "lucide-react";
 import type { Note } from "@/lib/ipc";
 import { noteLabel } from "@/lib/notes";
@@ -14,7 +14,6 @@ interface NoteRowProps {
   /** Minute rounded "now" (lib/time.ts `minuteNow`), so the memo holds within a minute. */
   now: number;
   onSelect: (id: number) => void;
-  onHover: (id: number) => void;
   onTogglePin: (id: number) => void;
 }
 
@@ -25,8 +24,8 @@ function snippet(note: Note): string {
   return rest[0] ?? "";
 }
 
-/** One note in the list. Memoized: moving the selection repaints two rows, a minute tick none. */
-export const NoteRow = memo(function NoteRow({ note, selected, now, onSelect, onHover, onTogglePin }: NoteRowProps) {
+/** One note in the list. Hover does not select: the editor beside the list follows the selection. Memoized: moving the selection repaints two rows, a minute tick none. */
+export const NoteRow = memo(function NoteRow({ note, selected, now, onSelect, onTogglePin }: NoteRowProps) {
   const label = noteLabel(note);
   const sub = snippet(note);
   return (
@@ -41,9 +40,6 @@ export const NoteRow = memo(function NoteRow({ note, selected, now, onSelect, on
         "group/note mx-1 flex cursor-default items-start gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
         "scroll-my-1 data-[selected=true]:bg-foreground/[0.07] dark:data-[selected=true]:bg-foreground/[0.1]",
       )}
-      onPointerMove={(e: PointerEvent) => {
-        if (e.movementX !== 0 || e.movementY !== 0) onHover(note.id);
-      }}
       onClick={() => onSelect(note.id)}
       // Keep keyboard focus where it is (the filter box).
       onMouseDown={(e) => e.preventDefault()}

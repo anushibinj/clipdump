@@ -209,7 +209,7 @@ export function NoteEditor({
             const v = e.target.value;
             // A space or comma ends the tag, like Enter.
             if (/[\s,]$/.test(v) && addTag(v)) setTagText("");
-            else setTagText(v.replace(/,/g, ""));
+            else setTagText(v.replace(/[\s,]/g, ""));
           }}
           onBlur={() => {
             if (addTag(tagText)) setTagText("");
