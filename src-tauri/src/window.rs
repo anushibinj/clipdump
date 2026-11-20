@@ -81,6 +81,44 @@ pub fn place_bar(area: PhysRect, scale: f64) -> Placement {
     Placement { x, y, w, h }
 }
 
+/// What tells a monitor apart in the saved positions: its OS name (stable across
+/// restarts, on Windows `\\.\DISPLAY1`), or, for a monitor without one, its
+/// geometry.
+pub fn monitor_key(name: Option<&str>, m: PhysRect) -> String {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => n.to_owned(),
+        None => format!("{}x{}@{},{}", m.w, m.h, m.x, m.y),
+    }
+}
+
+/// A window corner in physical virtual-desktop pixels as the logical offset from
+/// the top left of `monitor` that gets saved (logical, so a DPI change keeps the
+/// spot).
+pub fn to_saved_offset(monitor: PhysRect, scale: f64, x: i32, y: i32) -> (i32, i32) {
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    (
+        (f64::from(x - monitor.x) / scale).round() as i32,
+        (f64::from(y - monitor.y) / scale).round() as i32,
+    )
+}
+
+/// The bar where the user left it on `monitor`: the saved logical offset scaled
+/// to this monitor's DPI, then pulled back inside `area` (the usable part of the
+/// monitor) so a smaller resolution or a moved taskbar can never leave the bar
+/// half off screen. The size is the normal one for the scale.
+pub fn place_saved(area: PhysRect, monitor: PhysRect, scale: f64, saved: (i32, i32)) -> Placement {
+    let w = physical_len(BAR_WIDTH_LOGICAL, scale);
+    let h = physical_len(BAR_HEIGHT_LOGICAL, scale);
+    let x = monitor.x + physical_len(f64::from(saved.0), scale);
+    let y = monitor.y + physical_len(f64::from(saved.1), scale);
+    Placement {
+        x: x.min(area.x + area.w - w).max(area.x),
+        y: y.min(area.y + area.h - h).max(area.y),
+        w,
+        h,
+    }
+}
+
 /// Which monitor the bar opens on: the one under the cursor; if the cursor is on
 /// no monitor (a gap in an odd layout, or the query failed) the primary one;
 /// last the window's own current monitor. Each fallback is only asked for when
@@ -143,13 +181,85 @@ fn position_on_cursor_monitor(app: &AppHandle, w: &WebviewWindow) {
         rect_of(m.position(), m.size()),
         rect_of(&m.work_area().position, &m.work_area().size),
     );
-    let p = place_bar(area, m.scale_factor());
+    let mrect = rect_of(m.position(), m.size());
+    let key = monitor_key(m.name().map(String::as_str), mrect);
+    let saved = app
+        .state::<AppState>()
+        .settings
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .window_positions
+        .iter()
+        .find(|p| p.monitor == key)
+        .map(|p| (p.x, p.y));
+    let p = match saved {
+        Some(at) => place_saved(area, mrect, m.scale_factor(), at),
+        None => place_bar(area, m.scale_factor()),
+    };
+    // Whatever the user dragged before is over: only a new drag counts again.
+    app.state::<AppState>()
+        .user_dragging
+        .store(false, Ordering::Relaxed);
     let _ = w.set_position(PhysicalPosition::new(p.x, p.y));
 
     let packed = ((p.w as u32 as u64) << 32) | p.h as u32 as u64;
     let applied = &app.state::<AppState>().bar_size;
     if applied.swap(packed, Ordering::Relaxed) != packed {
         let _ = w.set_size(PhysicalSize::new(p.w as u32, p.h as u32));
+    }
+}
+
+/// The user is dragging the bar (called from the webview's drag handle): from
+/// now until the next hide or show, every move is the user's choice and is
+/// remembered for the monitor it ends up on.
+pub fn start_user_drag(app: &AppHandle) {
+    let Some(w) = main_window(app) else { return };
+    app.state::<AppState>()
+        .user_dragging
+        .store(true, Ordering::Relaxed);
+    let _ = w.start_dragging();
+}
+
+/// Save where the bar is now as the position for the monitor it is on. Called
+/// for each move event of a user drag; the settings saver coalesces the burst
+/// into one write.
+pub fn remember_position(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if !state.user_dragging.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(w) = main_window(app) else { return };
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
+        return;
+    };
+    // The monitor under the middle of the bar: the one the user dropped it on.
+    let Some(m) = app
+        .monitor_from_point(
+            f64::from(pos.x) + f64::from(size.width) / 2.0,
+            f64::from(pos.y) + f64::from(size.height) / 2.0,
+        )
+        .ok()
+        .flatten()
+    else {
+        return;
+    };
+    let mrect = rect_of(m.position(), m.size());
+    let key = monitor_key(m.name().map(String::as_str), mrect);
+    let (x, y) = to_saved_offset(mrect, m.scale_factor(), pos.x, pos.y);
+    // Windows may have resized the bar for another monitor's DPI while it moved:
+    // note the real size so the next show re-applies the right one.
+    let packed = ((size.width as u64) << 32) | u64::from(size.height);
+    state.bar_size.store(packed, Ordering::Relaxed);
+
+    let snapshot = {
+        let mut s = state.settings.write().unwrap_or_else(|e| e.into_inner());
+        if !crate::settings::remember_position(&mut s.window_positions, &key, x, y) {
+            return;
+        }
+        s.clone()
+    };
+    if let Some(saver) = state.saver.get() {
+        saver.request(snapshot);
     }
 }
 
@@ -230,6 +340,9 @@ pub fn hide(app: &AppHandle) {
     if !w.is_visible().unwrap_or(false) {
         return;
     }
+    app.state::<AppState>()
+        .user_dragging
+        .store(false, Ordering::Relaxed);
     let _ = w.hide();
     let _ = w.emit_to(LABEL, events::BAR_HIDDEN, ());
 }
@@ -390,6 +503,48 @@ mod tests {
         let mon = rect(-1920, -200, 1920, 1080);
         let work = rect(-1920, -200, 1920, 1040);
         assert_eq!(usable_area(mon, work), work);
+    }
+
+    #[test]
+    fn a_monitor_is_known_by_its_name_or_else_its_geometry() {
+        assert_eq!(monitor_key(Some("\\\\.\\DISPLAY2"), FHD), "\\\\.\\DISPLAY2");
+        assert_eq!(monitor_key(None, rect(1920, 0, 2560, 1440)), "2560x1440@1920,0");
+        assert_eq!(monitor_key(Some("  "), FHD), "1920x1080@0,0");
+    }
+
+    #[test]
+    fn a_dragged_position_comes_back_on_the_same_monitor() {
+        // Dropped at physical (2400, 300) on a monitor that starts at x=1920, 150%.
+        let mon = rect(1920, 0, 2560, 1440);
+        let off = to_saved_offset(mon, 1.5, 2400, 300);
+        assert_eq!(off, (320, 200));
+        let p = place_saved(mon, mon, 1.5, off);
+        assert_eq!((p.x, p.y), (2400, 300));
+        assert_eq!((p.w, p.h), (1080, 690));
+    }
+
+    #[test]
+    fn a_saved_spot_follows_a_dpi_change_in_logical_pixels() {
+        let mon = rect(0, 0, 3840, 2160);
+        let p = place_saved(mon, mon, 2.0, (100, 50));
+        assert_eq!((p.x, p.y), (200, 100));
+    }
+
+    #[test]
+    fn a_saved_spot_is_pulled_back_inside_the_usable_area() {
+        // The monitor got smaller since: the bar must stay fully on it.
+        let mon = rect(0, 0, 1280, 720);
+        let p = place_saved(mon, mon, 1.0, (1500, 900));
+        assert_eq!((p.x, p.y), (1280 - 720, 720 - 460));
+        // And never under the taskbar (work area 40 px shorter).
+        let work = rect(0, 0, 1280, 680);
+        assert_eq!(place_saved(work, mon, 1.0, (10, 600)).y, 680 - 460);
+        // Left and above the monitor: pulled to the edge.
+        assert_eq!(place_saved(mon, mon, 1.0, (-50, -50)).x, 0);
+        // Negative-origin monitor.
+        let left = rect(-1920, 0, 1920, 1080);
+        let p = place_saved(left, left, 1.0, (100, 100));
+        assert_eq!((p.x, p.y), (-1820, 100));
     }
 
     #[test]

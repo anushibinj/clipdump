@@ -52,6 +52,10 @@ pub struct AppState {
     /// height in the low 32 (0 before the first show). `window.rs` only sets the
     /// size when the target monitor's scale makes it differ.
     pub bar_size: AtomicU64,
+    /// The user is dragging the bar: set by the drag handle, cleared on every show and hide.
+    /// While set, move events are saved as the bar's position for its monitor
+    /// (the programmatic moves of `window.rs` never count).
+    pub user_dragging: AtomicBool,
     /// File existence checks for search rows and previews, cached for 2 seconds
     /// so typing never repeats a `stat` (see `search::paths`).
     pub paths: Arc<CachedPathChecker>,
