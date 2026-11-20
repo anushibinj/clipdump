@@ -1173,7 +1173,7 @@ WebView2 was present.
 - [ ] The installer is unsigned: SmartScreen shows the unknown publisher warning (expected, see
       "Code signing (future step)" in `docs/packaging.md`).
 
-## Window position, Pin and Dismiss, Split with AI (Windows only)
+## Window position, Pin and Dismiss, AI split (Windows only)
 
 Added after Phase 15. The placement math, the settings round trip, the LLM request, parsing and
 validation, and the HTTP client against a local stub server are unit tested on Linux. Nothing that
@@ -1203,7 +1203,7 @@ needs a real window, monitor or LLM has been run.
 - [ ] Dismiss hides the bar (same as Esc) and the clicks do not take the focus out of the search box.
 
 ### AI split
-- [ ] Settings > Split with AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
+- [ ] Settings > AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
       OpenAI (`https://api.openai.com/v1`, a model name, an API key).
 - [ ] Copy a text with several numbers, e-mails and a token (20+ characters). The server log shows the
       request right away, before the bar is opened. Open the bar, find the item, open the pane (Tab) on
