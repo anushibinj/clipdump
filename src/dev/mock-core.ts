@@ -63,6 +63,11 @@ interface MockTask {
   createdAt: number;
   touchedAt: number;
   doneAt: number | null;
+  size: "quick" | "short" | "long" | null;
+  kind: "quick" | "deep" | "waiting" | null;
+  nextStep: string;
+  clipIds: number[];
+  deferredUntil: number | null;
 }
 
 const HOUR = 3_600_000;
@@ -84,16 +89,27 @@ function seedTasks(): MockTask[] {
     createdAt: NOW - (agoH + 20) * HOUR,
     touchedAt: NOW - agoH * HOUR,
     doneAt: doneAgoH === null ? null : NOW - doneAgoH * HOUR,
+    size: null,
+    kind: null,
+    nextStep: "",
+    clipIds: [],
+    deferredUntil: null,
   });
+  const sized = (task: MockTask, size: MockTask["size"], kind: MockTask["kind"]): MockTask => ({ ...task, size, kind });
   return [
-    t(1, "Fix the flaky checkout test", "doing", true, 0.2, "Fails only on the second run, check the seed data"),
-    t(2, "Review the migration PR", "doing", true, 30, "Left at the rollback script"),
-    t(3, "Reply to the vendor about the invoice", "todo", true, 3),
-    t(4, "Prepare the Thursday demo", "todo", true, 5),
-    t(5, "Update the onboarding doc", "todo", false, 8),
-    t(6, "Look into the slow dashboard query", "todo", false, 12),
-    t(7, "Rename the staging buckets", "todo", false, 40),
-    t(8, "Book the dentist", "todo", false, 60),
+    sized(
+      t(1, "Fix the flaky checkout test", "doing", true, 0.2, "Fails only on the second run, check the seed data"),
+      "short",
+      "deep",
+    ),
+    sized(t(2, "Review the migration PR", "doing", true, 30, "Left at the rollback script"), "long", "deep"),
+    sized(t(3, "Reply to the vendor about the invoice", "todo", true, 3), "quick", "waiting"),
+    sized(t(4, "Prepare the Thursday demo", "todo", true, 5), "long", "deep"),
+    sized(t(5, "Update the onboarding doc", "todo", false, 8), "short", "deep"),
+    sized(t(6, "Look into the slow dashboard query", "todo", false, 12), "long", "deep"),
+    sized(t(7, "Rename the staging buckets", "todo", false, 40), "quick", "quick"),
+    // Waiting for weeks and no estimate yet: the "gone quiet" nudge and the unestimated count.
+    { ...t(8, "Book the dentist", "todo", false, 24 * 20), nextStep: "" },
     t(9, "Send the weekly summary", "done", false, 2, "", 1),
   ];
 }
@@ -134,8 +150,15 @@ function runTask(cmd: string, args: Record<string, unknown>): unknown {
         createdAt: now,
         touchedAt: now,
         doneAt: null,
+        size: null,
+        kind: null,
+        nextStep: "",
+        clipIds: [],
+        deferredUntil: null,
       };
       tasks.push(t);
+      // Like the backend's estimator: a new task gets its estimate a moment later, once an LLM is set up.
+      if (llmSetUp()) estimateLater(t.id);
       return { ...t };
     }
     case "update_task": {
@@ -149,13 +172,188 @@ function runTask(cmd: string, args: Record<string, unknown>): unknown {
       if (note !== undefined) t.note = note;
       if (patch.important !== undefined) t.important = Boolean(patch.important);
       if (patch.status !== undefined) setTaskStatus(t, patch.status);
-      t.touchedAt = Date.now();
+      // Estimates and suggestions come from the LLM and do not count as touching the task.
+      if (patch.size !== undefined) t.size = patch.size;
+      if (patch.kind !== undefined) t.kind = patch.kind;
+      if (patch.nextStep !== undefined) {
+        if (Array.from(patch.nextStep.trim()).length > 300) throw "the suggested step is too long";
+        t.nextStep = patch.nextStep.trim();
+      }
+      if (patch.clipIds !== undefined) {
+        const ids = Array.from(new Set(patch.clipIds));
+        if (ids.length > 20) throw "too many linked clipboard items";
+        t.clipIds = ids;
+      }
+      if (patch.deferredUntil !== undefined) t.deferredUntil = patch.deferredUntil;
+      const touches =
+        title !== undefined ||
+        note !== undefined ||
+        patch.important !== undefined ||
+        patch.status !== undefined ||
+        patch.clipIds !== undefined ||
+        patch.deferredUntil !== undefined;
+      if (touches) t.touchedAt = Date.now();
       return { ...t };
     }
     case "delete_task": {
       const before = tasks.length;
       tasks = tasks.filter((t) => t.id !== Number(args.id));
       return tasks.length !== before;
+    }
+    default:
+      return runAssistant(cmd, args);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The task assistant: canned answers that follow the real backend's rules (what it needs, what it
+// returns, what it validates), so the UI can be built and checked without an LLM server.
+// ---------------------------------------------------------------------------
+
+const llmSetUp = () => Boolean(settings.llmBaseUrl && settings.llmModel);
+const openTasks = () => tasks.filter((t) => t.status !== "done");
+const taskById = (id: unknown): MockTask => {
+  const t = tasks.find((x) => x.id === Number(id));
+  if (!t) throw "task not found";
+  return t;
+};
+
+/** A plausible estimate from the words of the title. */
+function guessEstimate(t: MockTask): Pick<MockTask, "size" | "kind"> {
+  const words = t.title.trim().split(/\s+/).length;
+  const kind = /\b(wait|waiting|vendor|reply|approval|delivery)\b/i.test(t.title)
+    ? "waiting"
+    : words <= 3
+      ? "quick"
+      : "deep";
+  return { size: words <= 3 ? "quick" : words <= 6 ? "short" : "long", kind };
+}
+
+function estimateLater(id: number) {
+  setTimeout(() => {
+    const t = tasks.find((x) => x.id === id);
+    if (!t || t.size !== null) return;
+    Object.assign(t, guessEstimate(t));
+    emit("tasks:updated");
+  }, control.estimateDelayMs);
+}
+
+function requireLlm() {
+  if (control.llmError) throw control.llmError;
+  if (!llmSetUp()) throw "set up an LLM server in Settings first";
+}
+
+function runAssistant(cmd: string, args: Record<string, unknown>): unknown {
+  switch (cmd) {
+    case "get_clips":
+      return (args.ids as number[])
+        .map((id) => rows.find((r) => r.id === id))
+        .filter((r): r is Row => r !== undefined)
+        .map((r) => ({ id: r.id, kind: r.kind, preview: r.preview, createdAt: r.createdAt }));
+    case "estimate_task": {
+      requireLlm();
+      const t = taskById(args.id);
+      Object.assign(t, guessEstimate(t));
+      return { ...t };
+    }
+    case "estimate_backlog": {
+      requireLlm();
+      const missing = openTasks().filter((t) => t.size === null);
+      for (const t of missing) estimateLater(t.id);
+      return missing.length;
+    }
+    case "pick_next_task": {
+      requireLlm();
+      const now = Date.now();
+      const minutes = args.minutes === null ? null : Number(args.minutes);
+      const energy = String(args.energy);
+      const candidates = openTasks()
+        .filter((t) => t.status === "doing" || t.deferredUntil === null || t.deferredUntil <= now)
+        .sort(
+          (a, b) =>
+            Number(b.status === "doing") - Number(a.status === "doing") ||
+            Number(b.important) - Number(a.important) ||
+            a.createdAt - b.createdAt,
+        );
+      if (candidates.length === 0) return null;
+      const light = (minutes !== null && minutes <= 15) || energy === "low";
+      const fits = light ? candidates.filter((t) => t.size === "quick") : candidates;
+      const pick = (fits.length > 0 ? fits : candidates)[0];
+      const why = light && pick.size === "quick" ? "It is a quick one that fits the time and energy you have." : "It is the most pressing open task.";
+      return { id: pick.id, reason: why };
+    }
+    case "suggest_next_step": {
+      requireLlm();
+      const t = taskById(args.id);
+      t.nextStep = `Open "${t.title}" and write down the very first small step.`;
+      const big = t.title.trim().split(/\s+/).length > 3;
+      return { step: t.nextStep, subtasks: big ? ["Gather what you need", "Do the first part", "Check the result"] : [] };
+    }
+    case "draft_resume_note": {
+      requireLlm();
+      const t = taskById(args.id);
+      const recent = rows
+        .filter((r) => r.kind === "text" && r.usedAt >= t.touchedAt - 30 * 60_000)
+        .slice(0, 3);
+      if (recent.length === 0) throw "no recent clipboard item seems to belong to this task";
+      return `Was looking at ${recent.map((r) => `"${r.preview.slice(0, 40)}"`).join(" and ")}.`;
+    }
+    case "task_digest": {
+      requireLlm();
+      const open = openTasks();
+      const quiet = open.filter((t) => Date.now() - t.touchedAt > 5 * 24 * HOUR).length;
+      const order = open
+        .sort((a, b) => Number(b.important) - Number(a.important) || a.createdAt - b.createdAt)
+        .slice(0, 3)
+        .map((t) => t.id);
+      const week = args.kind === "week";
+      return {
+        summary: week
+          ? `${tasks.length - open.length} done this week, ${open.length} still open and ${quiet} gone quiet. Start next week with the first one below.`
+          : `${open.filter((t) => t.status === "doing").length} in flight and ${quiet} gone quiet. Finish the important ones first.`,
+        order,
+      };
+    }
+    case "suggest_task_links": {
+      requireLlm();
+      const clip = rows.find((r) => r.kind === "text");
+      const task = openTasks()[0];
+      return clip && task && !task.clipIds.includes(clip.id)
+        ? [{ taskId: task.id, clipId: clip.id, reason: "it looks related" }]
+        : [];
+    }
+    case "extract_tasks": {
+      requireLlm();
+      const text =
+        args.text === null || args.text === undefined
+          ? (rows.find((r) => r.kind === "text")?.text ?? "")
+          : String(args.text);
+      if (text.trim() === "" && args.text === null) throw "there is no copied text to read";
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const found = text
+        .split(/[.\n;]/)
+        .map((x) => x.trim())
+        .filter((x) => x.length > 15 && /\b(please|need to|send|call|book|review|reply|prepare|update)\b/i.test(x))
+        .slice(0, 20)
+        .map((x) => {
+          const title = Array.from(x.charAt(0).toUpperCase() + x.slice(1))
+            .slice(0, 80)
+            .join("");
+          const dup = openTasks().find((t) => norm(t.title) === norm(title));
+          return { title, important: /\b(urgent|asap|today|tomorrow|friday)\b/i.test(x), duplicateOf: dup?.id ?? null };
+        });
+      return { source: text.trim().slice(0, 2000), tasks: found };
+    }
+    case "review_stale_tasks": {
+      requireLlm();
+      return (args.ids as number[])
+        .map((id) => tasks.find((t) => t.id === id))
+        .filter((t): t is MockTask => t !== undefined && t.status !== "done")
+        .map((t) => {
+          const days = (Date.now() - t.touchedAt) / (24 * HOUR);
+          const verdict = t.important ? "do" : days > 30 ? "drop" : "defer";
+          return { id: t.id, verdict, reason: `untouched for ${Math.floor(days)} days` };
+        });
     }
   }
   throw `${cmd} not allowed`;
@@ -190,6 +388,10 @@ const control = {
   perf: false,
   /** Every task command rejects with this message when set (the real ones do when the store could not start). */
   tasksError: null as string | null,
+  /** The assistant's commands reject with this message when set (the LLM server is down). */
+  llmError: null as string | null,
+  /** How long a background estimate takes, in ms. */
+  estimateDelayMs: 300,
 };
 
 // ---------------------------------------------------------------------------
@@ -473,6 +675,16 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "add_task":
     case "update_task":
     case "delete_task":
+    case "estimate_task":
+    case "estimate_backlog":
+    case "pick_next_task":
+    case "suggest_next_step":
+    case "draft_resume_note":
+    case "task_digest":
+    case "suggest_task_links":
+    case "extract_tasks":
+    case "review_stale_tasks":
+    case "get_clips":
       if (control.tasksError) throw control.tasksError;
       return runTask(cmd, args);
     case "copy_text":
@@ -540,6 +752,8 @@ const hooks = {
     control.recovery = null;
     control.perf = false;
     control.tasksError = null;
+    control.llmError = null;
+    control.estimateDelayMs = 300;
     tasks = seedTasks();
     nextTaskId = 100;
     load(200);
