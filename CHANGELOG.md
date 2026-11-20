@@ -10,6 +10,16 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Added
 
+- Notes. `Ctrl+N` (or the Notes button in the search view's filter row) opens a notes view next to the
+  clipboard search and the tasks. Keep as many notes as you like; every one has an optional title, free
+  tags and a pin (pinned notes stay on top). No folders or categories, only tags. `Ctrl+Enter` makes a new
+  note, `Up`/`Down` pick one, `Tab` writes in it, `Ctrl+G` adds tags, `Ctrl+P` pins, `Ctrl+Delete` twice
+  deletes. The filter box matches the title, the text and the tags; a `#tag` word (or a click on a tag
+  chip) keeps only notes with that tag. Edits save by themselves; a new note left empty is dropped. The bar
+  reopens on the notes if that is where it was left. Notes are stored encrypted in their own file
+  (`notes.bin`), so "Clear history" never touches them. Limits: 1,000 notes, titles 120 characters, text
+  20,000, 10 tags of 32 characters.
+
 - Focus lock for tasks. `Ctrl+L` (or the timer icon on a row) locks the list to one task for 15, 25,
   30 or 60 minutes, or a number you type. While it runs every other task is dimmed and cannot be
   changed, selected, or deleted; you can still add new tasks, which wait. The lock survives

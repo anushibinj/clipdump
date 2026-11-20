@@ -66,6 +66,20 @@ never touch them.
 - Code: `src-tauri/src/tasks.rs` (store, atomic encrypted saves), `commands/tasks.rs`, `src/lib/tasks.ts` (what shows),
   `src/lib/taskKeys.ts` (keys), `src/components/TasksView.tsx`.
 
+### Notes (`Ctrl+N`)
+A flat notes view beside the clipboard search and the tasks. Notes are not clipboard items: they live in their
+own encrypted file (`notes.bin`), so retention, "Clear history" and the history recovery never touch them.
+- Any number of notes, each with an optional title, tags (lowercase, no spaces) and a pin. No folders or
+  categories. Pinned notes sort first, then the most recently changed.
+- One input filters: words match the title, text and tags; `#tag` words keep only notes with every such tag.
+  Tag chips under it toggle the same `#tag` words.
+- `Ctrl+Enter` new note, `Up`/`Down` pick, `Tab` or `Ctrl+E` write in it, `Ctrl+G` tags, `Ctrl+P` pin,
+  `Ctrl+Delete` twice deletes, `Esc` clears the filter then hides the bar. Edits autosave; a note left empty is
+  dropped when another is picked. The view is part of `VIEWS`, so the bar reopens on it.
+- Limits: 1,000 notes, titles 120 characters, text 20,000, 10 tags of 32 characters.
+- Code: `src-tauri/src/notes.rs` (store), `commands/notes.rs`, `src/lib/notes.ts` (rules), `src/lib/noteKeys.ts`
+  (keys), `src/components/NotesView.tsx`, `NoteRow.tsx`, `NoteEditor.tsx`.
+
 ### Optional "pinned bar" mode (setting)
 Keep the bar permanently visible as a slim always-on-top strip (does not hide on blur). Hotkey then just focuses it.
 

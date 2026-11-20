@@ -1226,6 +1226,22 @@ needs a real window, monitor or LLM has been run.
 - [ ] A copy from an app on the ignore list is not captured and nothing is sent.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.
 
+### Notes
+- [ ] `Ctrl+N` in the bar opens the notes view with the filter focused; `Ctrl+N` again returns to the
+      clipboard search. The first launch shows "No notes yet". The Notes button in the search view's filter
+      row opens it too.
+- [ ] `Ctrl+Enter` makes a note and puts the caret in its text. Type, wait a moment, switch to the search and
+      back: the text is there. A title and tags are optional; a note with only text shows its first line.
+- [ ] `Ctrl+Enter` and pick another note without typing: the empty note is gone.
+- [ ] In the tag box, type `Work` and a space: a `#work` chip appears; Backspace on the empty box removes the
+      last chip. Typing `#work` in the filter (or clicking the chip under it) keeps only notes with it.
+- [ ] `Ctrl+P` pins: the note moves to the top and keeps the pin mark. `Ctrl+Delete` once shows "press again"
+      in the footer and nothing is deleted; a second press within 3 seconds deletes and picks the next note.
+- [ ] Leave the bar on the notes, press Esc (with an empty filter), open it with the hotkey: it opens on the
+      notes. Quit and start the app: every note, pin and tag is back.
+- [ ] `%LOCALAPPDATA%\clipdump\notes.bin` is not readable as text. "Clear history" leaves the notes alone.
+      Damage the file: the next start renames it to `notes.unreadable-<ms>.bin` and starts empty.
+
 ### Tasks
 - [ ] `Ctrl+T` in the bar opens the task list with the input focused; `Ctrl+T` again returns to the
       clipboard search. The first launch shows "Nothing on the list".
