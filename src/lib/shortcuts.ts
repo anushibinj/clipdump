@@ -16,7 +16,7 @@ export interface KeyInfo {
   keyCode?: number;
 }
 
-export type View = "search" | "settings" | "tasks" | "notes";
+export type View = "search" | "settings" | "tasks" | "notes" | "ask";
 
 export type Action =
   | { type: "copy"; paste: boolean }
@@ -37,6 +37,8 @@ export type Action =
   | { type: "toggleTasks" }
   /** Ctrl+Shift+N: between the clipboard search and the notes. */
   | { type: "toggleNotes" }
+  /** Ctrl+/: between the clipboard search and "Ask" (a question answered from everything). */
+  | { type: "toggleAsk" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -58,8 +60,16 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   const { ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta } = e;
   if (meta) return null;
 
-  // The task view peels its own layers with Esc (an edit, the typed text, then the bar).
-  if (e.key === "Escape" && !ctrl && !alt && !shift && view !== "tasks" && view !== "notes") {
+  // The task, notes and ask views peel their own layers with Esc (an edit, the typed text, then the bar).
+  if (
+    e.key === "Escape" &&
+    !ctrl &&
+    !alt &&
+    !shift &&
+    view !== "tasks" &&
+    view !== "notes" &&
+    view !== "ask"
+  ) {
     return { type: "escape" };
   }
   if (ctrl && !alt && !shift && (e.key === "," || e.code === "Comma")) {
@@ -73,16 +83,28 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
     return { type: "toggleTasks" };
   }
   // Tab cycles the app modes: clipboard search <-> tasks. Settings keeps Tab for moving between its
-  // controls, and the notes keep it for the editor's own fields.
-  if (e.key === "Tab" && !ctrl && !alt && !shift && view !== "settings" && view !== "notes") {
+  // controls, and the notes keep it for the editor's own fields. Ask has nowhere to tab to.
+  if (
+    e.key === "Tab" &&
+    !ctrl &&
+    !alt &&
+    !shift &&
+    view !== "settings" &&
+    view !== "notes" &&
+    view !== "ask"
+  ) {
     return { type: "toggleTasks" };
   }
   // Ctrl+Shift+N, not Ctrl+N: in the task view Ctrl+N is "what next".
   if (ctrl && shift && !alt && (e.code === "KeyN" || e.key.toLowerCase() === "n")) {
     return { type: "toggleNotes" };
   }
-  // The settings, task and notes views have their own fields and keys: only Esc, Ctrl+, Ctrl+?,
-  // Ctrl+T, Tab (tasks) and Ctrl+Shift+N act here.
+  // Ctrl+/, not Ctrl+?: that one (Ctrl+Shift+/) is the shortcuts help.
+  if (ctrl && !alt && !shift && (e.key === "/" || e.code === "Slash")) {
+    return { type: "toggleAsk" };
+  }
+  // The settings, task, notes and ask views have their own fields and keys: only Esc, Ctrl+, Ctrl+?,
+  // Ctrl+T, Tab (tasks), Ctrl+Shift+N and Ctrl+/ act here.
   if (view !== "search") return null;
 
   const d = digit(e);

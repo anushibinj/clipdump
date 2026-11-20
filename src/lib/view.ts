@@ -1,4 +1,4 @@
-// Which view the bar shows (search, tasks, notes or settings), remembered across openings and restarts.
+// Which view the bar shows (search, tasks, notes, ask or settings), remembered across openings and restarts.
 //
 // Design rule: the bar always opens on the view it was left on. Nothing resets the view when the bar
 // is hidden or shown, and any new view must be added to `VIEWS` so it is restored too. Like the
@@ -7,7 +7,7 @@
 
 import type { View } from "@/lib/shortcuts";
 
-export const VIEWS: readonly View[] = ["search", "tasks", "notes", "settings"];
+export const VIEWS: readonly View[] = ["search", "tasks", "notes", "ask", "settings"];
 
 const KEY = "clipdump.view";
 

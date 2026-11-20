@@ -110,7 +110,7 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k("?", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
     expect(r(k("/", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
     expect(r(k("?", { shiftKey: true, code: "Slash" }))).toBeNull();
-    expect(r(k("/", ctrl))).toBeNull();
+    expect(r(k("/", ctrl))).toEqual({ type: "toggleAsk" }); // Ctrl+/ without Shift is the Ask view
   });
 
   it("ignores IME composition and the meta key", () => {
@@ -170,5 +170,29 @@ describe("Ctrl+Shift+N and the notes view", () => {
     expect(resolveShortcut(k("Tab"), "notes")).toBeNull();
     // Ctrl+N alone is not the notes key (it is "what next" in the task view).
     expect(resolveShortcut(k("n", ctrl), "notes")).toBeNull();
+  });
+});
+
+describe("Ctrl+/ and the ask view", () => {
+  it("Ctrl+/ toggles ask from every view, by character or by the physical key", () => {
+    for (const v of ["search", "tasks", "notes", "ask", "settings"] as const) {
+      expect(resolveShortcut(k("/", ctrl), v)).toEqual({ type: "toggleAsk" });
+      expect(resolveShortcut({ ...k("-", ctrl), code: "Slash" }, v)).toEqual({ type: "toggleAsk" });
+    }
+  });
+  it("Ctrl+? stays the shortcuts help and a bare slash stays typing", () => {
+    expect(resolveShortcut(k("?", { ...ctrl, shiftKey: true }), "ask")).toEqual({ type: "toggleShortcuts" });
+    expect(resolveShortcut({ ...k("?", { ...ctrl, shiftKey: true }), code: "Slash" }, "search")).toEqual({
+      type: "toggleShortcuts",
+    });
+    expect(resolveShortcut(k("/"), "search")).toBeNull();
+    expect(resolveShortcut(k("/"), "ask")).toBeNull();
+  });
+  it("the ask view keeps its own Esc, Enter and Tab", () => {
+    expect(resolveShortcut(k("Escape"), "ask")).toBeNull();
+    expect(resolveShortcut(k("Enter"), "ask")).toBeNull();
+    expect(resolveShortcut(k("Enter", ctrl), "ask")).toBeNull();
+    expect(resolveShortcut(k("Tab"), "ask")).toBeNull();
+    expect(resolveShortcut(k("t", ctrl), "ask")).toEqual({ type: "toggleTasks" });
   });
 });
