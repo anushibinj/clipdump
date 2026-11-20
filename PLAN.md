@@ -49,6 +49,22 @@ Files are stored as **references**. If a file is later moved or deleted, the ite
 - `Tab`: toggle preview pane (full text, large image with OCR text below, or file list).
 - `Ctrl+,`: settings.
 
+### Tasks (`Ctrl+T`)
+A task list in the same bar, for the work in progress around the clipboard. Tasks are not clipboard items:
+they live in their own encrypted file (`tasks.bin`), so retention, "Clear history" and the history recovery
+never touch them.
+- States: waiting, in flight, done. Any number of tasks can be in flight; each has an optional "left off" note.
+- The view shows **Now** (all in flight, last touched first) and **Up next** (important waiting tasks, three at
+  most). Everything else (waiting but not important, done today) is one count away: `Ctrl+H` shows it, and it
+  is hidden again on the next open. A task in flight untouched for a day shows its age in amber.
+- The search view's filter row names the task touched last, so it is in sight when the bar opens.
+- One input does it all: `Enter` adds (a lone trailing `!` marks it important), `Ctrl+Enter` adds and starts;
+  on an empty input `Enter` moves the selected task along, `Shift+Enter` back, `Ctrl+I` toggles important,
+  `Ctrl+E` edits the note, `F2` the title, `Ctrl+Delete` deletes, `Esc` peels an edit, the typed text, then the bar.
+- Limits: 500 tasks, titles 300 characters, notes 1,000; done tasks are dropped after 30 days.
+- Code: `src-tauri/src/tasks.rs` (store, atomic encrypted saves), `commands/tasks.rs`, `src/lib/tasks.ts` (what shows),
+  `src/lib/taskKeys.ts` (keys), `src/components/TasksView.tsx`.
+
 ### Optional "pinned bar" mode (setting)
 Keep the bar permanently visible as a slim always-on-top strip (does not hide on blur). Hotkey then just focuses it.
 
