@@ -8,6 +8,8 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
 ### Added
 
 - A task list inside the bar, one key away: `Ctrl+T` switches between the clipboard search and
@@ -143,7 +145,8 @@ checklists in `docs/manual-checks.md` are done, treat this as a release candidat
   too; copying always works.
 - Windows only. The macOS and Linux ports are not started.
 
-[Unreleased]: https://github.com/anushibinj/clipdump/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/anushibinj/clipdump/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/anushibinj/clipdump/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/anushibinj/clipdump/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/anushibinj/clipdump/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/anushibinj/clipdump/releases/tag/v0.1.0
