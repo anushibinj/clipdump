@@ -4,6 +4,10 @@ An ultra-fast clipboard history for Windows: it records text, screenshots and co
 finds any of them again from the keyboard (`Ctrl+Shift+Space`, type, `Ctrl+Enter`). Text inside
 screenshots is searchable through Windows OCR. Everything stays on the machine, encrypted at rest.
 
+Move the bar by dragging it (it remembers its place per monitor), pin it open or dismiss it with the
+two icons top right, and, with an OpenAI compatible server set up in Settings, split a long text into
+separately copyable items with **Split** (`Ctrl+Shift+S`).
+
 Status: version 0.1.0, not released. The code is tested on Linux and cross-checked against the Windows
 APIs; it has not been run on Windows yet (`docs/manual-checks.md` lists what is left to verify).
 The plan is in `PLAN.md`.

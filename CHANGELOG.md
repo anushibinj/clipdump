@@ -8,6 +8,22 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The bar can be moved: drag it by the search row or the filter row. The position is
+  remembered per monitor (in logical pixels from the monitor's corner, so a DPI change
+  keeps it) and used every time the bar opens on that monitor. It is pulled back on
+  screen if the monitor got smaller. Monitors never dragged on keep the old placement.
+- Pin and Dismiss icons at the top right of the bar. Pin is the "Pinned bar" setting
+  (the bar stays open on blur and after a copy); Dismiss hides the bar like Esc.
+- Split with AI: with an OpenAI compatible server configured in Settings (OpenAI,
+  Ollama, LM Studio, ...), the Split button in the text preview (or `Ctrl+Shift+S`)
+  asks the model to break a long text into the items worth copying (numbers, e-mails,
+  tokens, user names, passwords, ...). Each item copies with one click. Items the model
+  invents or alters are dropped: every value must occur in the text exactly. The text is
+  sent only when Split is pressed; the API key is stored in `settings.json` (not
+  encrypted) and never returned to the UI.
+
 ## [0.1.0] - Unreleased
 
 First version. Not yet released: the code is written and tested on Linux and

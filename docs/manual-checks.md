@@ -1172,3 +1172,45 @@ WebView2 was present.
 - [ ] Download the artifact from the release and run the install checks above with that exact file.
 - [ ] The installer is unsigned: SmartScreen shows the unknown publisher warning (expected, see
       "Code signing (future step)" in `docs/packaging.md`).
+
+## Window position, Pin and Dismiss, Split with AI (Windows only)
+
+Added after Phase 15. The placement math, the settings round trip, the LLM request, parsing and
+validation, and the HTTP client against a local stub server are unit tested on Linux. Nothing that
+needs a real window, monitor or LLM has been run.
+
+### Moving and remembering the bar
+- [ ] Press the hotkey, drag the bar by the empty part of the search row, drop it somewhere else.
+      Hide and show it again (hotkey, Esc, hotkey): it opens where it was dropped.
+- [ ] The search text and the filter buttons are still usable: clicking in the input places the
+      caret, clicking All/Text/Images/Files filters; neither starts a drag.
+- [ ] Quit and start the app again: the bar still opens at the dropped spot.
+- [ ] With two monitors: drop the bar on monitor 2. Put the cursor on monitor 1 and open the bar: it
+      uses monitor 1's own position (centered high up if never moved). Move the cursor to monitor 2:
+      it opens at the spot saved for monitor 2.
+- [ ] Monitors with different scaling (for example 100% and 150%): the spot is the same distance from
+      the monitor's corner in logical pixels, and the bar has the right size on each.
+- [ ] Drag the bar so its middle crosses onto the other monitor: the spot is saved for the monitor
+      it ended on, and the bar has the size that monitor needs after the next open.
+- [ ] Change the resolution of a monitor to a smaller one, or move the taskbar: the bar opens fully
+      on screen and not under the taskbar.
+- [ ] `settings.json` has `window_positions` with one entry per monitor you dragged on.
+- [ ] Pinned bar mode: dragging works and the position survives a restart too.
+
+### Pin and Dismiss
+- [ ] Two icons at the top right of the search row. Pin: the bar then stays open when you click another
+      window and after a copy; Settings shows "Pinned bar" on. Click again: it hides on blur again.
+- [ ] Dismiss hides the bar (same as Esc) and the clicks do not take the focus out of the search box.
+
+### Split with AI
+- [ ] Settings > Split with AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
+      OpenAI (`https://api.openai.com/v1`, a model name, an API key), select a text item with several
+      numbers, e-mails and a token, press Tab, then Split (or `Ctrl+Shift+S`). Items appear, each with
+      a label; clicking one puts exactly that text on the clipboard (paste it to check).
+- [ ] The copied piece is not added to the history as a new item.
+- [ ] Wrong key: the message says the server refused the API key. Wrong URL or server off: it says the
+      server could not be reached. Neither message contains the text or the server's answer.
+- [ ] "Show text" goes back to the plain text; selecting another item and coming back shows the earlier
+      result without a new request.
+- [ ] The API key field never shows the saved key; "Remove saved key" clears it.
+
