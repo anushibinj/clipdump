@@ -1406,6 +1406,34 @@ async function a11y(browser, url) {
     await page.keyboard.press("Enter");
     await settle();
     await scan("tasks, notice about a hidden new task");
+
+    // The assistant's cards, the quick wins view and the notes with a draft and a linked item.
+    const card = async (keysToPress, selector, name) => {
+      await page.keyboard.press(keysToPress);
+      await page.waitForSelector(selector);
+      await settle();
+      await scan(name);
+    };
+    await card("Control+n", 'section[aria-label="What to do now"] p.font-medium', "tasks, what next card");
+    check("every control with the card open has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+    await page.keyboard.press("Escape");
+    await card("Control+g", 'section[aria-label="Next step"] ol', "tasks, next step card");
+    await page.keyboard.press("Escape");
+    await card("Control+d", 'section[aria-label="Digest"] p.leading-5', "tasks, digest card");
+    await page.keyboard.press("Escape");
+    await card("Control+l", 'section[aria-label="Clipboard items for your tasks"] li', "tasks, links card");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+k");
+    await page.keyboard.type("Please send the signed lease to Dana by Friday. We need to book the venue.");
+    await card("Control+Enter", 'section[aria-label="Tasks from a text"] [role="checkbox"]', "tasks, tasks from a text card");
+    check("every control in the text card has a name", (await unnamed()).length === 0, (await unnamed()).join(" | "));
+    await page.keyboard.press("Escape");
+    await card("Control+q", 'text=Quick wins', "tasks, quick wins");
+    await page.keyboard.press("Control+q");
+    await settle();
+    await page.evaluate(() => window.__clipMock.capture("401 Unauthorized at /login on the second run"));
+    await card("Control+r", 'aside [role="status"]', "tasks, notes with a draft");
+    await page.keyboard.press("Escape");
     await page.evaluate(() => window.__clipMock.setTasks([]));
     await page.evaluate(() => window.__clipMock.emit("bar:shown"));
     await settle();
