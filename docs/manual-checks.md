@@ -1204,19 +1204,24 @@ needs a real window, monitor or LLM has been run.
 
 ### AI split
 - [ ] Settings > Split with AI: with a local Ollama (`http://localhost:11434/v1`, model `llama3.2`) or
-      OpenAI (`https://api.openai.com/v1`, a model name, an API key). Select a text item with several
-      numbers, e-mails and a token, press Tab, click the "AI split" tab (or press `Ctrl+Shift+S`).
-      After a moment the items appear by themselves, each with a label; clicking one puts exactly that
-      text on the clipboard (paste it to check). Nothing has to be pressed to start it.
-- [ ] Close and reopen the bar, press Tab: the pane shows the tab you used last. Quit and start the app:
-      still the same tab.
-- [ ] Arrow quickly through twenty text items on the AI split tab and watch the server log: only the
-      items you stopped on are sent, never more than two requests at the same time.
-- [ ] Re-split asks again and replaces the result. A short text (under 20 characters) shows "0 items"
-      without a request.
+      OpenAI (`https://api.openai.com/v1`, a model name, an API key).
+- [ ] Copy a text with several numbers, e-mails and a token (20+ characters). The server log shows the
+      request right away, before the bar is opened. Open the bar, find the item, open the pane (Tab) on
+      the "AI split" tab: the pieces are already there, each with a label; clicking one puts exactly
+      that text on the clipboard (paste it to check).
+- [ ] Copy five different long texts quickly: the server sees them in the order copied, never more than
+      two requests at the same time. Open the AI split tab on the last one while it waits: a skeleton
+      says it is in the queue / being split, then the pieces replace it.
+- [ ] Quit and start the app: the pieces of the earlier texts show at once, with no new request.
+- [ ] Delete the item, or Clear history: its pieces are gone too (copy the same text again: a new request
+      is made).
+- [ ] Close and reopen the bar: the pane is open or closed as you left it, on the tab you used last.
+      Esc hides the bar with the pane open; Tab closes the pane. Quit and start the app: same.
+- [ ] Re-split asks again and replaces the result. A text under 20 characters shows "0 items" without a
+      request.
 - [ ] The copied piece is not added to the history as a new item.
 - [ ] Wrong key: the message says the server refused the API key, and it is not retried by itself
       (Re-split retries). Server off or wrong URL: it says the server could not be reached. Neither
       message contains the text or the server's answer.
-- [ ] Nothing is sent while the Preview tab is showing, and nothing is sent when a text is copied.
+- [ ] A copy from an app on the ignore list is not captured and nothing is sent.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.

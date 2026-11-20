@@ -17,16 +17,20 @@ All notable changes to Clipdump are listed here. The format follows
 - Pin and Dismiss icons at the top right of the bar. Pin is the "Pinned bar" setting
   (the bar stays open on blur and after a copy); Dismiss hides the bar like Esc.
 - AI split: with an OpenAI compatible server configured in Settings (OpenAI, Ollama,
-  LM Studio, ...), the right pane has two tabs, Preview and AI split, and remembers the
-  one you used last. On the AI split tab a text item is split by the model by itself into
-  the items worth copying (numbers, e-mails, tokens, user names, passwords, ...), each
-  one click to copy; Re-split asks again if the first answer is not right. The calls run
-  in a background queue, two at a time, newest request first, so the app stays fast and
-  the server is not flooded. Items the model invents or alters are dropped: every value
-  must occur in the text exactly. A text is sent only when you look at it on the AI split
-  tab (never on capture) and results are kept in memory only. The API key is stored in
-  `settings.json` (not encrypted) and never returned to the UI. `Ctrl+Shift+S` opens the
-  right pane on that tab.
+  LM Studio, ...), the right pane has two tabs, Preview and AI split. Every text you copy
+  (20 characters or more) is queued for the model right away, so its pieces (numbers,
+  e-mails, tokens, user names, passwords, ...) are usually ready when you open the bar;
+  each one is a click to copy. While a text waits or is being split the tab shows a
+  loading skeleton. Re-split asks again if the first answer is not right. The calls run
+  in a background queue, first in first out, two at a time, so the app stays fast and the
+  server is not flooded. Items the model invents or alters are dropped: every value must
+  occur in the text exactly. Results are kept in the encrypted history database and go
+  with their item when it is deleted, cleared or expires. The tab and whether the right
+  pane is open are remembered (Esc now hides the bar even when the pane is open; Tab
+  closes the pane). `Ctrl+Shift+S` opens the pane on the AI split tab. The API key is
+  stored in `settings.json` (not encrypted) and never returned to the UI. Note that a
+  copied text, passwords included, is sent to your server whenever Split is set up
+  (apps on the ignore list are never captured, so never sent).
 
 ## [0.1.0] - Unreleased
 
