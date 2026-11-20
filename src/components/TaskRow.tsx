@@ -142,7 +142,7 @@ export const TaskRow = memo(function TaskRow({
         )}
         {task.size !== null && !done && (
           <span
-            className="rounded bg-foreground/[0.07] px-1 text-[11px] leading-4 text-muted-foreground"
+            className="rounded bg-foreground/[0.07] px-1 text-[11px] leading-4 text-foreground/80"
             title={task.kind === null ? SIZE_TITLE[task.size] : `${SIZE_TITLE[task.size]}. ${KIND_LABEL[task.kind]}.`}
           >
             {SIZE_LABEL[task.size]}
