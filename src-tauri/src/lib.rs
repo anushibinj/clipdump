@@ -138,6 +138,7 @@ pub fn run() {
             commands::task_ai::extract_tasks,
             commands::task_ai::review_stale_tasks,
             commands::task_ai::get_clips,
+            commands::ask::ask_everything,
             commands::notes::list_notes,
             commands::notes::add_note,
             commands::notes::update_note,

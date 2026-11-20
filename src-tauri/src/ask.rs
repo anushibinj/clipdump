@@ -113,8 +113,21 @@ impl Candidate {
         title: &str,
         text: &str,
     ) -> Self {
-        let text: Arc<str> = Arc::from(text);
         let lower: Arc<str> = Arc::from(text.to_lowercase());
+        Self::with_lower(source, id, created_at, touched_at, title, Arc::from(text), lower)
+    }
+
+    /// Like [`Candidate::new`] with the lowercase twin already at hand (a clipboard item
+    /// keeps one in memory, so a question does not lowercase the whole history again).
+    pub fn with_lower(
+        source: Source,
+        id: u64,
+        created_at: i64,
+        touched_at: i64,
+        title: &str,
+        text: Arc<str>,
+        lower: Arc<str>,
+    ) -> Self {
         Self {
             source,
             id,
