@@ -514,6 +514,11 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
                 passwords, anything). Works with any OpenAI compatible server: OpenAI, Ollama, LM Studio, and
                 others. The text of an item is sent to this server only when you press Split on it.
               </p>
+              <p className="pb-2 text-xs text-muted-foreground">
+                The same server runs the task assistant in the task list (Ctrl+T). A new task&apos;s title is sent
+                to it as soon as you add the task, to estimate the effort. Everything else (what to do next, a next
+                step, a digest, linking clipboard items, finding tasks in a text) runs only when you press its key.
+              </p>
               <TextRow
                 id="llm-url"
                 label="Server URL"
