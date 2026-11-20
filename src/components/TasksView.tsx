@@ -7,13 +7,17 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
-import { ListChecks, ListTodo, Pin, PinOff, Search, X } from "lucide-react";
+import { Flame, ListChecks, ListTodo, Pin, PinOff, Search, X } from "lucide-react";
+import { FocusBanner } from "@/components/FocusBanner";
+import { FocusPicker } from "@/components/FocusPicker";
 import { TaskNotes } from "@/components/TaskNotes";
 import { TaskRow, taskRowId } from "@/components/TaskRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import type { FocusApi } from "@/hooks/useFocus";
 import type { TasksApi } from "@/hooks/useTasks";
+import { focusedByDay, focusedToday, formatDuration, type ParkedItem } from "@/lib/focus";
 import { errorMessage, type Task, type TaskPatch } from "@/lib/ipc";
 import { readTaskNotesOpen, writeTaskNotesOpen } from "@/lib/pane";
 import { moveIndex } from "@/lib/shortcuts";
@@ -29,8 +33,16 @@ import {
 
 type Mode = { kind: "add" } | { kind: "title"; id: number };
 
+/** The task the duration picker is open for. */
+interface Picking {
+  id: number;
+  title: string;
+}
+
 interface TasksViewProps {
   api: TasksApi;
+  /** The focus lock (owned by the App so its countdown outlives this view). */
+  focus: FocusApi;
   /** The App's one input ref: the bar focuses it when it is shown. */
   inputRef: RefObject<HTMLInputElement | null>;
   onNotice: (kind: "error" | "info", message: string) => void;
@@ -60,6 +72,7 @@ const PLACEHOLDER = {
  */
 export function TasksView({
   api,
+  focus,
   inputRef,
   onNotice,
   onBack,
@@ -76,6 +89,9 @@ export function TasksView({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(readTaskNotesOpen);
   const notesRef = useRef<HTMLTextAreaElement | null>(null);
+  const parkRef = useRef<HTMLInputElement | null>(null);
+  const [picking, setPicking] = useState<Picking | null>(null);
+  const lockedId = focus.lockedId;
   const setNotes = useCallback((open: boolean) => {
     setNotesOpen(open);
     writeTaskNotesOpen(open);
@@ -86,10 +102,18 @@ export function TasksView({
     [api.tasks, api.now, showHidden],
   );
 
+  const focusedByTask = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const e of focus.data.log) m.set(e.taskId, (m.get(e.taskId) ?? 0) + e.focusedMs);
+    return m;
+  }, [focus.data.log]);
+
   // Keep the selection on the same task while the list changes; when it leaves (marked done and
   // hidden, deleted), the task now at its place is selected, so a run of Enters works down a list.
   const previousRows = useRef<readonly Task[]>([]);
-  const selected = reselect(view.rows, previousRows.current, selectedId);
+  // While locked, the selection cannot leave the locked task.
+  const lockedVisible = lockedId !== null && view.rows.some((t) => t.id === lockedId);
+  const selected = lockedVisible ? lockedId : reselect(view.rows, previousRows.current, selectedId);
   useEffect(() => {
     previousRows.current = view.rows;
     if (selected !== selectedId) setSelectedId(selected);
@@ -103,8 +127,8 @@ export function TasksView({
   }, [selected]);
 
   // Read by the stable callbacks below.
-  const latest = useRef({ api, view, selected, text, mode, showHidden });
-  latest.current = { api, view, selected, text, mode, showHidden };
+  const latest = useRef({ api, view, selected, text, mode, showHidden, lockedId, picking });
+  latest.current = { api, view, selected, text, mode, showHidden, lockedId, picking };
 
   const fail = useCallback(
     (e: unknown) => onNotice("error", errorMessage(e)),
@@ -118,13 +142,40 @@ export function TasksView({
     [fail],
   );
 
+  /**
+   * While a task is locked in, the others cannot be changed: say so and return true. Pass
+   * `selfToo` for a change that would also undo the lock's own task (stepping it back, deleting it).
+   */
+  const lockedOut = useCallback(
+    (task: Task, selfToo = false) => {
+      const lid = latest.current.lockedId;
+      if (lid === null) return false;
+      if (task.id === lid && !selfToo) return false;
+      const locked = latest.current.api.tasks.find((t) => t.id === lid);
+      onNotice(
+        "info",
+        task.id === lid
+          ? "That would undo the lock. Finish the task, or break the lock first."
+          : `Locked in on “${locked?.title ?? "your task"}”. Finish it, or break the lock to switch.`,
+      );
+      return true;
+    },
+    [onNotice],
+  );
+
   const addTyped = useCallback(
     (start: boolean) => {
       const parsed = parseQuickAdd(latest.current.text);
       if (!parsed) return;
       const { api: a, showHidden: all } = latest.current;
-      a.add(parsed.title, parsed.important, start).then((task) => {
+      // Adding is always allowed, but nothing new starts while the list is locked.
+      const locked = latest.current.lockedId !== null;
+      a.add(parsed.title, parsed.important, start && !locked).then((task) => {
         setText("");
+        if (locked) {
+          onNotice("info", "Added. It waits until the lock is over.");
+          return;
+        }
         // A new task the calm view would hide must not just vanish: say where it went.
         const shown = buildTaskView([...a.tasks, task], {
           showHidden: all,
@@ -154,7 +205,7 @@ export function TasksView({
           addTyped(true);
           break;
         case "advance":
-          if (task) {
+          if (task && !lockedOut(task)) {
             const status = nextStatus(task.status);
             change(task.id, { status }, () => {
               if (status === "done")
@@ -163,28 +214,28 @@ export function TasksView({
           }
           break;
         case "toggleDone":
-          if (task)
+          if (task && !lockedOut(task))
             change(task.id, {
               status: task.status === "done" ? "todo" : "done",
             });
           break;
         case "stepBack": {
           const status = task ? previousStatus(task.status) : null;
-          if (task && status) change(task.id, { status });
+          if (task && status && !lockedOut(task, true)) change(task.id, { status });
           break;
         }
         case "toggleImportant":
-          if (task) change(task.id, { important: !task.important });
+          if (task && !lockedOut(task)) change(task.id, { important: !task.important });
           break;
         case "editNote":
           // Ctrl+E: open the notes sidebar and put the caret in it.
-          if (task) {
+          if (task && !lockedOut(task)) {
             setNotes(true);
             setTimeout(() => notesRef.current?.focus(), 0);
           }
           break;
         case "editTitle":
-          if (task) {
+          if (task && !lockedOut(task)) {
             setMode({ kind: "title", id: task.id });
             setText(task.title);
           }
@@ -206,18 +257,27 @@ export function TasksView({
           setShowHidden((s) => !s);
           break;
         case "delete":
-          if (task) {
+          if (task && !lockedOut(task, true)) {
             a.remove(task.id).then(() => onNotice("info", "Deleted."), fail);
           }
           break;
+        case "focus":
+          if (latest.current.lockedId !== null) onNotice("info", "Already locked in. Finish the task or break the lock first.");
+          else if (task && task.status !== "done") setPicking({ id: task.id, title: task.title });
+          break;
+        case "park":
+          if (latest.current.lockedId === null) onNotice("info", "Lock in on a task (Ctrl+L), then park distractions here.");
+          else parkRef.current?.focus();
+          break;
         case "move": {
-          if (v.rows.length === 0) break;
+          if (v.rows.length === 0 || latest.current.lockedId !== null) break;
           const at = v.rows.findIndex((t) => t.id === sel);
           setSelectedId(v.rows[moveIndex(at, action.delta, v.rows.length)].id);
           break;
         }
         case "escape":
-          if (m.kind !== "add") {
+          if (latest.current.picking) setPicking(null);
+          else if (m.kind !== "add") {
             setMode({ kind: "add" });
             setText("");
           } else if (latest.current.text !== "") setText("");
@@ -225,7 +285,7 @@ export function TasksView({
           break;
       }
     },
-    [addTyped, change, fail, onClose, onNotice, setNotes],
+    [addTyped, change, fail, lockedOut, onClose, onNotice, setNotes],
   );
 
   const onKeyDown = useCallback(
@@ -245,23 +305,67 @@ export function TasksView({
     [run],
   );
 
-  const onHover = useCallback((id: number) => setSelectedId(id), []);
+  const onHover = useCallback((id: number) => {
+    if (latest.current.lockedId === null) setSelectedId(id);
+  }, []);
   const onAdvance = useCallback(
     (id: number) => {
       const task = latest.current.api.tasks.find((t) => t.id === id);
-      if (task) change(id, { status: nextStatus(task.status) });
+      if (task && !lockedOut(task)) change(id, { status: nextStatus(task.status) });
     },
-    [change],
+    [change, lockedOut],
   );
   const onToggleImportant = useCallback(
     (id: number) => {
       const task = latest.current.api.tasks.find((t) => t.id === id);
-      if (task) change(id, { important: !task.important });
+      if (task && !lockedOut(task)) change(id, { important: !task.important });
     },
-    [change],
+    [change, lockedOut],
   );
 
   const onOpenNotes = useCallback(
+    (id: number) => {
+      const task = latest.current.api.tasks.find((t) => t.id === id);
+      if (task && lockedOut(task)) return;
+      setSelectedId(id);
+      setNotes(true);
+      setTimeout(() => notesRef.current?.focus(), 0);
+    },
+    [lockedOut, setNotes],
+  );
+
+  // ---- focus lock -------------------------------------------------------------------------
+
+  const onFocusTask = useCallback((id: number) => {
+    const task = latest.current.api.tasks.find((t) => t.id === id);
+    if (task && latest.current.lockedId === null && task.status !== "done")
+      setPicking({ id: task.id, title: task.title });
+  }, []);
+
+  /** Lock in: the task goes in flight (if it was not), then the list locks to it. */
+  const startFocus = useCallback(
+    (minutes: number) => {
+      const p = latest.current.picking;
+      if (!p) return;
+      const task = latest.current.api.tasks.find((t) => t.id === p.id);
+      if (!task) {
+        setPicking(null);
+        return;
+      }
+      const begin = () => {
+        focus.start({ id: task.id, title: task.title }, minutes);
+        setPicking(null);
+        setSelectedId(task.id);
+        inputRef.current?.focus();
+      };
+      if (task.status === "doing") begin();
+      else latest.current.api.update(task.id, { status: "doing" }).then(begin, fail);
+    },
+    [fail, focus, inputRef],
+  );
+  const markDone = useCallback((id: number) => change(id, { status: "done" }), [change]);
+  const moreTime = useCallback((id: number, title: string) => setPicking({ id, title }), []);
+  const blocked = useCallback(
     (id: number) => {
       setSelectedId(id);
       setNotes(true);
@@ -269,6 +373,28 @@ export function TasksView({
     },
     [setNotes],
   );
+  const canContinue = useCallback(
+    (id: number) => {
+      const task = latest.current.api.tasks.find((t) => t.id === id);
+      return task !== undefined && task.status !== "done";
+    },
+    [],
+  );
+  const parkedToTask = useCallback(
+    (item: ParkedItem) => {
+      latest.current.api.add(item.text, false, false).then(() => {
+        focus.unpark(item.id);
+        onNotice("info", "Added to your tasks.");
+      }, fail);
+    },
+    [fail, focus, onNotice],
+  );
+  const stats = focus.data;
+  const todayMs = focusedToday(stats.log, focus.now);
+  const weekTip = focusedByDay(stats.log, focus.now, 7)
+    .map((d) => `${new Date(d.dayStart).toLocaleDateString(undefined, { weekday: "short" })} ${formatDuration(d.ms)}`)
+    .join("\n");
+
   const saveNote = useCallback(
     (id: number, note: string) => change(id, { note }),
     [change],
@@ -374,7 +500,17 @@ export function TasksView({
               ? "Nothing in flight"
               : `${view.inFlight} in flight`}
             {view.doneRecently > 0 && ` · ${view.doneRecently} done today`}
+            {todayMs > 0 && ` · ${formatDuration(todayMs)} focused today`}
           </span>
+          {stats.streak.best > 0 && (
+            <span
+              className="flex shrink-0 items-center gap-1 tabular-nums"
+              title={`Focus streak: sessions in a row without breaking the lock. Best: ${stats.streak.best}\n${weekTip}`}
+            >
+              <Flame className="size-3.5" aria-hidden />
+              {stats.streak.current}
+            </span>
+          )}
           {(hasExtras || showHidden) && (
             <button
               type="button"
@@ -392,6 +528,37 @@ export function TasksView({
               <Kbd className="h-4 min-w-4 px-1 text-[10px]">Ctrl H</Kbd>
             </button>
           )}
+        </div>
+
+        <div
+          onMouseDown={(e) => {
+            // Not a window drag, and clicks on the buttons keep the caret in the task input.
+            e.stopPropagation();
+            if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault();
+          }}
+        >
+          {picking && lockedId === null && (
+            <FocusPicker
+              key={picking.id}
+              taskTitle={picking.title}
+              initialMinutes={stats.minutes}
+              onStart={startFocus}
+              onCancel={() => {
+                setPicking(null);
+                returnFocus();
+              }}
+            />
+          )}
+          <FocusBanner
+            focus={focus}
+            parkRef={parkRef}
+            onReturnFocus={returnFocus}
+            onMarkDone={markDone}
+            onMoreTime={moreTime}
+            onBlocked={blocked}
+            canContinue={canContinue}
+            onAddTask={parkedToTask}
+          />
         </div>
       </div>
 
@@ -426,6 +593,10 @@ export function TasksView({
                     onAdvance={onAdvance}
                     onToggleImportant={onToggleImportant}
                     onOpenNotes={onOpenNotes}
+                    onFocus={onFocusTask}
+                    locked={lockedId !== null && t.id !== lockedId}
+                    focused={t.id === lockedId}
+                    focusedMs={focusedByTask.get(t.id) ?? 0}
                   />
                 ))}
               </section>
