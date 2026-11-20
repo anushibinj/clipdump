@@ -260,6 +260,55 @@ export function setSettings(settings: SettingsDto): Promise<SettingsDto> {
   return invoke<SettingsDto>("set_settings", { settings });
 }
 
+// ---------------------------------------------------------------------------
+// Tasks (src-tauri/src/tasks.rs, commands/tasks.rs)
+// ---------------------------------------------------------------------------
+
+export type TaskStatus = "todo" | "doing" | "done";
+
+export interface Task {
+  id: number;
+  title: string;
+  /** Where the work was left off. Empty when there is nothing to say. */
+  note: string;
+  status: TaskStatus;
+  important: boolean;
+  /** Unix ms. */
+  createdAt: number;
+  /** Unix ms of the last change of any kind. */
+  touchedAt: number;
+  /** Unix ms, set while the task is done. */
+  doneAt: number | null;
+}
+
+/** The fields `updateTask` can change; a field left out stays as it is. */
+export interface TaskPatch {
+  title?: string;
+  note?: string;
+  status?: TaskStatus;
+  important?: boolean;
+}
+
+/** Every task, in the order they were added. */
+export function listTasks(): Promise<Task[]> {
+  return invoke<Task[]>("list_tasks");
+}
+
+/** Add a task; `start` puts it in flight at once. Rejects with a plain message (use `errorMessage`). */
+export function addTask(title: string, important = false, start = false): Promise<Task> {
+  return invoke<Task>("add_task", { title, important, start });
+}
+
+/** Resolves to the task as stored. */
+export function updateTask(id: number, patch: TaskPatch): Promise<Task> {
+  return invoke<Task>("update_task", { id, patch });
+}
+
+/** Resolves to whether the task existed. */
+export function deleteTask(id: number): Promise<boolean> {
+  return invoke<boolean>("delete_task", { id });
+}
+
 export function getStats(): Promise<StatsDto> {
   return invoke<StatsDto>("get_stats");
 }
