@@ -61,7 +61,7 @@ never touch them.
 - The search view's filter row names the task touched last, so it is in sight when the bar opens.
 - One input does it all: `Enter` adds (a lone trailing `!` marks it important), `Ctrl+Enter` adds and starts;
   on an empty input `Enter` moves the selected task along, `Shift+Enter` back, `Ctrl+I` toggles important,
-  `Ctrl+E` edits the note, `F2` the title, `Ctrl+Delete` deletes, `Esc` peels an edit, the typed text, then the bar.
+  `Ctrl+E` opens the notes sidebar, `F2` the title, `Ctrl+Delete` deletes, `Esc` peels an edit, the typed text, then the bar.
 - Limits: 500 tasks, titles 300 characters, notes 1,000; done tasks are dropped after 30 days.
 - Code: `src-tauri/src/tasks.rs` (store, atomic encrypted saves), `commands/tasks.rs`, `src/lib/tasks.ts` (what shows),
   `src/lib/taskKeys.ts` (keys), `src/components/TasksView.tsx`.

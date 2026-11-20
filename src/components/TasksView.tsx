@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type RefObject,
+} from "react";
 import { ListChecks, ListTodo, Pin, PinOff, Search, X } from "lucide-react";
+import { TaskNotes } from "@/components/TaskNotes";
 import { TaskRow, taskRowId } from "@/components/TaskRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import type { TasksApi } from "@/hooks/useTasks";
 import { errorMessage, type Task, type TaskPatch } from "@/lib/ipc";
+import { readTaskNotesOpen, writeTaskNotesOpen } from "@/lib/pane";
 import { moveIndex } from "@/lib/shortcuts";
 import { resolveTaskKey, type TaskAction } from "@/lib/taskKeys";
 import {
-  MAX_NOTE_CHARS,
   MAX_TITLE_CHARS,
   buildTaskView,
   nextStatus,
@@ -18,7 +27,7 @@ import {
   reselect,
 } from "@/lib/tasks";
 
-type Mode = { kind: "add" } | { kind: "note"; id: number } | { kind: "title"; id: number };
+type Mode = { kind: "add" } | { kind: "title"; id: number };
 
 interface TasksViewProps {
   api: TasksApi;
@@ -41,7 +50,6 @@ const LIST_ID = "task-list";
 
 const PLACEHOLDER = {
   add: "Add a task. End it with ! to mark it important",
-  note: "Where did you leave off?",
   title: "Task title",
 } as const;
 
@@ -66,6 +74,12 @@ export function TasksView({
   const [showHidden, setShowHidden] = useState(false);
   useEffect(() => setShowHidden(false), [collapseSignal]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [notesOpen, setNotesOpen] = useState(readTaskNotesOpen);
+  const notesRef = useRef<HTMLTextAreaElement | null>(null);
+  const setNotes = useCallback((open: boolean) => {
+    setNotesOpen(open);
+    writeTaskNotesOpen(open);
+  }, []);
 
   const view = useMemo(
     () => buildTaskView(api.tasks, { showHidden, now: api.now }),
@@ -82,14 +96,20 @@ export function TasksView({
   }, [view.rows, selected, selectedId]);
 
   useEffect(() => {
-    if (selected !== null) document.getElementById(taskRowId(selected))?.scrollIntoView({ block: "nearest" });
+    if (selected !== null)
+      document
+        .getElementById(taskRowId(selected))
+        ?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
   // Read by the stable callbacks below.
   const latest = useRef({ api, view, selected, text, mode, showHidden });
   latest.current = { api, view, selected, text, mode, showHidden };
 
-  const fail = useCallback((e: unknown) => onNotice("error", errorMessage(e)), [onNotice]);
+  const fail = useCallback(
+    (e: unknown) => onNotice("error", errorMessage(e)),
+    [onNotice],
+  );
 
   const change = useCallback(
     (id: number, patch: TaskPatch, after?: (t: Task) => void) => {
@@ -106,11 +126,16 @@ export function TasksView({
       a.add(parsed.title, parsed.important, start).then((task) => {
         setText("");
         // A new task the calm view would hide must not just vanish: say where it went.
-        const shown = buildTaskView([...a.tasks, task], { showHidden: all, now: a.now }).rows.some(
-          (t) => t.id === task.id,
-        );
+        const shown = buildTaskView([...a.tasks, task], {
+          showHidden: all,
+          now: a.now,
+        }).rows.some((t) => t.id === task.id);
         if (shown) setSelectedId(task.id);
-        else onNotice("info", "Added. It is in the hidden tasks, press Ctrl+H to show them.");
+        else
+          onNotice(
+            "info",
+            "Added. It is in the hidden tasks, press Ctrl+H to show them.",
+          );
       }, fail);
     },
     [fail, onNotice],
@@ -119,7 +144,8 @@ export function TasksView({
   const run = useCallback(
     (action: TaskAction) => {
       const { view: v, selected: sel, mode: m, api: a } = latest.current;
-      const task = sel === null ? null : (a.tasks.find((t) => t.id === sel) ?? null);
+      const task =
+        sel === null ? null : (a.tasks.find((t) => t.id === sel) ?? null);
       switch (action.type) {
         case "add":
           addTyped(false);
@@ -131,12 +157,16 @@ export function TasksView({
           if (task) {
             const status = nextStatus(task.status);
             change(task.id, { status }, () => {
-              if (status === "done") onNotice("info", "Marked done. Shift+Enter puts it back.");
+              if (status === "done")
+                onNotice("info", "Marked done. Shift+Enter puts it back.");
             });
           }
           break;
         case "toggleDone":
-          if (task) change(task.id, { status: task.status === "done" ? "todo" : "done" });
+          if (task)
+            change(task.id, {
+              status: task.status === "done" ? "todo" : "done",
+            });
           break;
         case "stepBack": {
           const status = task ? previousStatus(task.status) : null;
@@ -147,9 +177,10 @@ export function TasksView({
           if (task) change(task.id, { important: !task.important });
           break;
         case "editNote":
+          // Ctrl+E: open the notes sidebar and put the caret in it.
           if (task) {
-            setMode({ kind: "note", id: task.id });
-            setText(task.note);
+            setNotes(true);
+            setTimeout(() => notesRef.current?.focus(), 0);
           }
           break;
         case "editTitle":
@@ -165,7 +196,7 @@ export function TasksView({
             onNotice("error", "The task needs a title.");
             break;
           }
-          change(m.id, m.kind === "note" ? { note: value } : { title: value }, () => {
+          change(m.id, { title: value }, () => {
             setMode({ kind: "add" });
             setText("");
           });
@@ -194,13 +225,16 @@ export function TasksView({
           break;
       }
     },
-    [addTyped, change, fail, onClose, onNotice],
+    [addTyped, change, fail, onClose, onNotice, setNotes],
   );
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       const { text: t, mode: m } = latest.current;
-      const action = resolveTaskKey(e.nativeEvent, { inputEmpty: t.trim() === "", editing: m.kind !== "add" });
+      const action = resolveTaskKey(e.nativeEvent, {
+        inputEmpty: t.trim() === "",
+        editing: m.kind !== "add",
+      });
       if (!action) return;
       e.preventDefault();
       e.stopPropagation();
@@ -227,18 +261,39 @@ export function TasksView({
     [change],
   );
 
+  const onOpenNotes = useCallback(
+    (id: number) => {
+      setSelectedId(id);
+      setNotes(true);
+      setTimeout(() => notesRef.current?.focus(), 0);
+    },
+    [setNotes],
+  );
+  const saveNote = useCallback(
+    (id: number, note: string) => change(id, { note }),
+    [change],
+  );
+  const returnFocus = useCallback(() => inputRef.current?.focus(), [inputRef]);
+  const selectedTask =
+    selected === null
+      ? null
+      : (api.tasks.find((t) => t.id === selected) ?? null);
+
   const editing = mode.kind !== "add";
-  const maxLength = mode.kind === "note" ? MAX_NOTE_CHARS : MAX_TITLE_CHARS;
+  const maxLength = MAX_TITLE_CHARS;
   const hasExtras = view.hiddenCount > 0 || view.doneRecently > 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div onMouseDown={onDragHeader}>
         <div className="flex h-12 items-center gap-2.5 border-b px-4 transition-shadow has-[input:focus-visible]:border-ring has-[input:focus-visible]:shadow-[inset_0_-1px_0_0_var(--ring)]">
-          <ListTodo className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <ListTodo
+            className="size-4 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
           {editing && (
             <Badge variant="secondary" className="shrink-0">
-              {mode.kind === "note" ? "Note" : "Title"}
+              Title
             </Badge>
           )}
           <input
@@ -252,7 +307,9 @@ export function TasksView({
             aria-controls={LIST_ID}
             aria-autocomplete="none"
             aria-label={editing ? PLACEHOLDER[mode.kind] : "Add a task"}
-            aria-activedescendant={selected === null ? undefined : taskRowId(selected)}
+            aria-activedescendant={
+              selected === null ? undefined : taskRowId(selected)
+            }
             maxLength={maxLength}
             autoFocus
             autoComplete="off"
@@ -280,12 +337,20 @@ export function TasksView({
               tabIndex={-1}
               aria-label={pinned ? "Unpin window" : "Pin window open"}
               aria-pressed={pinned}
-              title={pinned ? "Unpin: hide when focus is lost" : "Pin: keep the window open"}
+              title={
+                pinned
+                  ? "Unpin: hide when focus is lost"
+                  : "Pin: keep the window open"
+              }
               onMouseDown={(e) => e.preventDefault()}
               onClick={onTogglePinned}
               className={pinned ? "text-foreground" : "text-muted-foreground"}
             >
-              {pinned ? <Pin className="fill-current" aria-hidden /> : <PinOff aria-hidden />}
+              {pinned ? (
+                <Pin className="fill-current" aria-hidden />
+              ) : (
+                <PinOff aria-hidden />
+              )}
             </Button>
             <Button
               type="button"
@@ -305,7 +370,9 @@ export function TasksView({
 
         <div className="flex h-10 items-center justify-between gap-3 border-b px-4 text-xs text-muted-foreground">
           <span className="truncate tabular-nums">
-            {view.inFlight === 0 ? "Nothing in flight" : `${view.inFlight} in flight`}
+            {view.inFlight === 0
+              ? "Nothing in flight"
+              : `${view.inFlight} in flight`}
             {view.doneRecently > 0 && ` · ${view.doneRecently} done today`}
           </span>
           {(hasExtras || showHidden) && (
@@ -328,33 +395,55 @@ export function TasksView({
         </div>
       </div>
 
-      <div
-        id={LIST_ID}
-        role="listbox"
-        aria-label="Tasks"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
-      >
-        {view.rows.length === 0 ? (
-          <Empty ready={api.ready} error={api.error} total={api.tasks.length} hidden={view.hiddenCount} />
-        ) : (
-          view.sections.map((s) => (
-            <section key={s.key} aria-label={s.title}>
-              <h3 className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                {s.title} <span className="tabular-nums">{s.tasks.length}</span>
-              </h3>
-              {s.tasks.map((t) => (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  selected={t.id === selected}
-                  now={api.now}
-                  onHover={onHover}
-                  onAdvance={onAdvance}
-                  onToggleImportant={onToggleImportant}
-                />
-              ))}
-            </section>
-          ))
+      <div className="flex min-h-0 flex-1">
+        <div
+          id={LIST_ID}
+          role="listbox"
+          aria-label="Tasks"
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-1"
+        >
+          {view.rows.length === 0 ? (
+            <Empty
+              ready={api.ready}
+              error={api.error}
+              total={api.tasks.length}
+              hidden={view.hiddenCount}
+            />
+          ) : (
+            view.sections.map((s) => (
+              <section key={s.key} aria-label={s.title}>
+                <h3 className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                  {s.title}{" "}
+                  <span className="tabular-nums">{s.tasks.length}</span>
+                </h3>
+                {s.tasks.map((t) => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    selected={t.id === selected}
+                    now={api.now}
+                    onHover={onHover}
+                    onAdvance={onAdvance}
+                    onToggleImportant={onToggleImportant}
+                    onOpenNotes={onOpenNotes}
+                  />
+                ))}
+              </section>
+            ))
+          )}
+        </div>
+        {notesOpen && selectedTask && (
+          <TaskNotes
+            task={selectedTask}
+            now={api.now}
+            onSave={saveNote}
+            onClose={() => {
+              setNotes(false);
+              returnFocus();
+            }}
+            onReturnFocus={returnFocus}
+            textareaRef={notesRef}
+          />
         )}
       </div>
     </div>
@@ -380,7 +469,8 @@ function Empty({
     hint = error;
   } else if (total === 0) {
     title = "Nothing on the list";
-    hint = "Type a task and press Enter. Ctrl+Enter adds it and starts it right away.";
+    hint =
+      "Type a task and press Enter. Ctrl+Enter adds it and starts it right away.";
   } else if (hidden > 0) {
     title = "Nothing in flight";
     hint = `${hidden} hidden. Press Ctrl+H to see them, or add a task ending with ! to keep it up next.`;
@@ -390,7 +480,11 @@ function Empty({
   }
   return (
     <div className="flex h-full min-h-40 flex-col items-center justify-center gap-1.5 px-6 text-center">
-      <ListChecks className="mb-1 size-8 text-muted-foreground/60" strokeWidth={1.5} aria-hidden />
+      <ListChecks
+        className="mb-1 size-8 text-muted-foreground/60"
+        strokeWidth={1.5}
+        aria-hidden
+      />
       <p className="text-sm font-medium">{title}</p>
       <p className="max-w-80 text-xs text-muted-foreground">{hint}</p>
     </div>
