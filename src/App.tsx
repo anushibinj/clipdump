@@ -10,6 +10,8 @@ import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
 import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { NotesButton } from "@/components/NotesButton";
+import { AskButton } from "@/components/AskButton";
+import { AskView } from "@/components/AskView";
 import { NotesView } from "@/components/NotesView";
 import { TasksButton } from "@/components/TasksButton";
 import { TasksView } from "@/components/TasksView";
@@ -20,6 +22,7 @@ import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
 import { useFocus } from "@/hooks/useFocus";
+import { useAsk } from "@/hooks/useAsk";
 import { useNotes } from "@/hooks/useNotes";
 import { useTasks } from "@/hooks/useTasks";
 import { readView, writeView } from "@/lib/view";
@@ -61,6 +64,7 @@ function App() {
   const s = useSearch();
   const tasks = useTasks();
   const notes = useNotes();
+  const ask = useAsk();
   // The bar opens on the view it was left on (search, tasks or settings), across openings and
   // restarts: hiding the bar never resets it (`lib/view.ts`).
   const [view, setViewState] = useState<View>(readView);
@@ -280,6 +284,10 @@ function App() {
           disarm();
           setView((v) => (v === "notes" ? "search" : "notes"));
           break;
+        case "toggleAsk":
+          disarm();
+          setView((v) => (v === "ask" ? "search" : "ask"));
+          break;
         case "escape":
           // Layers, innermost first: pending confirmation, settings, the recovery notice (the
           // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is
@@ -474,6 +482,23 @@ function App() {
               </div>
               {footer}
             </div>
+          ) : view === "ask" ? (
+            <div className="flex h-full flex-col">
+              <div className="min-h-0 flex-1">
+                <AskView
+                  api={ask}
+                  inputRef={inputRef}
+                  onNotice={showNotice}
+                  onOpen={setView}
+                  onBack={() => setView("search")}
+                  onClose={dismiss}
+                  onDragHeader={dragFromHeader}
+                  pinned={settings?.pinnedBar ?? false}
+                  onTogglePinned={togglePinnedWindow}
+                />
+              </div>
+              {footer}
+            </div>
           ) : view === "settings" ? (
             <div className="flex h-full flex-col">
               <div className="min-h-0 flex-1">
@@ -514,6 +539,7 @@ function App() {
                     onChange={s.setFilter}
                     trailing={
                       <div className="flex min-w-0 items-center gap-0.5">
+                        <AskButton onClick={() => setView("ask")} />
                         <NotesButton count={notes.notes.length} onClick={() => setView("notes")} />
                         <TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />
                       </div>

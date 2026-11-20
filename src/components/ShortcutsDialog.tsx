@@ -23,6 +23,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Alt", "1-4"], label: "Filter: all, text, images, files" },
   { keys: ["Ctrl", "T"], label: "Tasks" },
   { keys: ["Ctrl", "Shift", "N"], label: "Notes" },
+  { keys: ["Ctrl", "/"], label: "Ask a question across notes, tasks and clipboard" },
   { keys: ["Ctrl", ","], label: "Settings" },
   { keys: ["Ctrl", "?"], label: "This help" },
   { keys: ["Esc"], label: "Close" },
@@ -66,6 +67,12 @@ const NOTE_SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "E"], label: "Write in the picked note, or back to the filter" },
   { keys: ["Ctrl", "Shift", "N"], label: "Back to the clipboard search" },
   { keys: ["Esc"], label: "Clear the filter, close" },
+];
+
+const ASK_SHORTCUTS: Shortcut[] = [
+  { keys: ["Enter"], label: "Ask the question" },
+  { keys: ["Ctrl", "/"], label: "Open Ask, or back to the clipboard search" },
+  { keys: ["Esc"], label: "Clear the text, then the answer, then close" },
 ];
 
 /** The bottom right trigger: opens the shortcuts help. */
@@ -119,7 +126,15 @@ export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChang
   const tasks = <List key="tasks" title="Tasks" items={TASK_SHORTCUTS} />;
   const notes = <List key="notes" title="Notes" items={NOTE_SHORTCUTS} />;
   // The view behind the dialog comes first.
-  const sections = view === "tasks" ? [tasks, clipboard, notes] : view === "notes" ? [notes, clipboard, tasks] : [clipboard, tasks, notes];
+  const ask = <List key="ask" title="Ask" items={ASK_SHORTCUTS} />;
+  const sections =
+    view === "tasks"
+      ? [tasks, clipboard, notes, ask]
+      : view === "notes"
+        ? [notes, clipboard, tasks, ask]
+        : view === "ask"
+          ? [ask, clipboard, tasks, notes]
+          : [clipboard, tasks, notes, ask];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm gap-3 p-4" aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus}>
