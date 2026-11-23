@@ -25,7 +25,7 @@ export function FocusProgressBar({ session, now }: FocusProgressBarProps) {
       className="h-px w-full shrink-0"
     >
       <div
-        className="h-full origin-left bg-primary transition-transform duration-1000 ease-linear motion-reduce:transition-none"
+        className="h-full origin-left bg-destructive transition-transform duration-1000 ease-linear motion-reduce:transition-none"
         style={{ transform: `scaleX(${left})` }}
       />
     </div>
