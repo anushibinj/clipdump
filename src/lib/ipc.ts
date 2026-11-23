@@ -111,6 +111,8 @@ export interface SettingsDto {
   llmBaseUrl: string;
   /** Model name sent to that server. */
   llmModel: string;
+  /** Embedding model for semantic search in Ask (sends every note, task and clip to the server once). Empty: off. */
+  llmEmbeddingModel: string;
   /** Whether an API key is stored. The key itself never comes back from the backend. */
   llmApiKeySet: boolean;
   /** Send a new key to store it, "" to remove the stored one, null to keep it. Always null when read. */

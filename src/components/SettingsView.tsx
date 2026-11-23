@@ -535,6 +535,14 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
                 onCommit={(v) => void save({ llmModel: v })}
               />
               <TextRow
+                id="llm-embedding-model"
+                label="Embedding model"
+                hint="Optional. Turns on semantic search in Ask, so a question finds items by meaning, not only by words. Needs the server's /embeddings endpoint (for example nomic-embed-text). Once, the text of every note, task and clipboard item is sent to the server to be embedded; the vectors are kept in memory only."
+                value={settings.llmEmbeddingModel}
+                placeholder="off"
+                onCommit={(v) => void save({ llmEmbeddingModel: v })}
+              />
+              <TextRow
                 id="llm-key"
                 label="API key"
                 hint="Optional for a local server. Stored in settings.json on this computer, unencrypted."

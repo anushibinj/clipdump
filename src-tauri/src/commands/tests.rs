@@ -1061,10 +1061,12 @@ fn the_llm_key_is_write_only_and_the_url_is_checked() {
     assert!(!dto.llm_api_key_set);
     dto.llm_base_url = " http://localhost:11434/v1 ".into();
     dto.llm_model = " llama3.2 ".into();
+    dto.llm_embedding_model = " nomic-embed-text ".into();
     dto.llm_api_key = Some(" sk-secret ".into());
     let stored = env.apply(dto).unwrap();
     assert_eq!(stored.llm_base_url, "http://localhost:11434/v1");
     assert_eq!(stored.llm_model, "llama3.2");
+    assert_eq!(stored.llm_embedding_model, "nomic-embed-text");
     assert!(stored.llm_api_key_set);
     assert_eq!(
         stored.llm_api_key, None,

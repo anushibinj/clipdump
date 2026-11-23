@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS = {
   startAtLogin: true,
   llmBaseUrl: "http://localhost:11434/v1",
   llmModel: "llama3.2",
+  llmEmbeddingModel: "",
   llmApiKeySet: false,
   llmApiKey: null as string | null,
 };
