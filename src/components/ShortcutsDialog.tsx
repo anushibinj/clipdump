@@ -1,5 +1,6 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import type { View } from "@/lib/shortcuts";
 
@@ -100,7 +101,18 @@ interface Props {
   view?: View;
 }
 
+/** Shortcuts matching every word of the query, against the label and the keys. */
+export function filterShortcuts(items: Shortcut[], query: string): Shortcut[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return items;
+  return items.filter((s) => {
+    const hay = `${s.label} ${s.keys.join(" ")}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
 function List({ title, items }: { title: string; items: Shortcut[] }) {
+  if (items.length === 0) return null;
   return (
     <section aria-label={title}>
       <h3 className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{title}</h3>
@@ -122,11 +134,21 @@ function List({ title, items }: { title: string; items: Shortcut[] }) {
 
 /** The "Shortcuts" modal: every keyboard shortcut in one list. */
 export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChange, onCloseAutoFocus, view = "search" }: Props) {
-  const clipboard = <List key="clipboard" title="Clipboard search" items={SHORTCUTS} />;
-  const tasks = <List key="tasks" title="Tasks" items={TASK_SHORTCUTS} />;
-  const notes = <List key="notes" title="Notes" items={NOTE_SHORTCUTS} />;
+  const [query, setQuery] = useState("");
+  // A fresh search every time the dialog opens.
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+  const clipboardItems = filterShortcuts(SHORTCUTS, query);
+  const taskItems = filterShortcuts(TASK_SHORTCUTS, query);
+  const noteItems = filterShortcuts(NOTE_SHORTCUTS, query);
+  const askItems = filterShortcuts(ASK_SHORTCUTS, query);
+  const noMatch = clipboardItems.length + taskItems.length + noteItems.length + askItems.length === 0;
+  const clipboard = <List key="clipboard" title="Clipboard search" items={clipboardItems} />;
+  const tasks = <List key="tasks" title="Tasks" items={taskItems} />;
+  const notes = <List key="notes" title="Notes" items={noteItems} />;
   // The view behind the dialog comes first.
-  const ask = <List key="ask" title="Ask" items={ASK_SHORTCUTS} />;
+  const ask = <List key="ask" title="Ask" items={askItems} />;
   const sections =
     view === "tasks"
       ? [tasks, clipboard, notes, ask]
@@ -142,7 +164,20 @@ export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChang
           <DialogTitle className="text-base">Shortcuts</DialogTitle>
           <DialogDescription className="sr-only">Keyboard shortcuts</DialogDescription>
         </DialogHeader>
-        <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto">{sections}</div>
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search shortcuts"
+          aria-label="Search shortcuts"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-8"
+        />
+        <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto">
+          {sections}
+          {noMatch && <p className="py-4 text-center text-sm text-muted-foreground">No shortcuts match "{query}"</p>}
+        </div>
       </DialogContent>
     </Dialog>
   );
