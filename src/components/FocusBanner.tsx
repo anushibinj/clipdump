@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Coffee, Flame, Lock, Pause, Play, Timer } from "lucide-react";
+import { Check, Coffee, Flame, Lock, Pause, Play, Timer } from "lucide-react";
 import { ParkedList } from "@/components/ParkedList";
 import { Button } from "@/components/ui/button";
 import type { FocusApi } from "@/hooks/useFocus";
@@ -61,7 +61,7 @@ function StreakChip({ focus }: { focus: FocusApi }) {
 }
 
 /** A session is running: the list is locked. */
-function Locked({ focus, parkRef, onReturnFocus, onAddTask }: FocusBannerProps) {
+function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone }: FocusBannerProps) {
   const s = focus.data.session!;
   const left = remainingMs(s, focus.now);
   const paused = s.pausedAt !== null;
@@ -101,6 +101,16 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask }: FocusBannerProps) 
           {formatClock(left)}
         </span>
         <StreakChip focus={focus} />
+        <Button
+          type="button"
+          size="xs"
+          tabIndex={-1}
+          title="Finished before the time ran out? Mark the task done and end the session early"
+          onClick={() => onMarkDone(s.taskId)}
+        >
+          <Check aria-hidden />
+          Done
+        </Button>
         {paused ? (
           <Button type="button" variant="outline" size="xs" tabIndex={-1} onClick={focus.resume}>
             <Play aria-hidden />
