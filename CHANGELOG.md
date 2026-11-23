@@ -8,6 +8,18 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-23
+
+### Fixed
+
+- Tiny clipboard: the popup's copy, close and pin buttons were blocked by the default capability, so
+  they did nothing. They are allowed now.
+- Ask: a follow-up question no longer shadows the clipboard history while the answer is being built,
+  so conversational follow-ups pair the previous question with the new one correctly when ranking by
+  meaning.
+- Ask: the embedding query is built without `format!`, which keeps the question text out of
+  format-string handling.
+
 ## [0.5.0] - 2026-11-23
 
 ### Added
