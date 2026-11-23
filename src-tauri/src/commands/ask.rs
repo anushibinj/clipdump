@@ -171,7 +171,11 @@ pub fn ask_everything(
     // A vague follow-up ("and who else?") embeds next to the question it follows.
     let mut query = history
         .last()
-        .map(|t| format!("{} ", t.question))
+        .map(|t| {
+            let mut q = t.question.clone();
+            q.push(' ');
+            q
+        })
         .unwrap_or_default();
     query.push_str(&question);
     let semantic = embedding_model(&app)
