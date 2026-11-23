@@ -76,6 +76,15 @@ const PLACEHOLDER = {
   title: "Task title",
 } as const;
 
+/** A one-line helper beside each section title, saying what the section is about. */
+const SECTION_HINT: Record<string, string> = {
+  now: "What you are working on right now",
+  quick: "Short tasks you can finish in a few minutes",
+  next: "Queued and ready to pick up next",
+  later: "Set aside for now",
+  done: "Finished tasks",
+};
+
 /**
  * The task list. One input does everything: type and press Enter to add, press Enter on an empty
  * input to move the selected task along, Ctrl+E to write where you left off. The keys are in
@@ -780,6 +789,11 @@ export function TasksView({
                 <h3 className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                   {s.title}{" "}
                   <span className="tabular-nums">{s.tasks.length}</span>
+                  {SECTION_HINT[s.key] && (
+                    <span className="ml-2 font-normal tracking-normal normal-case opacity-70">
+                      {SECTION_HINT[s.key]}
+                    </span>
+                  )}
                 </h3>
                 {s.tasks.map((t) => (
                   <TaskRow
