@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { File, FileText, Folder, Image as ImageIcon, Pin } from "lucide-react";
+import { Copy, File, FileText, Folder, Image as ImageIcon, Pin } from "lucide-react";
 import { Highlighted } from "@/components/Highlighted";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
@@ -18,7 +18,10 @@ interface ResultItemProps {
   selected: boolean;
   /** Minute rounded "now" (lib/time.ts `minuteNow`), so the memo holds within a minute. */
   now: number;
+  /** Copy this item (the hover copy button). */
   onActivate: (id: number) => void;
+  /** Plain row click: select only. */
+  onSelectRow: (id: number) => void;
 }
 
 /** Same row, same props: skip the render. The result objects are new on every response. */
@@ -27,7 +30,8 @@ export function sameRow(a: ResultItemProps, b: ResultItemProps): boolean {
     a.index !== b.index ||
     a.selected !== b.selected ||
     a.now !== b.now ||
-    a.onActivate !== b.onActivate
+    a.onActivate !== b.onActivate ||
+    a.onSelectRow !== b.onSelectRow
   ) {
     return false;
   }
@@ -170,6 +174,7 @@ export const ResultItem = memo(function ResultItem({
   selected,
   now,
   onActivate,
+  onSelectRow,
 }: ResultItemProps) {
   const tall = r.kind === "image" || (r.kind === "files" && r.hasThumb);
   return (
@@ -190,11 +195,24 @@ export const ResultItem = memo(function ResultItem({
       )}
       // Keep keyboard focus in the search input.
       onMouseDown={(e) => e.preventDefault()}
-      onClick={() => onActivate(r.id)}
+      onClick={() => onSelectRow(r.id)}
     >
       <Leading r={r} />
       <Body r={r} />
       <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          title="Copy"
+          aria-label="Copy"
+          tabIndex={-1}
+          className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground group-hover/row:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onActivate(r.id);
+          }}
+        >
+          <Copy className="size-3.5" aria-hidden />
+        </button>
         {r.kind === "text" && r.lineCount > 1 && (
           <Badge variant="secondary" className="h-4 px-1.5 text-[10px] font-medium tabular-nums">
             {r.lineCount} lines

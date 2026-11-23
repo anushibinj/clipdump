@@ -8,6 +8,7 @@ interface ResultRowsProps {
   selectedId: number | null;
   now: number;
   onActivate: (id: number) => void;
+  onSelectRow: (id: number) => void;
 }
 
 /** The rows alone, memoized: typing re-renders the input but not this list unless results change. */
@@ -16,6 +17,7 @@ const ResultRows = memo(function ResultRows({
   selectedId,
   now,
   onActivate,
+  onSelectRow,
 }: ResultRowsProps) {
   // Selection moved by keyboard: keep the row in view (nearest edge, no jump when visible).
   useEffect(() => {
@@ -33,6 +35,7 @@ const ResultRows = memo(function ResultRows({
           selected={r.id === selectedId}
           now={now}
           onActivate={onActivate}
+          onSelectRow={onSelectRow}
         />
       ))}
     </>
@@ -64,6 +67,7 @@ export function ResultList({
   selectedId,
   now,
   onActivate,
+  onSelectRow,
   onKeyDownCapture,
 }: ResultListProps) {
   return (
@@ -91,6 +95,7 @@ export function ResultList({
                 selectedId={selectedId}
                 now={now}
                 onActivate={onActivate}
+                onSelectRow={onSelectRow}
               />
             )}
           </CommandList>

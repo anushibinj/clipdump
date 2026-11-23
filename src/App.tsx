@@ -231,6 +231,7 @@ function App() {
     [showNotice],
   );
 
+  // The row's copy button: select the row and copy it.
   const onActivate = useCallback(
     (id: number) => {
       latest.current.select(id);
@@ -238,6 +239,9 @@ function App() {
     },
     [copy],
   );
+
+  // A plain click on a row only selects it; it never copies.
+  const onSelectRow = useCallback((id: number) => latest.current.select(id), []);
 
   // The right pane's tab (preview or AI split) is remembered across openings and restarts.
   const [rightTab, setRightTab] = useState<RightTab>(readRightTab);
@@ -608,6 +612,7 @@ function App() {
                   selectedId={s.selectedId}
                   now={s.now}
                   onActivate={onActivate}
+                  onSelectRow={onSelectRow}
                   onKeyDownCapture={onKeyDownCapture}
                   header={
                     <div>
