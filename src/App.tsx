@@ -9,7 +9,7 @@ import { rowId } from "@/components/ResultItem";
 import { TitleBar } from "@/components/TitleBar";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
-import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { SettingsButton, ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { AskButton } from "@/components/AskButton";
 import { AskView } from "@/components/AskView";
 import { NotesView } from "@/components/NotesView";
@@ -496,6 +496,13 @@ function App() {
         />
       ) : null}
       <ShortcutsButton onClick={() => setShortcutsOpen(true)} />
+      <SettingsButton
+        active={view === "settings"}
+        onClick={() => {
+          disarm();
+          setView((v) => (v === "settings" ? "search" : "settings"));
+        }}
+      />
     </footer>
   );
 
