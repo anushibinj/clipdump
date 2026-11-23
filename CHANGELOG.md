@@ -8,6 +8,20 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+### Added
+
+- A 1 px progress bar right below the title bar while a task is locked in a focus session: full when the
+  session starts, empty when it ends, in the theme's destructive (red) color.
+- The time left in a focus session (mm:ss) is shown next to the Tasks icon in the title bar.
+- A Copy button appears on a result row when you hover it; click it to copy that item.
+
+### Changed
+
+- Clicking a result row now only selects it (it no longer copies). Use the hover Copy button, Enter, or
+  Alt+digit to copy.
+
 ## [0.7.0] - 2026-11-23
 
 ### Added
