@@ -383,6 +383,13 @@ export interface ExtractResult {
   tasks: ExtractedTask[];
 }
 
+/** A task proposed from the notes of another one. */
+export interface SplitTaskProposal {
+  title: string;
+  note: string;
+  important: boolean;
+}
+
 export interface StaleVerdict {
   id: number;
   verdict: "do" | "defer" | "drop";
@@ -435,6 +442,11 @@ export function suggestTaskLinks(): Promise<TaskLink[]> {
 /** Action items in `text`; with no text, in the newest copied text. */
 export function extractTasks(text: string | null): Promise<ExtractResult> {
   return invoke<ExtractResult>("extract_tasks", { text });
+}
+
+/** Tasks proposed from the notes of task `id`. Nothing is created; the person picks and edits first. */
+export function splitTaskNotes(id: number): Promise<SplitTaskProposal[]> {
+  return invoke<SplitTaskProposal[]>("split_task_notes", { id });
 }
 
 /** What to do about each of the quiet tasks: do it, defer it or drop it. */

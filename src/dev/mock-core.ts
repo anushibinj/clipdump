@@ -346,6 +346,22 @@ function runAssistant(cmd: string, args: Record<string, unknown>): unknown {
         });
       return { source: text.trim().slice(0, 2000), tasks: found };
     }
+    case "split_task_notes": {
+      requireLlm();
+      const task = tasks.find((t) => t.id === args.id);
+      if (!task) throw "task not found";
+      if (task.note.trim() === "") throw "write some notes on this task first";
+      return task.note
+        .split(/[.\n;]/)
+        .map((x) => x.trim())
+        .filter((x) => x.length > 8)
+        .slice(0, 10)
+        .map((x) => ({
+          title: Array.from(x.charAt(0).toUpperCase() + x.slice(1)).slice(0, 80).join(""),
+          note: "",
+          important: false,
+        }));
+    }
     case "review_stale_tasks": {
       requireLlm();
       return (args.ids as number[])
@@ -854,6 +870,7 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "task_digest":
     case "suggest_task_links":
     case "extract_tasks":
+    case "split_task_notes":
     case "review_stale_tasks":
     case "get_clips":
       if (control.tasksError) throw control.tasksError;
