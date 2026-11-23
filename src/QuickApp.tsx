@@ -75,9 +75,10 @@ export default function QuickApp() {
     list.current?.children[sel]?.scrollIntoView({ block: "nearest" });
   }, [sel, rows]);
 
-  const copy = useCallback((r: ResultDto | undefined) => {
+  // `paste`: Enter or a click (never Alt+digit), as in the main bar.
+  const copy = useCallback((r: ResultDto | undefined, paste = false) => {
     if (!r) return;
-    quickCopy(r.id).catch((e) => setError(typeof e === "string" ? e : "could not copy"));
+    quickCopy(r.id, paste).catch((e) => setError(typeof e === "string" ? e : "could not copy"));
   }, []);
 
   const togglePinned = () => {
@@ -99,7 +100,7 @@ export default function QuickApp() {
       setSel((s) => stepSelection(s, -1, rows.length));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      copy(rows[sel]);
+      copy(rows[sel], true);
     } else if (e.altKey) {
       const i = rowForDigit(e.key, rows.length);
       if (i !== null) {
@@ -149,7 +150,7 @@ export default function QuickApp() {
               aria-selected={i === sel}
               onMouseEnter={() => setSel(i)}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => copy(r)}
+              onClick={() => copy(r, true)}
               className={cn(
                 "flex h-[42px] cursor-default items-center gap-2 rounded px-2 text-sm",
                 i === sel && "bg-accent text-accent-foreground",
