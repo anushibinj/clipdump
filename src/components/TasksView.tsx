@@ -132,7 +132,13 @@ export function TasksView({
     if (selected !== selectedId) setSelectedId(selected);
   }, [view.rows, selected, selectedId]);
 
+  // Set when hover moved the selection: the pointer is already on the row, so do not scroll.
+  const hoverMoved = useRef(false);
   useEffect(() => {
+    if (hoverMoved.current) {
+      hoverMoved.current = false;
+      return;
+    }
     if (selected !== null)
       document
         .getElementById(taskRowId(selected))
@@ -413,7 +419,9 @@ export function TasksView({
   );
 
   const onHover = useCallback((id: number) => {
-    if (latest.current.lockedId === null) setSelectedId(id);
+    if (latest.current.lockedId !== null) return;
+    if (id !== latest.current.selected) hoverMoved.current = true;
+    setSelectedId(id);
   }, []);
   const onAdvance = useCallback(
     (id: number) => {
