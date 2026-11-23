@@ -2,8 +2,8 @@ name: cache-warm
 
 # Tag builds (release.yml) can only restore caches saved from the default branch. This
 # workflow compiles the same dependencies on master, under the same cache keys, so a
-# release starts warm. The weekly run keeps the caches from being evicted after 7 days
-# without use.
+# release starts warm. GitHub evicts caches unused for 7 days; after that the next
+# release builds cold, or run this workflow by hand first.
 on:
   push:
     branches: [master]
@@ -11,8 +11,6 @@ on:
       - "src-tauri/Cargo.lock"
       - "src-tauri/Cargo.toml"
       - ".github/workflows/cache-warm.yml"
-  schedule:
-    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 concurrency:
