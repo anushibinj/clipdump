@@ -8,6 +8,19 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
+### Added
+
+- A Settings gear button in the footer, right of Shortcuts; click it again to go back to search.
+
+### Changed
+
+- Tiny clipboard: Enter and a click now paste into the window the popup came from (when "Paste on Enter" is on),
+  like the main bar. Alt+digit still only copies.
+- The preview pane is always full-width below the results, capped at 30% of the height, instead of moving
+  beside the list in a wide window.
+
 ## [0.6.0] - 2026-11-23
 
 ### Added
