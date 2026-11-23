@@ -410,6 +410,7 @@ function App() {
   // The footer carries messages on the left and the Shortcuts button on the right.
   const footer = (
     <footer className="flex min-h-9 shrink-0 items-center gap-3 border-t px-3 py-1">
+      <AskButton active={view === "ask"} onClick={() => setView((v) => (v === "ask" ? "search" : "ask"))} />
       {confirming ? (
         <ConfirmInline count={unpinned} windowMs={CONFIRM_WINDOW_MS} />
       ) : notice ? (
@@ -539,7 +540,6 @@ function App() {
                     onChange={s.setFilter}
                     trailing={
                       <div className="flex min-w-0 items-center gap-0.5">
-                        <AskButton onClick={() => setView("ask")} />
                         <NotesButton count={notes.notes.length} onClick={() => setView("notes")} />
                         <TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />
                       </div>
