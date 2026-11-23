@@ -582,9 +582,9 @@ export function hideBar(): Promise<void> {
   return invoke<void>("hide_bar");
 }
 
-/** Tiny clipboard (Ctrl twice): copy item `id` and hide the popup unless it is pinned. Never pastes. */
-export function quickCopy(id: number): Promise<void> {
-  return invoke<void>("quick_copy", { id });
+/** Tiny clipboard (Ctrl twice): copy item `id` and hide the popup unless it is pinned. With `paste` it also pastes into the previous window, when the "Paste on Enter" setting is on. */
+export function quickCopy(id: number, paste = false): Promise<void> {
+  return invoke<void>("quick_copy", { id, paste });
 }
 
 /** Tiny clipboard: a pinned popup stays after a copy or a click elsewhere. */
