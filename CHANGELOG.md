@@ -8,6 +8,8 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-23
+
 ### Added
 
 - Ask. `Ctrl+/` (or the sparkle button in the search view's filter row) opens a view where one question
@@ -73,6 +75,16 @@ All notable changes to Clipdump are listed here. The format follows
 ### Changed
 
 - Estimates and suggestions do not count as touching a task, so a task you left alone still goes quiet.
+- `Tab` now cycles between the clipboard search and the tasks; the preview pane moves to `Alt+P`.
+- The Settings tab "Split with AI" is now called "AI", with copy that covers the task assistant, notes
+  and Ask as well as AI split (they all use the same LLM server).
+- Tasks keep a size, kind, next step, linked clips and a set-aside date, stored with the task.
+- Task notes show in a sidebar inside the tasks view, with a notes button on each row.
+
+### Internal
+
+- Release installers are built for every platform by one matrix workflow (`release.yml`), replacing the
+  Windows-only build.
 
 ## [0.2.0] - 2026-11-20
 
