@@ -6,14 +6,13 @@ import { Notice, type NoticeState } from "@/components/Notice";
 import { PreviewPane } from "@/components/PreviewPane";
 import { ResultList } from "@/components/ResultList";
 import { rowId } from "@/components/ResultItem";
+import { TitleBar } from "@/components/TitleBar";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
 import { ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
-import { NotesButton } from "@/components/NotesButton";
 import { AskButton } from "@/components/AskButton";
 import { AskView } from "@/components/AskView";
 import { NotesView } from "@/components/NotesView";
-import { TasksButton } from "@/components/TasksButton";
 import { TasksView } from "@/components/TasksView";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TypeFilter } from "@/components/TypeFilter";
@@ -26,7 +25,13 @@ import { useAsk } from "@/hooks/useAsk";
 import { useNotes } from "@/hooks/useNotes";
 import { useTasks } from "@/hooks/useTasks";
 import { readView, writeView } from "@/lib/view";
-import { readPaneOpen, readRightTab, writePaneOpen, writeRightTab, type RightTab } from "@/lib/pane";
+import {
+  readPaneOpen,
+  readRightTab,
+  writePaneOpen,
+  writeRightTab,
+  type RightTab,
+} from "@/lib/pane";
 import {
   clearHistory,
   copyItem,
@@ -53,7 +58,12 @@ import {
   type StatsDto,
 } from "@/lib/ipc";
 import type { Action, View } from "@/lib/shortcuts";
-import { applyTheme, readThemePref, writeThemePref, type ThemePref } from "@/lib/theme";
+import {
+  applyTheme,
+  readThemePref,
+  writeThemePref,
+  type ThemePref,
+} from "@/lib/theme";
 
 /** How long "press again to clear" stays armed. */
 export const CONFIRM_WINDOW_MS = 3000;
@@ -88,7 +98,9 @@ function App() {
   // Counts the times the bar was hidden; the task list folds its revealed extras away on each.
   const [hiddenSignal, setHiddenSignal] = useState(0);
   // The sentence the user dismissed, so the recovery notice does not come back on the next open.
-  const [recoveryDismissed, setRecoveryDismissed] = useState<string | null>(null);
+  const [recoveryDismissed, setRecoveryDismissed] = useState<string | null>(
+    null,
+  );
 
   const inputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -100,27 +112,58 @@ function App() {
 
   // The history was moved aside at startup: a message that stays until dismissed (the 5 second
   // notices take the footer first, then it comes back).
-  const recovery = stats?.recovery && stats.recovery !== recoveryDismissed ? stats.recovery : null;
+  const recovery =
+    stats?.recovery && stats.recovery !== recoveryDismissed
+      ? stats.recovery
+      : null;
 
-  const latest = useRef({ ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, shortcutsOpen });
-  latest.current = { ...s, settings, stats, view, previewOpen, confirming, themePref, recovery, shortcutsOpen };
+  const latest = useRef({
+    ...s,
+    settings,
+    stats,
+    view,
+    previewOpen,
+    confirming,
+    themePref,
+    recovery,
+    shortcutsOpen,
+  });
+  latest.current = {
+    ...s,
+    settings,
+    stats,
+    view,
+    previewOpen,
+    confirming,
+    themePref,
+    recovery,
+    shortcutsOpen,
+  };
 
   // ---- footer messages ----------------------------------------------------
 
   // `sticky`: for a message raised while the bar is being hidden (nobody can read it yet).
   // It waits for the next `bar:shown` and only then starts its 5 seconds.
-  const showNotice = useCallback((kind: NoticeState["kind"], message: string, sticky = false) => {
-    window.clearTimeout(noticeTimer.current);
-    setNotice({ kind, message });
-    stickyNotice.current = sticky;
-    if (!sticky) noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
-  }, []);
+  const showNotice = useCallback(
+    (kind: NoticeState["kind"], message: string, sticky = false) => {
+      window.clearTimeout(noticeTimer.current);
+      setNotice({ kind, message });
+      stickyNotice.current = sticky;
+      if (!sticky)
+        noticeTimer.current = window.setTimeout(
+          () => setNotice(null),
+          NOTICE_MS,
+        );
+    },
+    [],
+  );
 
   // The focus lock lives here, not in the task view: its countdown and its end announcements keep
   // working on the search view and while the bar is hidden (a message raised while hidden waits
   // for the next time the bar is shown).
   const focusNotice = useCallback(
-    (kind: NoticeState["kind"], message: string) => showNotice(kind, message, document.visibilityState !== "visible"),
+    (kind: NoticeState["kind"], message: string) =>
+      showNotice(kind, message, document.visibilityState !== "visible"),
     [showNotice],
   );
   const focus = useFocus(tasks.tasks, tasks.ready, focusNotice);
@@ -139,10 +182,13 @@ function App() {
   // ---- backend data -------------------------------------------------------
 
   const loadStats = useCallback(() => {
-    getStats().then((st) => {
-      setPerf(st.perf);
-      setStats(st);
-    }, () => {});
+    getStats().then(
+      (st) => {
+        setPerf(st.perf);
+        setStats(st);
+      },
+      () => {},
+    );
   }, []);
   const loadSettings = useCallback(() => {
     getSettings().then(setSettings, () => {});
@@ -177,7 +223,8 @@ function App() {
       // clipboard (the bar is hidden by then), so it is kept until the bar is shown again.
       copyItem(id, paste).catch((e: unknown) => {
         const message = errorMessage(e);
-        if (message.startsWith("copied, but")) showNotice("error", message, true);
+        if (message.startsWith("copied, but"))
+          showNotice("error", message, true);
         else showNotice("error", `Could not copy: ${message}`);
       });
     },
@@ -246,7 +293,10 @@ function App() {
             clearHistory().then(
               (n) => {
                 c.refresh({ resetSelection: true });
-                showNotice("info", `Cleared ${n} ${n === 1 ? "item" : "items"}, pinned items kept.`);
+                showNotice(
+                  "info",
+                  `Cleared ${n} ${n === 1 ? "item" : "items"}, pinned items kept.`,
+                );
               },
               (e: unknown) => showNotice("error", errorMessage(e)),
             );
@@ -254,7 +304,10 @@ function App() {
             dismissNotice();
             setConfirming(true);
             window.clearTimeout(confirmTimer.current);
-            confirmTimer.current = window.setTimeout(() => setConfirming(false), CONFIRM_WINDOW_MS);
+            confirmTimer.current = window.setTimeout(
+              () => setConfirming(false),
+              CONFIRM_WINDOW_MS,
+            );
             loadStats();
           }
           break;
@@ -324,7 +377,10 @@ function App() {
           if (stickyNotice.current) {
             stickyNotice.current = false;
             window.clearTimeout(noticeTimer.current);
-            noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+            noticeTimer.current = window.setTimeout(
+              () => setNotice(null),
+              NOTICE_MS,
+            );
           }
           loadSettings(); // the tray can pause capture while the bar is hidden
           loadStats();
@@ -365,10 +421,11 @@ function App() {
     else mainRef.current?.focus();
   }, [view]);
 
-  // The window has no title bar: the search row and the filter row are the drag handle. A press on
+  // The window has no native title bar: the TitleBar is the drag handle. A press on
   // an input or a button keeps its own meaning.
   const dragFromHeader = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest("input, button, a")) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest("input, button, a"))
+      return;
     e.preventDefault();
     startDrag().catch(() => {});
   }, []);
@@ -394,12 +451,22 @@ function App() {
 
   const selected = s.results.find((r) => r.id === s.selectedId) ?? null;
   const paneOpen = previewOpen && view === "search";
-  const preview = usePreview(s.selectedId, paneOpen && rightTab === "preview", historyTick);
+  const preview = usePreview(
+    s.selectedId,
+    paneOpen && rightTab === "preview",
+    historyTick,
+  );
   // The AI split starts by itself once its tab is showing a text item.
-  const split = useSplit(s.selectedId, paneOpen && rightTab === "split" && selected?.kind === "text");
+  const split = useSplit(
+    s.selectedId,
+    paneOpen && rightTab === "split" && selected?.kind === "text",
+  );
   const unpinned = stats ? stats.items - stats.pinned : null;
   const inFlight = useMemo(
-    () => tasks.tasks.filter((t) => t.status === "doing").sort((a, b) => b.touchedAt - a.touchedAt),
+    () =>
+      tasks.tasks
+        .filter((t) => t.status === "doing")
+        .sort((a, b) => b.touchedAt - a.touchedAt),
     [tasks.tasks],
   );
 
@@ -412,7 +479,12 @@ function App() {
       ) : notice ? (
         <Notice {...notice} onDismiss={dismissNotice} />
       ) : recovery ? (
-        <Notice kind="error" message={recovery} wrap onDismiss={() => setRecoveryDismissed(recovery)} />
+        <Notice
+          kind="error"
+          message={recovery}
+          wrap
+          onDismiss={() => setRecoveryDismissed(recovery)}
+        />
       ) : null}
       <ShortcutsButton onClick={() => setShortcutsOpen(true)} />
     </footer>
@@ -442,129 +514,132 @@ function App() {
           onKeyDownCapture={view !== "search" ? onKeyDownCapture : undefined}
           className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
         >
-          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-            {inSettings ? "" : resultCount}
-          </div>
-          {view === "tasks" ? (
-            <div className="flex h-full flex-col">
-              <div className="min-h-0 flex-1">
-                <TasksView
-                  api={tasks}
-                  focus={focus}
-                  collapseSignal={hiddenSignal}
-                  inputRef={inputRef}
-                  onNotice={showNotice}
-                  onBack={() => setView("search")}
-                  onClose={dismiss}
-                  onDragHeader={dragFromHeader}
-                  pinned={settings?.pinnedBar ?? false}
-                  onTogglePinned={togglePinnedWindow}
-                />
-              </div>
-              {footer}
-            </div>
-          ) : view === "notes" ? (
-            <div className="flex h-full flex-col">
-              <div className="min-h-0 flex-1">
-                <NotesView
-                  api={notes}
-                  inputRef={inputRef}
-                  onNotice={showNotice}
-                  onBack={() => setView("search")}
-                  onClose={dismiss}
-                  onDragHeader={dragFromHeader}
-                  pinned={settings?.pinnedBar ?? false}
-                  onTogglePinned={togglePinnedWindow}
-                />
-              </div>
-              {footer}
-            </div>
-          ) : view === "ask" ? (
-            <div className="flex h-full flex-col">
-              <div className="min-h-0 flex-1">
-                <AskView
-                  api={ask}
-                  inputRef={inputRef}
-                  onNotice={showNotice}
-                  onOpen={setView}
-                  onBack={() => setView("search")}
-                  onClose={dismiss}
-                  onDragHeader={dragFromHeader}
-                  pinned={settings?.pinnedBar ?? false}
-                  onTogglePinned={togglePinnedWindow}
-                />
-              </div>
-              {footer}
-            </div>
-          ) : view === "settings" ? (
-            <div className="flex h-full flex-col">
-              <div className="min-h-0 flex-1">
-                <SettingsView
-                  settings={settings}
-                  stats={stats}
-                  onSave={saveSettings}
-                  themePref={themePref}
-                  onThemeChange={changeTheme}
-                  onClose={() => setView("search")}
-                />
-              </div>
-              {footer}
-            </div>
-          ) : (
-            <ResultList
-              results={s.results}
-              selectedId={s.selectedId}
-              now={s.now}
-              onHover={onHover}
-              onActivate={onActivate}
-              onKeyDownCapture={onKeyDownCapture}
-              header={
-                <div onMouseDown={dragFromHeader}>
-                  <SearchBar
-                    inputRef={inputRef}
-                    query={s.query}
-                    onQueryChange={s.setQuery}
-                    itemCount={stats?.items ?? null}
-                    paused={settings?.paused ?? false}
-                    pinned={settings?.pinnedBar ?? false}
-                    onTogglePinned={togglePinnedWindow}
-                    onDismiss={dismiss}
-                    activeDescendant={s.selectedId === null ? undefined : rowId(s.selectedId)}
-                  />
-                  <TypeFilter
-                    value={s.filter}
-                    onChange={s.setFilter}
-                    trailing={
-                      <div className="flex min-w-0 items-center gap-0.5">
-                        <NotesButton count={notes.notes.length} onClick={() => setView("notes")} />
-                        <TasksButton inFlight={inFlight} onClick={() => setView("tasks")} />
-                      </div>
-                    }
-                  />
-                </div>
-              }
-              empty={
-                s.ready ? (
-                  <EmptyState query={s.query} filter={s.filter} totalItems={stats?.items ?? null} error={s.error} />
-                ) : null
-              }
-              aside={
-                previewOpen ? (
-                  <PreviewPane
-                    result={selected}
-                    preview={preview.preview}
-                    error={preview.error}
-                    ocrHint={stats?.ocrHint ?? ""}
-                    tab={rightTab}
-                    onTabChange={changeTab}
-                    split={split}
-                    onError={(m) => showNotice("error", m)}
-                  />
-                ) : null
-              }
-              footer={footer}
+          <div className="flex h-full flex-col">
+            <TitleBar
+              view={view}
+              onSwitch={setView}
+              pinned={settings?.pinnedBar ?? false}
+              onTogglePinned={togglePinnedWindow}
+              onClose={dismiss}
+              onDrag={dragFromHeader}
+              workingOn={inFlight[0]?.title}
             />
-          )}
+            <div className="min-h-0 flex-1">
+              <div
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="sr-only"
+              >
+                {inSettings ? "" : resultCount}
+              </div>
+              {view === "tasks" ? (
+                <div className="flex h-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <TasksView
+                      api={tasks}
+                      focus={focus}
+                      collapseSignal={hiddenSignal}
+                      inputRef={inputRef}
+                      onNotice={showNotice}
+                      onClose={dismiss}
+                    />
+                  </div>
+                  {footer}
+                </div>
+              ) : view === "notes" ? (
+                <div className="flex h-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <NotesView
+                      api={notes}
+                      inputRef={inputRef}
+                      onNotice={showNotice}
+                      onClose={dismiss}
+                    />
+                  </div>
+                  {footer}
+                </div>
+              ) : view === "ask" ? (
+                <div className="flex h-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <AskView
+                      api={ask}
+                      inputRef={inputRef}
+                      onNotice={showNotice}
+                      onOpen={setView}
+                      onClose={dismiss}
+                    />
+                  </div>
+                  {footer}
+                </div>
+              ) : view === "settings" ? (
+                <div className="flex h-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <SettingsView
+                      settings={settings}
+                      stats={stats}
+                      onSave={saveSettings}
+                      themePref={themePref}
+                      onThemeChange={changeTheme}
+                      onClose={() => setView("search")}
+                    />
+                  </div>
+                  {footer}
+                </div>
+              ) : (
+                <ResultList
+                  results={s.results}
+                  selectedId={s.selectedId}
+                  now={s.now}
+                  onHover={onHover}
+                  onActivate={onActivate}
+                  onKeyDownCapture={onKeyDownCapture}
+                  header={
+                    <div>
+                      <SearchBar
+                        inputRef={inputRef}
+                        query={s.query}
+                        onQueryChange={s.setQuery}
+                        itemCount={stats?.items ?? null}
+                        paused={settings?.paused ?? false}
+                        activeDescendant={
+                          s.selectedId === null
+                            ? undefined
+                            : rowId(s.selectedId)
+                        }
+                      />
+                      <TypeFilter value={s.filter} onChange={s.setFilter} />
+                    </div>
+                  }
+                  empty={
+                    s.ready ? (
+                      <EmptyState
+                        query={s.query}
+                        filter={s.filter}
+                        totalItems={stats?.items ?? null}
+                        error={s.error}
+                      />
+                    ) : null
+                  }
+                  aside={
+                    previewOpen ? (
+                      <PreviewPane
+                        result={selected}
+                        preview={preview.preview}
+                        error={preview.error}
+                        ocrHint={stats?.ocrHint ?? ""}
+                        tab={rightTab}
+                        onTabChange={changeTab}
+                        split={split}
+                        onError={(m) => showNotice("error", m)}
+                      />
+                    ) : null
+                  }
+                  footer={footer}
+                />
+              )}
+            </div>
+          </div>
         </main>
       </div>
       <ShortcutsDialog
@@ -573,7 +648,10 @@ function App() {
         onOpenChange={setShortcutsOpen}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
-          (latest.current.view === "search" ? inputRef : mainRef).current?.focus();
+          (latest.current.view === "search"
+            ? inputRef
+            : mainRef
+          ).current?.focus();
         }}
       />
     </TooltipProvider>
