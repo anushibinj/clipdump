@@ -12,7 +12,7 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Added
 
-- Ask. `Ctrl+/` (or the sparkle button in the search view's filter row) opens a view where one question
+- Ask. The Ask button at the bottom left of the window opens a view where one question
   is answered from your notes, tasks and clipboard history ("what was that thing my manager told me 2
   weeks ago?"), with the LLM server already set up for AI split. No vector database or embeddings: the
   history is small and in memory, so the work is in the steps around the model. (1) The model turns the

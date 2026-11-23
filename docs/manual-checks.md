@@ -1227,8 +1227,8 @@ needs a real window, monitor or LLM has been run.
 - [ ] The API key field never shows the saved key; "Remove saved key" clears it.
 
 ### Ask (needs an LLM server set up in Settings)
-- [ ] `Ctrl+/` opens the Ask view with the question box focused; again (or the Search button, or the
-      sparkle button in the search row) returns. The bar reopens on Ask if that is where it was left.
+- [ ] The bottom-left Ask button opens the Ask view with the question box focused; again (or the Search button) returns.
+      The bar reopens on Ask if that is where it was left. `Ctrl+/` and `Ctrl+?` both open the shortcuts help.
 - [ ] Write a note "Priya (my manager) wants the Q4 report by Friday", copy a text with a date in it, and add
       a task. Ask "what did my manager want?": the answer names the report and Friday, carries a `[1]`
       chip, and the note shows below with the quote highlighted. Clicking the chip scrolls to the card.
