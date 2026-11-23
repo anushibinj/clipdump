@@ -182,11 +182,12 @@ export function search(
   query: string,
   filter: TypeFilter = "all",
   limit?: number,
+  pinnedFirst?: boolean,
 ): Promise<ResultDto[]> {
-  if (!perfOn) return invoke<ResultDto[]>("search", { query, filter, limit });
+  if (!perfOn) return invoke<ResultDto[]>("search", { query, filter, limit, pinnedFirst });
   // `--perf` only: the round trip as the webview sees it (the backend logs its own share).
   const t0 = performance.now();
-  return invoke<ResultDto[]>("search", { query, filter, limit }).then((r) => {
+  return invoke<ResultDto[]>("search", { query, filter, limit, pinnedFirst }).then((r) => {
     perfAck("searchRtt", performance.now() - t0);
     return r;
   });
