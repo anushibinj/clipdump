@@ -12,7 +12,7 @@ interface Shortcut {
 const SHORTCUTS: Shortcut[] = [
   { keys: ["Enter"], label: "Copy (paste if enabled)" },
   { keys: ["Ctrl", "Enter"], label: "Copy" },
-  { keys: ["Ctrl", "1-9"], label: "Copy the Nth result" },
+  { keys: ["Alt", "1-9"], label: "Copy the Nth result" },
   { keys: ["Up / Down"], label: "Move selection" },
   { keys: ["PgUp / PgDn"], label: "Move by a page" },
   { keys: ["Tab"], label: "Switch to tasks" },
@@ -22,7 +22,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "Del"], label: "Delete item" },
   { keys: ["Ctrl", "Shift", "Del"], label: "Clear history" },
   { keys: ["Alt", "Shift", "1-4"], label: "Filter: all, text, images, files" },
-  { keys: ["Alt", "1-3"], label: "Switch mode: clipboard, notes, tasks" },
+  { keys: ["Ctrl", "1-3"], label: "Switch mode: clipboard, notes, tasks" },
   { keys: ["Alt", "/"], label: "Ask (also Alt+?)" },
   { keys: ["Ctrl", "T"], label: "Tasks" },
   { keys: ["Ctrl", "Shift", "N"], label: "Notes" },

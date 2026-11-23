@@ -213,7 +213,7 @@ function App() {
 
   // Whether plain Enter (and a click on a row) also pastes into the window the bar came
   // from: the "Paste on Enter" setting, off until the user turns it on. Ctrl+Enter and
-  // Ctrl+1..9 never paste. Read through `latest` so the callbacks below stay stable.
+  // Alt+1..9 never paste. Read through `latest` so the callbacks below stay stable.
   const pasteOnEnter = () => latest.current.settings?.autoPasteOnEnter ?? false;
 
   const copy = useCallback(
@@ -338,7 +338,7 @@ function App() {
           setView((v) => (v === "notes" ? "search" : "notes"));
           break;
         case "switchMode":
-          // Alt+1..N: straight to a mode (`MODE_ORDER`); pressing the current one stays put.
+          // Ctrl+1..N: straight to a mode (`MODE_ORDER`); pressing the current one stays put.
           disarm();
           setView(a.view);
           break;

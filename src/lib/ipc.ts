@@ -97,7 +97,7 @@ export interface SettingsDto {
   /** 0 turns the RAM cache off. */
   ramCacheBytes: number;
   ocrEnabled: boolean;
-  /** Enter copies and pastes into the window the bar came from; Ctrl+Enter and Ctrl+1..9 only copy. */
+  /** Enter copies and pastes into the window the bar came from; Ctrl+Enter and Alt+1..9 only copy. */
   autoPasteOnEnter: boolean;
   /** Keep the bar visible; it does not hide on blur. */
   pinnedBar: boolean;
