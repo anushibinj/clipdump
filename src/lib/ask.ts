@@ -38,13 +38,14 @@ export function splitAnswer(answer: string, hits: readonly Pick<AskHit, "n">[]):
 
 /**
  * Where `quote` sits in `excerpt` as `[start, end)` UTF-16 offsets, or null. The backend verified the
- * quote with whitespace and case ignored, so the match does the same: the words of the quote joined by
- * any run of whitespace, case insensitive.
+ * quote with case, whitespace and punctuation ignored, so the match does the same: the quote's words
+ * (letters and digits) joined by any run of other characters, case insensitive. The range runs from
+ * the first word to the last, so surrounding punctuation is not part of the highlight.
  */
 export function quoteRange(excerpt: string, quote: string): [number, number] | null {
-  const words = quote.split(/\s+/).filter((w) => w !== "");
+  const words = quote.split(/[^\p{L}\p{N}]+/u).filter((w) => w !== "");
   if (words.length === 0) return null;
-  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\p{L}\\p{N}]+"), "iu");
   const m = re.exec(excerpt);
   return m ? [m.index, m.index + m[0].length] : null;
 }

@@ -33,10 +33,16 @@ describe("quoteRange", () => {
     expect(r && text.slice(r[0], r[1])).toBe("Q4 report\nby   Friday");
   });
 
+  it("ignores punctuation differences and leaves the quote's own edge punctuation out", () => {
+    const text = "Priya wants the Q4 report, by Friday!";
+    const r = quoteRange(text, "“wants the Q4 report by Friday.”");
+    expect(r && text.slice(r[0], r[1])).toBe("wants the Q4 report, by Friday");
+  });
+
   it("treats regex characters in the quote literally", () => {
     const text = "total (approx.) is $5+3 [maybe]";
     const r = quoteRange(text, "(approx.) is $5+3 [maybe]");
-    expect(r && text.slice(r[0], r[1])).toBe("(approx.) is $5+3 [maybe]");
+    expect(r && text.slice(r[0], r[1])).toBe("approx.) is $5+3 [maybe");
     expect(quoteRange("abc", "a.c")).toBeNull();
   });
 
