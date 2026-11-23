@@ -284,10 +284,6 @@ function App() {
           disarm();
           setView((v) => (v === "notes" ? "search" : "notes"));
           break;
-        case "toggleAsk":
-          disarm();
-          setView((v) => (v === "ask" ? "search" : "ask"));
-          break;
         case "escape":
           // Layers, innermost first: pending confirmation, settings, the recovery notice (the
           // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is

@@ -110,7 +110,7 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k("?", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
     expect(r(k("/", { ctrlKey: true, shiftKey: true, code: "Slash" }))).toEqual({ type: "toggleShortcuts" });
     expect(r(k("?", { shiftKey: true, code: "Slash" }))).toBeNull();
-    expect(r(k("/", ctrl))).toEqual({ type: "toggleAsk" }); // Ctrl+/ without Shift is the Ask view
+    expect(r(k("/", ctrl))).toEqual({ type: "toggleShortcuts" }); // Ctrl+/ works too: no Shift needed
   });
 
   it("ignores IME composition and the meta key", () => {
@@ -173,18 +173,15 @@ describe("Ctrl+Shift+N and the notes view", () => {
   });
 });
 
-describe("Ctrl+/ and the ask view", () => {
-  it("Ctrl+/ toggles ask from every view, by character or by the physical key", () => {
+describe("Ctrl+/ and Ctrl+?", () => {
+  it("Ctrl+/ and Ctrl+? both open the shortcuts help from every view", () => {
     for (const v of ["search", "tasks", "notes", "ask", "settings"] as const) {
-      expect(resolveShortcut(k("/", ctrl), v)).toEqual({ type: "toggleAsk" });
-      expect(resolveShortcut({ ...k("-", ctrl), code: "Slash" }, v)).toEqual({ type: "toggleAsk" });
+      expect(resolveShortcut(k("/", ctrl), v)).toEqual({ type: "toggleShortcuts" });
+      expect(resolveShortcut({ ...k("-", ctrl), code: "Slash" }, v)).toEqual({ type: "toggleShortcuts" });
+      expect(resolveShortcut(k("?", { ...ctrl, shiftKey: true }), v)).toEqual({ type: "toggleShortcuts" });
     }
   });
-  it("Ctrl+? stays the shortcuts help and a bare slash stays typing", () => {
-    expect(resolveShortcut(k("?", { ...ctrl, shiftKey: true }), "ask")).toEqual({ type: "toggleShortcuts" });
-    expect(resolveShortcut({ ...k("?", { ...ctrl, shiftKey: true }), code: "Slash" }, "search")).toEqual({
-      type: "toggleShortcuts",
-    });
+  it("a bare slash stays typing", () => {
     expect(resolveShortcut(k("/"), "search")).toBeNull();
     expect(resolveShortcut(k("/"), "ask")).toBeNull();
   });

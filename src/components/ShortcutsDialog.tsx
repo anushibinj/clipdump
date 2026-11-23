@@ -23,7 +23,6 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Alt", "1-4"], label: "Filter: all, text, images, files" },
   { keys: ["Ctrl", "T"], label: "Tasks" },
   { keys: ["Ctrl", "Shift", "N"], label: "Notes" },
-  { keys: ["Ctrl", "/"], label: "Ask a question across notes, tasks and clipboard" },
   { keys: ["Ctrl", ","], label: "Settings" },
   { keys: ["Ctrl", "?"], label: "This help" },
   { keys: ["Esc"], label: "Close" },
@@ -71,7 +70,6 @@ const NOTE_SHORTCUTS: Shortcut[] = [
 
 const ASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Enter"], label: "Ask the question" },
-  { keys: ["Ctrl", "/"], label: "Open Ask, or back to the clipboard search" },
   { keys: ["Esc"], label: "Clear the text, then the answer, then close" },
 ];
 

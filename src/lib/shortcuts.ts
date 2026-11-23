@@ -37,8 +37,6 @@ export type Action =
   | { type: "toggleTasks" }
   /** Ctrl+Shift+N: between the clipboard search and the notes. */
   | { type: "toggleNotes" }
-  /** Ctrl+/: between the clipboard search and "Ask" (a question answered from everything). */
-  | { type: "toggleAsk" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -75,8 +73,9 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && !alt && !shift && (e.key === "," || e.code === "Comma")) {
     return { type: "toggleSettings" };
   }
-  // Ctrl+? (Ctrl+Shift+/ on a US layout). Matched by character or by the physical slash key.
-  if (ctrl && !alt && (e.key === "?" || (shift && e.code === "Slash"))) {
+  // Ctrl+/ or Ctrl+? (Ctrl+Shift+/ on a US layout): either way, no Shift needed. Matched by
+  // character or by the physical slash key.
+  if (ctrl && !alt && (e.key === "?" || e.key === "/" || e.code === "Slash")) {
     return { type: "toggleShortcuts" };
   }
   if (ctrl && !alt && !shift && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
@@ -99,12 +98,8 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && shift && !alt && (e.code === "KeyN" || e.key.toLowerCase() === "n")) {
     return { type: "toggleNotes" };
   }
-  // Ctrl+/, not Ctrl+?: that one (Ctrl+Shift+/) is the shortcuts help.
-  if (ctrl && !alt && !shift && (e.key === "/" || e.code === "Slash")) {
-    return { type: "toggleAsk" };
-  }
   // The settings, task, notes and ask views have their own fields and keys: only Esc, Ctrl+, Ctrl+?,
-  // Ctrl+T, Tab (tasks), Ctrl+Shift+N and Ctrl+/ act here.
+  // Ctrl+T, Tab (tasks) and Ctrl+Shift+N act here.
   if (view !== "search") return null;
 
   const d = digit(e);

@@ -13,8 +13,8 @@ export const AskButton = memo(function AskButton({ active, onClick }: AskButtonP
     <button
       type="button"
       tabIndex={-1}
-      title={active ? "Back to the clipboard search (Ctrl+/)" : "Ask your notes, tasks and clipboard (Ctrl+/)"}
-      aria-label="Ask (Ctrl+/)"
+      title={active ? "Back to the clipboard search" : "Ask your notes, tasks and clipboard"}
+      aria-label="Ask"
       aria-pressed={active}
       // Keep the caret in the search input.
       onMouseDown={(e) => e.preventDefault()}

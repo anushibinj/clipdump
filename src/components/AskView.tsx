@@ -113,7 +113,7 @@ export function AskView({
               variant="ghost"
               size="xs"
               tabIndex={-1}
-              title="Back to clipboard search (Ctrl+/)"
+              title="Back to clipboard search"
               onMouseDown={(e) => e.preventDefault()}
               onClick={onBack}
               className="gap-1.5 text-muted-foreground"
