@@ -829,6 +829,7 @@ export function TasksView({
             draftRequest={draftTick}
             onUnlink={unlink}
             onFail={fail}
+            onSplitCreated={api.refresh}
           />
         )}
       </div>

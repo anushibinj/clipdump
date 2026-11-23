@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Copy, Loader2, Paperclip, Sparkles, Unlink, X } from "lucide-react";
+import { SplitTaskPanel } from "@/components/SplitTaskPanel";
 import { Button } from "@/components/ui/button";
 import { copyItem, draftResumeNote, errorMessage, getClips, type ClipRef, type Task } from "@/lib/ipc";
 import { createLatest } from "@/lib/latest";
@@ -24,6 +25,8 @@ interface TaskNotesProps {
   onUnlink: (taskId: number, clipId: number) => void;
   /** A copy or a draft failed: say so in the bar's notice. */
   onFail: (e: unknown) => void;
+  /** Tasks were created from the notes: reload the list. */
+  onSplitCreated: () => void;
 }
 
 /**
@@ -40,6 +43,7 @@ export function TaskNotes({
   draftRequest,
   onUnlink,
   onFail,
+  onSplitCreated,
 }: TaskNotesProps) {
   const [text, setText] = useState(task.note);
   // The assistant's draft of "where I left off": shown for the person to take or leave, never saved by itself.
@@ -223,6 +227,12 @@ export function TaskNotes({
           </Button>
         </div>
       )}
+      <SplitTaskPanel
+        taskId={task.id}
+        hasNotes={text.trim().length > 0}
+        onCreated={onSplitCreated}
+        onFail={onFail}
+      />
       {clips.length > 0 && (
         <div className="border-t px-3 py-2" aria-label="Linked clipboard items">
           <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
