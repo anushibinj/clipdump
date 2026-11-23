@@ -8,14 +8,21 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-23
+
 ### Added
 
 - "Split work with AI" under a task's notes: the assistant proposes tasks from what the notes say, each with a
   checkmark and an editable title and note; only the ticked ones are created.
+- The main window can be resized, and the zoom hotkeys work in it.
+- When the window is narrow, the preview pane stacks under the results instead of squeezing them.
+- Tiny clipboard: the popup loads the last 50 items in recency order (pinned ones first) and scrolls
+  through them, with 3 rows visible at a time.
 
 ### Changed
 
 - Hovering a task or a clipboard result no longer moves the selection; click to select (a click on a result still copies it).
+- Search: the empty query can list pinned items in recency order (`pinned_first`), used by the tiny clipboard.
 
 ## [0.5.1] - 2026-11-23
 
