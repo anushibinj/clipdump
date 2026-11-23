@@ -46,8 +46,8 @@ describe("resolveShortcut in the search view", () => {
     expect(r(k("0", ctrl))).toBeNull();
   });
 
-  it("Alt+1..4 pick the filters in order, Alt+5 is nothing", () => {
-    const alt = { altKey: true };
+  it("Alt+Shift+1..4 pick the filters in order, Alt+Shift+5 is nothing", () => {
+    const alt = { altKey: true, shiftKey: true };
     expect(r(k("1", alt))).toEqual({ type: "filter", filter: "all" });
     expect(r(k("2", alt))).toEqual({ type: "filter", filter: "text" });
     expect(r(k("3", alt))).toEqual({ type: "filter", filter: "images" });
@@ -56,7 +56,7 @@ describe("resolveShortcut in the search view", () => {
   });
 
   it("uses the physical key, so Alt+digit works when the layout makes another character", () => {
-    expect(r({ ...k("¡", { altKey: true }), code: "Digit1" })).toEqual({
+    expect(r({ ...k("¡", { altKey: true, shiftKey: true }), code: "Digit1" })).toEqual({
       type: "filter",
       filter: "all",
     });
@@ -133,7 +133,7 @@ describe("resolveShortcut in the settings view", () => {
     expect(r(k("Escape"))).toEqual({ type: "escape" });
     expect(r(k(",", ctrl))).toEqual({ type: "toggleSettings" });
     expect(r(k("Enter", ctrl))).toBeNull();
-    expect(r(k("1", { altKey: true }))).toBeNull();
+    expect(r(k("1", { altKey: true }))).toEqual({ type: "switchMode", view: "search" });
     expect(r(k("Delete", ctrl))).toBeNull();
     expect(r(k("ArrowDown"))).toBeNull();
     expect(r(k("Tab"))).toBeNull();
@@ -191,5 +191,27 @@ describe("Ctrl+/ and Ctrl+?", () => {
     expect(resolveShortcut(k("Enter", ctrl), "ask")).toBeNull();
     expect(resolveShortcut(k("Tab"), "ask")).toBeNull();
     expect(resolveShortcut(k("t", ctrl), "ask")).toEqual({ type: "toggleTasks" });
+  });
+});
+
+describe("Alt+digit switches the app mode", () => {
+  const alt = { altKey: true };
+  it("Alt+1 clipboard, Alt+2 notes, Alt+3 tasks, from every view", () => {
+    for (const view of ["search", "notes", "tasks", "ask", "settings"] as const) {
+      const r = (e: KeyInfo) => resolveShortcut(e, view);
+      expect(r(k("1", alt))).toEqual({ type: "switchMode", view: "search" });
+      expect(r(k("2", alt))).toEqual({ type: "switchMode", view: "notes" });
+      expect(r(k("3", alt))).toEqual({ type: "switchMode", view: "tasks" });
+    }
+  });
+  it("numbers past the last mode do nothing, and Ctrl+Alt+digit is not a mode switch", () => {
+    expect(resolveShortcut(k("4", alt), "search")).toBeNull();
+    expect(resolveShortcut(k("1", { altKey: true, ctrlKey: true }), "search")).toBeNull();
+  });
+  it("uses the physical key", () => {
+    expect(resolveShortcut({ ...k("¡", alt), code: "Digit1" }, "tasks")).toEqual({
+      type: "switchMode",
+      view: "search",
+    });
   });
 });
