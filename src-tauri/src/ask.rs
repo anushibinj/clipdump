@@ -70,6 +70,50 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 pub const NOT_FOUND: &str = "I could not find that in your notes, tasks or clipboard history.";
 const BAD_REPLY: &str = "the model did not answer in the expected form";
 
+/// Earlier turns of the conversation passed along at most.
+pub const MAX_TURNS: usize = 3;
+/// Characters of an earlier question and of an earlier answer.
+const TURN_QUESTION_CHARS: usize = 300;
+const TURN_ANSWER_CHARS: usize = 600;
+
+/// One earlier question and the answer it got (empty when nothing was found).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Turn {
+    pub question: String,
+    #[serde(default)]
+    pub answer: String,
+}
+
+/// The last [`MAX_TURNS`] turns as text for a prompt, or "" without any. The answers' `[n]`
+/// markers are removed: those numbers belonged to another search's items and mean nothing now.
+/// It goes inside the data block: a past answer may repeat what a clipboard item said.
+fn history_block(history: &[Turn]) -> String {
+    let start = history.len().saturating_sub(MAX_TURNS);
+    let turns = &history[start..];
+    if turns.iter().all(|t| t.question.trim().is_empty()) {
+        return String::new();
+    }
+    let squash = |s: &str, max: usize| {
+        clip_to(&s.split_whitespace().collect::<Vec<_>>().join(" "), max).to_owned()
+    };
+    let mut out = String::from(
+        "Earlier in this conversation (context for understanding the question; these are not items and are never a source):\n",
+    );
+    for t in turns.iter().filter(|t| !t.question.trim().is_empty()) {
+        out.push_str("Q: ");
+        out.push_str(&squash(&t.question, TURN_QUESTION_CHARS));
+        out.push('\n');
+        let answer = strip_unverified_markers(&t.answer, &[]);
+        if !answer.trim().is_empty() {
+            out.push_str("A: ");
+            out.push_str(&squash(&answer, TURN_ANSWER_CHARS));
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
+
 /// Where an item came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -442,17 +486,19 @@ pub fn plan(
     question: &str,
     now: i64,
 ) -> Result<Plan, String> {
-    plan_avoiding(cfg, http, question, now, &[])
+    plan_in_context(cfg, http, question, now, &[], &[])
 }
 
-/// [`plan`] for a second try: `tried` are the search words that found nothing, so the model
-/// is told to come up with different wording and a wider range instead of the same plan.
-fn plan_avoiding(
+/// [`plan`] with what came before: `tried` are the search words that found nothing (the model
+/// is told to come up with different wording and a wider range instead of the same plan) and
+/// `history` the earlier turns, which a follow-up ("and who else was there?") leans on.
+fn plan_in_context(
     cfg: &LlmConfig,
     http: &dyn HttpPost,
     question: &str,
     now: i64,
     tried: &[String],
+    history: &[Turn],
 ) -> Result<Plan, String> {
     let mut system = String::from(PLAN_PROMPT);
     if !tried.is_empty() {
@@ -468,8 +514,18 @@ unless the question is clear about the time.",
     system.push(' ');
     system.push_str(&ymd(now));
     system.push_str(".\n");
+    let context = history_block(history);
+    if !context.is_empty() {
+        system.push_str(
+            "\nThe question may be a follow-up (\"and who else?\", \"that one\"): use the earlier conversation to work out what it means in full, and plan the search for that.",
+        );
+    }
     system.push_str(DATA_RULE);
     let mut user = String::from("<data>\n");
+    if !context.is_empty() {
+        user.push_str(&context);
+        user.push_str("New question: ");
+    }
     user.push_str(clip_to(question.trim(), MAX_QUESTION_CHARS));
     user.push_str("\n</data>");
     let reply = complete(cfg, http, &system, &user, 0.0)?;
@@ -904,10 +960,11 @@ fn open_hits(hits: &mut [Hit], ns: &[usize], candidates: &[Candidate]) -> usize 
 /// The prompt's user part: question and numbered excerpts, as many as fit [`PROMPT_CHARS`].
 /// Hits that do not fit are removed from `hits`, so the numbers the model sees are the
 /// positions in `hits`.
-fn answer_prompt(question: &str, hits: &mut Vec<Hit>) -> String {
+fn answer_prompt(question: &str, hits: &mut Vec<Hit>, history: &[Turn]) -> String {
     let mut user = String::from("Question: ");
     user.push_str(&question.split_whitespace().collect::<Vec<_>>().join(" "));
     user.push_str("\n<data>\n");
+    user.push_str(&history_block(history));
     let mut kept = 0;
     let mut used = 0;
     for (i, h) in hits.iter().enumerate() {
@@ -969,6 +1026,8 @@ pub struct Searched {
 /// What Ask is given besides the question.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
+    /// Earlier turns of this conversation, oldest first; only the last [`MAX_TURNS`] are used.
+    pub history: Vec<Turn>,
     /// Items nearest in meaning to the question, nearest first; empty when semantic search is
     /// off or its server could not embed.
     pub semantic: Vec<(Source, u64)>,
@@ -1001,7 +1060,7 @@ pub fn ask_with(
     if question.is_empty() {
         return Err("type a question first".to_owned());
     }
-    let mut plan = plan(cfg, http, question, now)?;
+    let mut plan = plan_in_context(cfg, http, question, now, &[], &options.history)?;
     let mut hits = retrieve_with(question, &plan, candidates, &options.semantic);
     let mut searched = Searched {
         from: plan.shown.as_ref().map(|(a, _)| a.clone()),
@@ -1029,7 +1088,7 @@ pub fn ask_with(
     };
     if hits.is_empty() {
         // Nothing matched the first wording: one more try, told which words failed.
-        plan = plan_avoiding(cfg, http, question, now, &plan.terms)?;
+        plan = plan_in_context(cfg, http, question, now, &plan.terms, &options.history)?;
         hits = retrieve_with(question, &plan, candidates, &options.semantic);
         searched.rounds += 1;
         note_terms(&mut searched, &plan);
@@ -1042,7 +1101,7 @@ pub fn ask_with(
     }
     let mut more_left = MAX_MORE_ROUNDS;
     let answer = loop {
-        let user = answer_prompt(question, &mut hits);
+        let user = answer_prompt(question, &mut hits, &options.history);
         let mut system = String::from(ANSWER_PROMPT);
         system.push_str(if more_left > 0 { MORE_RULE } else { LAST_RULE });
         system.push_str("\nToday is ");

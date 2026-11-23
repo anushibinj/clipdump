@@ -614,7 +614,7 @@ fn the_prompt_is_bounded_and_numbers_match_what_was_sent() {
         .collect();
     let mut hits = retrieve("manager", &fallback_plan(), &many);
     assert_eq!(hits.len(), MAX_SNIPPETS);
-    let user = answer_prompt("manager", &mut hits);
+    let user = answer_prompt("manager", &mut hits, &[]);
     assert!(hits.len() < MAX_SNIPPETS, "25 big excerpts do not fit");
     assert!(user.chars().count() < PROMPT_CHARS + 600);
     assert!(user.contains(&format!("[{}] note", hits.len())));
@@ -720,6 +720,7 @@ fn the_answer_says_whether_meaning_was_used() {
     ];
     let opts = Options {
         semantic: vec![(Source::Note, 1)],
+        ..Options::default()
     };
     let got = ask_with(
         &cfg(),
@@ -879,4 +880,69 @@ fn merging_skips_known_items_and_numbers_the_rest_after_the_old_ones() {
     assert_eq!(merge_hits(&mut hits, vec![dup, fresh]), 1);
     assert_eq!(hits.len(), 3);
     assert_eq!((hits[2].n, hits[2].id), (3, 99));
+}
+
+// --- follow-ups ------------------------------------------------------------
+
+fn turn(q: &str, a: &str) -> Turn {
+    Turn {
+        question: q.into(),
+        answer: a.into(),
+    }
+}
+
+#[test]
+fn history_goes_into_the_data_block_without_the_old_numbers() {
+    let block = history_block(&[turn("who is my manager?", "Priya [3] and Sam [12].")]);
+    assert!(block.contains("Q: who is my manager?\nA: Priya and Sam.\n"));
+    assert!(!block.contains('['));
+    assert!(block.contains("never a source"));
+    assert_eq!(history_block(&[]), "");
+    assert_eq!(history_block(&[turn("  ", "x")]), "");
+}
+
+#[test]
+fn only_the_last_turns_are_kept_and_each_is_bounded() {
+    let turns: Vec<Turn> = (0..5).map(|i| turn(&format!("question {i}"), "")).collect();
+    let block = history_block(&turns);
+    assert!(!block.contains("question 0") && !block.contains("question 1"));
+    assert!(block.contains("question 2") && block.contains("question 4"));
+    assert!(!block.contains("A: "), "no answer, no answer line");
+    let long = history_block(&[turn(&"q".repeat(1000), &"a".repeat(2000))]);
+    assert!(long.chars().count() < 1200);
+}
+
+#[test]
+fn a_follow_up_is_planned_and_answered_with_the_earlier_turns() {
+    let http = Seq::new(&[
+        r#"{"terms":["manager","report"]}"#,
+        r#"{"found":true,"answer":"Priya [1].","sources":[{"n":1,"quote":"Priya (my manager) wants"}]}"#,
+    ]);
+    let opts = Options {
+        history: vec![turn("what did my manager want?", "The Q4 report [1].")],
+        ..Options::default()
+    };
+    let got = ask_with(&cfg(), &http, "and who was it?", now(), &corpus(), &opts).unwrap();
+    assert!(got.found, "{got:?}");
+    let plan_user = http.user(0);
+    assert!(plan_user.starts_with("<data>\nEarlier in this conversation"));
+    assert!(plan_user.contains("A: The Q4 report.\n"));
+    assert!(plan_user.ends_with("New question: and who was it?\n</data>"));
+    assert!(http.system(0).contains("follow-up"));
+    let answer_user = http.user(1);
+    assert!(answer_user.contains("Q: what did my manager want?"));
+    let history_at = answer_user.find("Earlier in this conversation").unwrap();
+    assert!(
+        history_at > answer_user.find("<data>").unwrap(),
+        "inside the data block"
+    );
+    assert!(history_at < answer_user.find("[1] note").unwrap());
+}
+
+#[test]
+fn without_history_the_prompts_are_what_they_were() {
+    let http = Seq::new(&[r#"{"terms":["boss"]}"#]);
+    plan(&cfg(), &http, "boss", now()).unwrap();
+    assert_eq!(http.user(0), "<data>\nboss\n</data>");
+    assert!(!http.system(0).contains("follow-up"));
 }
