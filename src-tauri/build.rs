@@ -31,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "task_digest",
     "suggest_task_links",
     "extract_tasks",
+    "split_task_notes",
     "review_stale_tasks",
     "get_clips",
     "ask_everything",

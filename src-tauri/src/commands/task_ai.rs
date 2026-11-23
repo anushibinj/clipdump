@@ -88,6 +88,15 @@ pub struct ExtractDto {
     pub tasks: Vec<ExtractedDto>,
 }
 
+/// A task proposed from the notes of another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitTaskDto {
+    pub title: String,
+    pub note: String,
+    pub important: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerdictDto {
@@ -356,6 +365,31 @@ pub fn extract(
     })
 }
 
+/// Tasks proposed from the notes of task `id`. Nothing is created: the person picks.
+pub fn split_notes(
+    store: &TaskStore,
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    id: u64,
+) -> Result<Vec<SplitTaskDto>, String> {
+    let task = store
+        .list()
+        .into_iter()
+        .find(|t| t.id == id)
+        .ok_or("task not found")?;
+    if task.note.trim().is_empty() {
+        return Err("write some notes on this task first".to_owned());
+    }
+    Ok(taskai::split_task(cfg, http, &task)?
+        .into_iter()
+        .map(|t| SplitTaskDto {
+            title: t.title,
+            note: t.note,
+            important: t.important,
+        })
+        .collect())
+}
+
 /// A verdict for each open task in `ids` (a done or unknown id is ignored).
 pub fn review(
     store: &TaskStore,
@@ -535,6 +569,12 @@ pub fn extract_tasks(app: AppHandle, text: Option<String>) -> Result<ExtractDto,
         &UreqHttp,
         text,
     )
+}
+
+/// Tasks proposed from the notes of task `id`, to be picked and edited before they are created.
+#[tauri::command(async)]
+pub fn split_task_notes(app: AppHandle, id: u64) -> Result<Vec<SplitTaskDto>, String> {
+    split_notes(tasks(&app)?.as_ref(), &config(&app)?, &UreqHttp, id)
 }
 
 /// What to do about each of the quiet tasks in `ids`: do it, defer it or drop it.

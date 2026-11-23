@@ -846,6 +846,95 @@ pub fn extract_tasks(
 }
 
 // ---------------------------------------------------------------------------
+// Splitting one task by its notes
+// ---------------------------------------------------------------------------
+
+/// Tasks proposed from one task's notes at most.
+pub const MAX_SPLIT: usize = 10;
+/// Notes shorter than this (trimmed, characters) are not worth a call.
+pub const MIN_SPLIT_CHARS: usize = 15;
+
+/// A task proposed from the notes of another: a title and the part of the notes that belongs to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SplitTask {
+    pub title: String,
+    pub note: String,
+    pub important: bool,
+}
+
+const SPLIT_PROMPT: &str = "You split one to-do item into separate smaller tasks, using the notes the person wrote on it.\n\
+Reply with JSON only, no prose, in exactly this shape: {\"tasks\":[{\"title\":\"<short imperative>\",\"note\":\"<what the notes say about it>\",\"important\":<true|false>}]}\n\
+Rules:\n\
+- One task per distinct piece of work the notes describe, in the order they appear.\n\
+- Each title is a short imperative phrase of at most 12 words.\n\
+- \"note\" is the part of the notes that belongs to that task, kept brief; \"\" when there is nothing more to say.\n\
+- \"important\" is true only for something urgent or with a near deadline.\n\
+- If the notes describe a single piece of work, or nothing to split, reply {\"tasks\":[]}.\n\
+- Do not invent work, names or dates that are not in the notes.";
+
+#[derive(Deserialize)]
+struct RawSplit {
+    #[serde(default)]
+    tasks: Vec<RawSplitTask>,
+}
+
+#[derive(Deserialize)]
+struct RawSplitTask {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    note: String,
+    #[serde(default)]
+    important: bool,
+}
+
+/// The model's tasks as ones the store accepts: one-line titles within the limit, notes within
+/// theirs, none empty or repeated, at most [`MAX_SPLIT`].
+pub fn parse_split(reply: &str) -> Result<Vec<SplitTask>, String> {
+    let raw: RawSplit = parse(reply)?;
+    let mut out: Vec<SplitTask> = Vec::new();
+    for t in raw.tasks {
+        let title = short_text(&t.title, MAX_TITLE_CHARS);
+        if title.is_empty() || out.iter().any(|o| same_task(&o.title, &title)) {
+            continue;
+        }
+        out.push(SplitTask {
+            title,
+            note: clip_to(t.note.trim(), MAX_NOTE_CHARS).to_owned(),
+            important: t.important,
+        });
+        if out.len() == MAX_SPLIT {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Propose tasks from the notes of `task`. Notes too short to split need no server.
+pub fn split_task(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    task: &Task,
+) -> Result<Vec<SplitTask>, String> {
+    if task.note.trim().chars().count() < MIN_SPLIT_CHARS {
+        return Ok(Vec::new());
+    }
+    let mut user = String::new();
+    put(
+        &mut user,
+        &[
+            "Task: ",
+            &one_line(&task.title, LINE_CHARS),
+            "\n<data>\n",
+            clip_to(task.note.trim(), crate::llm::MAX_INPUT_CHARS),
+            "\n</data>",
+        ],
+    );
+    let system = format!("{SPLIT_PROMPT}\n{DATA_RULE}");
+    parse_split(&complete(cfg, http, &system, &user, 0.0)?)
+}
+
+// ---------------------------------------------------------------------------
 // Tasks that have gone quiet
 // ---------------------------------------------------------------------------
 
@@ -1522,6 +1611,40 @@ mod tests {
         let long = "a ".repeat(crate::llm::MAX_INPUT_CHARS);
         extract_tasks(&cfg(), &http, &long, &[]).unwrap();
         assert!(http.user_text().chars().count() <= crate::llm::MAX_INPUT_CHARS + 20);
+    }
+
+    #[test]
+    fn split_tasks_are_clean_unique_and_bounded_and_the_notes_go_as_data() {
+        let reply = r#"{"tasks":[
+            {"title":"  Book the venue ","note":" call Dana ","important":true},
+            {"title":"book the venue","note":"dup"},
+            {"title":"   ","note":"empty"},
+            {"title":"Send invites"}]}"#;
+        let got = parse_split(reply).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].title, "Book the venue");
+        assert_eq!(got[0].note, "call Dana");
+        assert!(got[0].important);
+        assert_eq!(got[1].note, "");
+        let many = format!(
+            r#"{{"tasks":[{}]}}"#,
+            (0..30)
+                .map(|i| format!(r#"{{"title":"unique{i}x"}}"#))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert_eq!(parse_split(&many).unwrap().len(), MAX_SPLIT);
+        assert!(parse_split("nothing").is_err());
+
+        let mut t = task(1, "Plan the party");
+        t.note = "Book the venue. Send invites to everyone.".into();
+        let http = Fake::answering(r#"{"tasks":[{"title":"Book the venue"}]}"#);
+        assert_eq!(split_task(&cfg(), &http, &t).unwrap().len(), 1);
+        assert!(http.user_text().contains("<data>\nBook the venue."));
+        t.note = "short".into();
+        let down = Fake::answering("unused");
+        assert!(split_task(&cfg(), &down, &t).unwrap().is_empty());
+        assert!(down.seen.borrow().is_empty());
     }
 
     #[test]

@@ -36,6 +36,7 @@
     "allow-task-digest",
     "allow-suggest-task-links",
     "allow-extract-tasks",
+    "allow-split-task-notes",
     "allow-review-stale-tasks",
     "allow-get-clips",
     "allow-ask-everything",
