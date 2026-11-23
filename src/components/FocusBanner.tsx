@@ -100,7 +100,7 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes }:
 
       <div className="flex gap-2">
         <div className="flex min-w-0 basis-[70%]">{notes}</div>
-        <div className="flex basis-[30%] flex-col items-stretch justify-start gap-2 rounded-md border bg-background/60 p-3">
+        <div className="flex basis-[30%] flex-col items-center justify-center gap-2 rounded-md border bg-background/60 p-3">
         <span
           className="text-center text-3xl font-semibold tabular-nums"
           role="timer"

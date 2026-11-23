@@ -795,7 +795,7 @@ export function TasksView({
           aria-expanded={showOthers}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => setShowOthers((v) => !v)}
-          className="flex shrink-0 items-center gap-1.5 border-b px-4 py-2 text-left text-xs text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground"
+          className={`flex shrink-0 items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground ${showOthers ? "border-b" : "mt-auto border-t"}`}
         >
           <ChevronRight className={`size-3.5 transition-transform ${showOthers ? "rotate-90" : ""}`} aria-hidden />
           {showOthers ? "Hide" : "Show"} remaining tasks ({view.rows.length - 1})
