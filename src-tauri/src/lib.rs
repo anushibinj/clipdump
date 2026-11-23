@@ -21,6 +21,8 @@ mod ocr;
 pub mod model;
 // Opened by `start_ingest`; some queries are used only by later phases.
 mod pause;
+// The Ctrl-twice popup: a tiny clipboard search next to the text cursor.
+mod quick;
 // `--perf` timing log, its summary table and the process memory reader (Phase 14).
 mod perf;
 #[allow(dead_code)]
