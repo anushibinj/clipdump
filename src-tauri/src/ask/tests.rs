@@ -479,6 +479,35 @@ fn one_good_source_carries_the_answer_and_bad_markers_are_stripped() {
 }
 
 #[test]
+fn a_quote_differing_only_in_punctuation_still_verifies() {
+    let mut hits = two_hits();
+    let reply = r#"{"found":true,"answer":"Priya wants the report [2].","sources":[{"n":2,"quote":"Priya wants the Q4 report, by Friday!"}]}"#;
+    assert_eq!(
+        parse_answer(reply, &mut hits).unwrap(),
+        "Priya wants the report [2]."
+    );
+    assert!(hits[0].cited && hits[0].quote.is_some());
+}
+
+#[test]
+fn a_summary_may_cite_items_without_a_quote_but_a_fact_may_not() {
+    let summary = r#"{"found":true,"kind":"summary","answer":"A lunch plan [1] and a report due [2].","sources":[{"n":1,"quote":""},{"n":2,"quote":"not in the text"}]}"#;
+    let mut hits = two_hits();
+    assert_eq!(
+        parse_answer(summary, &mut hits).unwrap(),
+        "A lunch plan [1] and a report due [2]."
+    );
+    assert_eq!(hits.iter().filter(|h| h.cited).count(), 2);
+    assert!(hits.iter().all(|h| h.quote.is_none()));
+    // A summary still cannot cite an item that does not exist.
+    let ghost = r#"{"found":true,"kind":"summary","answer":"x [9]","sources":[{"n":9}]}"#;
+    assert_eq!(parse_answer(ghost, &mut two_hits()).unwrap(), "");
+    // The same quoteless citation as a fact is a guess.
+    let fact = summary.replace("summary", "fact");
+    assert_eq!(parse_answer(&fact, &mut two_hits()).unwrap(), "");
+}
+
+#[test]
 fn markers_that_are_not_numbers_stay() {
     assert_eq!(
         strip_unverified_markers("see [note] and [1] and [2]", &[1]),

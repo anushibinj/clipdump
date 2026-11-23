@@ -46,17 +46,17 @@ const MAX_TERMS: usize = 30;
 /// Longest search word kept (characters).
 const MAX_TERM_CHARS: usize = 40;
 /// Excerpts sent to the model at most.
-pub const MAX_SNIPPETS: usize = 25;
+pub const MAX_SNIPPETS: usize = 40;
 /// Characters of one excerpt.
-pub const SNIPPET_CHARS: usize = 600;
+pub const SNIPPET_CHARS: usize = 1_000;
 /// Characters of all excerpts together; later (lower ranked) ones are dropped to fit.
-const PROMPT_CHARS: usize = 14_000;
+const PROMPT_CHARS: usize = 24_000;
 /// Items of the date range added by recency alone, before fusing.
 const WINDOW_FILL: usize = 50;
 /// Longest title shown (characters).
 const TITLE_CHARS: usize = 100;
 /// Longest answer kept (characters).
-const MAX_ANSWER_CHARS: usize = 1_500;
+const MAX_ANSWER_CHARS: usize = 2_500;
 /// Longest quote kept (characters), and the shortest that proves anything.
 const MAX_QUOTE_CHARS: usize = 300;
 const MIN_QUOTE_CHARS: usize = 3;
@@ -629,17 +629,22 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
 const ANSWER_PROMPT: &str = "You answer a person's question about their own notes, to-do tasks and clipboard history.\n\
 Use only the numbered items between <data> and </data>. Each item starts with its number, its kind (note, task or clipboard) and its date. \
 Never fill a gap from outside knowledge or guess: when the items do not contain the answer, say so.\n\
-Reply with JSON only, in exactly this shape: {\"found\":true,\"answer\":\"...\",\"sources\":[{\"n\":1,\"quote\":\"...\"}]}\n\
+Reply with JSON only, in exactly this shape: {\"found\":true,\"kind\":\"fact\",\"answer\":\"...\",\"sources\":[{\"n\":1,\"quote\":\"...\"}]}\n\
 found: false when the items do not answer the question (then answer is \"\" and sources is []).\n\
+kind: \"fact\" when the answer is something the items say (a name, a number, who said what, when); \"summary\" when the question asks for an overview, \
+a recap or a list across many items (\"what did I copy this week\", \"summarize my notes on the budget\").\n\
 answer: short and direct, in the language of the question, with the item number in square brackets after each claim, like [2]. \
-Say when something was said or written by using the item's date; copy names, numbers and dates exactly as written.\n\
+A summary may be a few sentences or a short list. Say when something was said or written by using the item's date; copy names, numbers and dates exactly as written.\n\
 sources: for every item the answer rests on, its number n and a quote, copied character for character from that item, \
-that shows the claim (the shortest stretch that does, at most one sentence).";
+that shows the claim (the shortest stretch that does, at most one sentence). A summary may leave the quote empty.";
 
 #[derive(Deserialize)]
 struct RawAnswer {
     #[serde(default)]
     found: bool,
+    /// `"summary"` answers may cite an item without a quote; anything else is a fact.
+    #[serde(default)]
+    kind: String,
     #[serde(default)]
     answer: String,
     #[serde(default)]
@@ -653,9 +658,13 @@ struct RawSource {
     quote: String,
 }
 
-/// Whitespace collapsed and lowercased, for comparing a quote with an excerpt.
+/// Words only, lowercased and joined by single spaces: whitespace, case and punctuation are
+/// ignored when a quote is compared with an excerpt, because models drop a trailing full stop,
+/// swap a curly quote for a straight one or turn a line break into a space, and none of that
+/// changes what was quoted.
 fn norm(s: &str) -> String {
-    s.split_whitespace()
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
@@ -695,21 +704,27 @@ fn strip_unverified_markers(answer: &str, cited: &[usize]) -> String {
 /// to the front in the order the model cited them.
 ///
 /// Verified means: the item number exists, and the quote occurs in that item's excerpt
-/// (whitespace and case aside) and is at least [`MIN_QUOTE_CHARS`] long. A claim with no
-/// verified source is no answer.
+/// (whitespace, case and punctuation aside) and is at least [`MIN_QUOTE_CHARS`] long. A
+/// `summary` answer may also cite an item without a verifying quote (the hit is then `cited`
+/// with `quote: None`). A claim with no verified source is no answer.
 pub fn parse_answer(reply: &str, hits: &mut Vec<Hit>) -> Result<String, String> {
     let raw: RawAnswer = parse(reply)?;
-    let mut verified: Vec<(usize, String)> = Vec::new();
+    let summary = raw.kind.trim().eq_ignore_ascii_case("summary");
+    let mut verified: Vec<(usize, Option<String>)> = Vec::new();
     if raw.found {
         for s in raw.sources {
             let quote = clip_to(s.quote.trim(), MAX_QUOTE_CHARS).to_owned();
-            let ok = s.n >= 1
-                && s.n <= hits.len()
-                && quote.chars().count() >= MIN_QUOTE_CHARS
-                && norm(&hits[s.n - 1].excerpt).contains(&norm(&quote))
-                && !verified.iter().any(|(n, _)| *n == s.n);
-            if ok {
-                verified.push((s.n, quote));
+            if s.n < 1 || s.n > hits.len() || verified.iter().any(|(n, _)| *n == s.n) {
+                continue;
+            }
+            let quoted = quote.chars().count() >= MIN_QUOTE_CHARS
+                && norm(&hits[s.n - 1].excerpt).contains(&norm(&quote));
+            if quoted {
+                verified.push((s.n, Some(quote)));
+            } else if summary {
+                // An overview rests on whole items; the item is real, only no sentence of it
+                // is singled out. A fact never gets this: a wrong quote there means a guess.
+                verified.push((s.n, None));
             }
         }
     }
@@ -727,7 +742,7 @@ pub fn parse_answer(reply: &str, hits: &mut Vec<Hit>) -> Result<String, String> 
     for (n, quote) in &verified {
         if let Some(mut h) = old[n - 1].take() {
             h.cited = true;
-            h.quote = Some(quote.clone());
+            h.quote = quote.clone();
             hits.push(h);
         }
     }
