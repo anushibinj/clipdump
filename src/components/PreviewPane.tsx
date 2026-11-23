@@ -81,7 +81,7 @@ export const PreviewPane = memo(function PreviewPane({
   return (
     <aside
       aria-label="Preview"
-      className="flex w-[46%] min-w-0 shrink-0 flex-col border-l bg-muted/20"
+      className="flex h-2/5 min-h-0 w-full min-w-0 shrink-0 flex-col border-t bg-muted/20 @xl/body:h-auto @xl/body:w-[46%] @xl/body:border-t-0 @xl/body:border-l"
     >
       <div role="tablist" aria-label="Right pane" className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
         <TabButton active={tab === "preview"} onClick={() => onTabChange("preview")}>
