@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import process from "node:process";
+import { readFileSync } from "node:fs";
 import { fakePicture, generateItems } from "./src/dev/data";
 const host = process.env.TAURI_DEV_HOST;
 
@@ -30,6 +31,11 @@ function mockClipAssets(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
+  define: {
+    __APP_VERSION__: JSON.stringify(
+      (JSON.parse(readFileSync(path.resolve(import.meta.dirname, "package.json"), "utf8")) as { version: string }).version,
+    ),
+  },
   plugins: [react(), tailwindcss(), ...(mode === "mock" ? [mockClipAssets()] : [])],
   resolve: {
     alias: {
