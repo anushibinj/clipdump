@@ -10,7 +10,7 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Changed
 
-- Hovering a task no longer moves the selection in the Tasks view; click a task to select it.
+- Hovering a task or a clipboard result no longer moves the selection; click to select (a click on a result still copies it).
 
 ## [0.5.1] - 2026-11-23
 

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, type KeyboardEventHandler, type ReactNode } from "react";
+import { memo, useEffect, type KeyboardEventHandler, type ReactNode } from "react";
 import { Command, CommandList } from "@/components/ui/command";
 import { ResultItem, rowId } from "@/components/ResultItem";
 import type { ResultDto } from "@/lib/ipc";
@@ -7,7 +7,6 @@ interface ResultRowsProps {
   results: readonly ResultDto[];
   selectedId: number | null;
   now: number;
-  onHover: (id: number) => void;
   onActivate: (id: number) => void;
 }
 
@@ -16,26 +15,10 @@ const ResultRows = memo(function ResultRows({
   results,
   selectedId,
   now,
-  onHover: onHoverSelect,
   onActivate,
 }: ResultRowsProps) {
-  // Set when the pointer (not the keyboard) is about to move the selection: hovering must not scroll.
-  const hovered = useRef(false);
-  const current = useRef(selectedId);
-  current.current = selectedId;
-  const onHover = useCallback(
-    (id: number) => {
-      if (id !== current.current) hovered.current = true;
-      onHoverSelect(id);
-    },
-    [onHoverSelect],
-  );
   // Selection moved by keyboard: keep the row in view (nearest edge, no jump when visible).
   useEffect(() => {
-    if (hovered.current) {
-      hovered.current = false;
-      return;
-    }
     if (selectedId === null) return;
     document.getElementById(rowId(selectedId))?.scrollIntoView({ block: "nearest" });
   }, [selectedId]);
@@ -49,7 +32,6 @@ const ResultRows = memo(function ResultRows({
           index={i}
           selected={r.id === selectedId}
           now={now}
-          onHover={onHover}
           onActivate={onActivate}
         />
       ))}
@@ -81,7 +63,6 @@ export function ResultList({
   results,
   selectedId,
   now,
-  onHover,
   onActivate,
   onKeyDownCapture,
 }: ResultListProps) {
@@ -109,7 +90,6 @@ export function ResultList({
                 results={results}
                 selectedId={selectedId}
                 now={now}
-                onHover={onHover}
                 onActivate={onActivate}
               />
             )}

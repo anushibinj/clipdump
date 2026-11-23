@@ -1,4 +1,4 @@
-import { memo, type PointerEvent } from "react";
+import { memo } from "react";
 import { File, FileText, Folder, Image as ImageIcon, Pin } from "lucide-react";
 import { Highlighted } from "@/components/Highlighted";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,6 @@ interface ResultItemProps {
   selected: boolean;
   /** Minute rounded "now" (lib/time.ts `minuteNow`), so the memo holds within a minute. */
   now: number;
-  onHover: (id: number) => void;
   onActivate: (id: number) => void;
 }
 
@@ -28,7 +27,6 @@ export function sameRow(a: ResultItemProps, b: ResultItemProps): boolean {
     a.index !== b.index ||
     a.selected !== b.selected ||
     a.now !== b.now ||
-    a.onHover !== b.onHover ||
     a.onActivate !== b.onActivate
   ) {
     return false;
@@ -171,7 +169,6 @@ export const ResultItem = memo(function ResultItem({
   index,
   selected,
   now,
-  onHover,
   onActivate,
 }: ResultItemProps) {
   const tall = r.kind === "image" || (r.kind === "files" && r.hasThumb);
@@ -191,10 +188,6 @@ export const ResultItem = memo(function ResultItem({
         "[content-visibility:auto] [contain-intrinsic-size:auto_44px]",
         tall ? "min-h-[52px] py-1.5" : "min-h-10 py-1.5",
       )}
-      // A pointer that only sits still while the list scrolls must not steal the selection.
-      onPointerMove={(e: PointerEvent) => {
-        if (e.movementX !== 0 || e.movementY !== 0) onHover(r.id);
-      }}
       // Keep keyboard focus in the search input.
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => onActivate(r.id)}
