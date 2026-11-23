@@ -157,7 +157,7 @@ pub fn ask_everything(
 ) -> Result<Answer, String> {
     let history = history.unwrap_or_default();
     let cfg = config(&app)?;
-    let history = super::store(&app)?;
+    let store = super::store(&app)?;
     let notes = app
         .state::<AppState>()
         .notes
@@ -166,7 +166,7 @@ pub fn ask_everything(
         .unwrap_or_default();
     // The task list is optional too: a question can still be answered from the rest.
     let task_list = tasks(&app).map(|t| t.list()).unwrap_or_default();
-    let all = candidates(&notes, &task_list, &history);
+    let all = candidates(&notes, &task_list, &store);
     // Ranking by meaning is a bonus: a server that cannot embed only means words alone.
     // A vague follow-up ("and who else?") embeds next to the question it follows.
     let mut query = history
