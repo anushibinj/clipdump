@@ -401,6 +401,9 @@ pub struct SearchRequest<'a> {
     /// "Now" in unix ms, for the recency boost. Injected so tests can move time;
     /// the IPC command passes the store clock.
     pub now_ms: i64,
+    /// The empty query lists pinned items first (the main window). When false
+    /// they stay where their age puts them (the quick popup).
+    pub pinned_first: bool,
 }
 
 impl<'a> SearchRequest<'a> {
@@ -410,6 +413,7 @@ impl<'a> SearchRequest<'a> {
             filter,
             limit: DEFAULT_LIMIT,
             now_ms,
+            pinned_first: true,
         }
     }
 }
@@ -454,7 +458,7 @@ pub fn rank<'a>(
     }
     let parsed = parse_query(req.query, req.filter);
     match Query::parse(parsed.text) {
-        None => rank_recent(items, parsed.filter, limit),
+        None => rank_recent(items, parsed.filter, limit, req.pinned_first),
         Some(q) => with_scratch(|sc| rank_matches(items, &q, parsed.filter, limit, req.now_ms, sc)),
     }
 }
@@ -549,7 +553,19 @@ fn rank_recent<'a>(
     items: impl Iterator<Item = &'a Arc<ClipItem>>,
     filter: TypeFilter,
     limit: usize,
+    pinned_first: bool,
 ) -> Vec<Ranked> {
+    if !pinned_first {
+        return items
+            .filter(|i| filter.accepts(i.kind))
+            .take(limit)
+            .map(|item| Ranked {
+                item: Arc::clone(item),
+                exact: false,
+                score: 0.0,
+            })
+            .collect();
+    }
     let mut pinned: Vec<&Arc<ClipItem>> = Vec::new();
     let mut recent: Vec<&Arc<ClipItem>> = Vec::with_capacity(limit);
     for item in items.filter(|i| filter.accepts(i.kind)) {

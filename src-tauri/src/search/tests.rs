@@ -235,6 +235,18 @@ fn empty_query_lists_pinned_first_then_most_recent() {
 }
 
 #[test]
+fn empty_query_can_leave_pinned_items_in_recency_order() {
+    let items = [
+        text(1, "newest", 10),
+        pinned(text(2, "pinned", 20)),
+        text(3, "third", 30),
+    ];
+    let mut req = SearchRequest::new("", TypeFilter::All, NOW);
+    req.pinned_first = false;
+    assert_eq!(ids(&rank(items.iter(), &req)), [1, 2, 3]);
+}
+
+#[test]
 fn empty_query_respects_the_limit_and_filters() {
     let items = [
         text(1, "a", 1),
