@@ -7,7 +7,7 @@ interface AskButtonProps {
   onClick: () => void;
 }
 
-/** The only way into "Ask": bottom left of the footer, which every view shows. */
+/** Ask, also on Alt+/ and Alt+?: bottom left of the footer, which every view shows. */
 export const AskButton = memo(function AskButton({ active, onClick }: AskButtonProps) {
   return (
     <button
