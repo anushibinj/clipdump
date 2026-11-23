@@ -350,7 +350,7 @@ cover it. When Phase 10 shows the badge:
       count of a huge list is a lower bound).
 
 ### Behaviors to confirm once the UI exists (Phase 10)
-- [ ] `Alt+1` to `Alt+4` filters and typed `img:`, `file:`, `txt:` prefixes agree
+- [ ] `Alt+Shift+1` to `Alt+Shift+4` filters and typed `img:`, `file:`, `txt:` prefixes agree
       (a typed prefix wins over the toggle).
 - [ ] A word that appears only inside a screenshot (OCR) finds it with a subtitle
       snippet around the word and the word highlighted in the snippet.
@@ -514,7 +514,7 @@ WebView2, so everything below still needs a Windows run.
 - [ ] `Ctrl+Shift+Delete`: the footer asks to press again (with the count of
       unpinned items), expires after 3 seconds, `Esc` cancels it, a second press
       inside the window clears and keeps pinned items.
-- [ ] `Alt+1` to `Alt+4` switch the filter. Windows must not move focus to a menu
+- [ ] `Alt+Shift+1` to `Alt+Shift+4` switch the filter. Windows must not move focus to a menu
       or beep on Alt+digit. A typed `img:`, `file:`, `txt:` prefix wins.
 - [ ] `Alt+P` toggles the preview, `Tab` switches between the clipboard and the tasks, and neither moves focus out of the input.
 - [ ] `Ctrl+,` toggles settings. `Esc` order: confirmation, settings, preview, hide.

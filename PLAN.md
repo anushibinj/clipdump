@@ -46,7 +46,7 @@ Files are stored as **references**. If a file is later moved or deleted, the ite
 - `Ctrl+P`: pin/unpin selected item.
 - `Ctrl+Delete` (or `Shift+Delete`): delete selected item.
 - `Ctrl+Shift+Delete`: clear entire history except pinned items (inline confirm: press again to confirm).
-- `Alt+1` .. `Alt+4`: type filter All / Text / Images / Files. Typed prefixes also work: `img:`, `file:`, `txt:`.
+- `Alt+Shift+1` .. `Alt+Shift+4`: type filter All / Text / Images / Files. Typed prefixes also work: `img:`, `file:`, `txt:`.
 - `Tab`: toggle preview pane (full text, large image with OCR text below, or file list).
 - `Ctrl+,`: settings.
 

@@ -8,6 +8,15 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Alt+1`, `Alt+2`, `Alt+3` switch between the modes: clipboard, notes, tasks (the order of the title bar
+  icons). Works from every view. A new mode takes the next number (`MODE_ORDER` in `lib/shortcuts.ts`).
+
+### Changed
+
+- The clipboard type filters moved from `Alt+1..4` to `Alt+Shift+1..4`, to free `Alt+digit` for the modes.
+
 ## [0.3.0] - 2026-11-23
 
 ### Added
