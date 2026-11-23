@@ -8,14 +8,18 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
 ### Added
 
 - Tiny clipboard: press `Ctrl` twice anywhere (Windows) to open a minimal popup next to the text
   cursor, or next to the mouse pointer in apps that do not expose one (browsers, Electron apps).
   It shows the three best matches while you type; `Enter` or a click copies, `Up`/`Down` move,
   `Alt+1..3` copy a row, `Esc` closes. `Ctrl` twice again also closes it. The pin button keeps it
-  open after a copy and when you click elsewhere.
-
+  open after a copy and when you click elsewhere. A setting, **Tiny clipboard on Ctrl twice**, turns
+  the shortcut off.
+- Focus lock banner has a **Done** button to finish a session early.
+- Each task section title has a one-line helper text beside it.
 - Ask is a conversation. A follow-up ("and who else was there?") is sent with the last three questions
   and answers, so the model can work out what it means; the thread stays on screen above the new
   answer and `Esc` clears it.
