@@ -8,6 +8,14 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Tiny clipboard: press `Ctrl` twice anywhere (Windows) to open a minimal popup next to the text
+  cursor, or next to the mouse pointer in apps that do not expose one (browsers, Electron apps).
+  It shows the three best matches while you type; `Enter` or a click copies, `Up`/`Down` move,
+  `Alt+1..3` copy a row, `Esc` closes. `Ctrl` twice again also closes it. The pin button keeps it
+  open after a copy and when you click elsewhere.
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

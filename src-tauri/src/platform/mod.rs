@@ -212,6 +212,33 @@ pub fn foreground_window() -> Option<isize> {
     }
 }
 
+/// The text cursor of the focused window as `(x, top, bottom)` in physical screen
+/// pixels, when the window exposes one (see `windows::focus::caret_rect`).
+pub fn caret_rect() -> Option<(i32, i32, i32)> {
+    #[cfg(windows)]
+    {
+        windows::focus::caret_rect()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Call `on_double` each time Ctrl is tapped twice, anywhere in the system.
+/// Windows only; elsewhere it reports that it is not supported.
+pub fn watch_double_ctrl(on_double: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::ctrl_hook::start(on_double)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = on_double;
+        Err("Ctrl twice is only supported on Windows".to_owned())
+    }
+}
+
 /// Lower the calling thread to below normal priority, so background work
 /// (ingest, later OCR) never competes with typing or the hotkey. Windows only
 /// (`SetThreadPriority`); elsewhere a no-op, because those platforms have no

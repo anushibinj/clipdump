@@ -225,6 +225,7 @@ mod tests {
             ocr_enabled: false,
             auto_paste_on_enter: true,
             pinned_bar: true,
+            quick_ctrl_twice: false,
             hotkey: "Ctrl+Alt+K".into(),
             start_at_login: false,
             ..Settings::default()

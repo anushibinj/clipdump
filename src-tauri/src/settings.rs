@@ -88,6 +88,8 @@ pub struct Settings {
     /// Keep the bar visible as an always-on-top strip: it does not hide on
     /// blur or after a copy, and the hotkey only focuses it. Default false.
     pub pinned_bar: bool,
+    /// Pressing Ctrl twice opens the tiny clipboard popup (Windows). Default true.
+    pub quick_ctrl_twice: bool,
     /// The global hotkey that shows and hides the bar, canonical chord text
     /// (see `hotkey.rs`). Default `Ctrl+Shift+Space`.
     pub hotkey: String,
@@ -123,6 +125,7 @@ impl Default for Settings {
             ocr_enabled: true,
             auto_paste_on_enter: false,
             pinned_bar: false,
+            quick_ctrl_twice: true,
             hotkey: crate::hotkey::DEFAULT_HOTKEY.to_owned(),
             start_at_login: true,
             window_positions: Vec::new(),
@@ -293,6 +296,7 @@ impl Settings {
             ocr_enabled: field(obj, "ocr_enabled", d.ocr_enabled, issues),
             auto_paste_on_enter: field(obj, "auto_paste_on_enter", d.auto_paste_on_enter, issues),
             pinned_bar: field(obj, "pinned_bar", d.pinned_bar, issues),
+            quick_ctrl_twice: field(obj, "quick_ctrl_twice", d.quick_ctrl_twice, issues),
             hotkey: field(obj, "hotkey", d.hotkey, issues),
             start_at_login: field(obj, "start_at_login", d.start_at_login, issues),
             window_positions: field(obj, "window_positions", d.window_positions, issues),

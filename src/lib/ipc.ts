@@ -101,6 +101,8 @@ export interface SettingsDto {
   autoPasteOnEnter: boolean;
   /** Keep the bar visible; it does not hide on blur. */
   pinnedBar: boolean;
+  /** Ctrl pressed twice opens the tiny clipboard popup. */
+  quickCtrlTwice: boolean;
   /** Capture paused. Not saved: the app always starts capturing. */
   paused: boolean;
   /** The global hotkey as chord text, for example "Ctrl+Shift+Space" (modifiers Ctrl, Alt, Shift, Super). */
@@ -553,6 +555,20 @@ export function hideBar(): Promise<void> {
   return invoke<void>("hide_bar");
 }
 
+/** Tiny clipboard (Ctrl twice): copy item `id` and hide the popup unless it is pinned. Never pastes. */
+export function quickCopy(id: number): Promise<void> {
+  return invoke<void>("quick_copy", { id });
+}
+
+/** Tiny clipboard: a pinned popup stays after a copy or a click elsewhere. */
+export function setQuickPinned(pinned: boolean): Promise<void> {
+  return invoke<void>("set_quick_pinned", { pinned });
+}
+
+export function hideQuick(): Promise<void> {
+  return invoke<void>("hide_quick");
+}
+
 /**
  * Hand the mouse to the OS window drag (call it on mousedown over a drag handle). The backend
  * remembers where the bar is dropped, per monitor, and opens it there next time.
@@ -573,6 +589,8 @@ export function errorMessage(e: unknown): string {
 export const EVENTS = {
   barShown: "bar:shown",
   barHidden: "bar:hidden",
+  /** The tiny clipboard opened: clear the query and focus the input. */
+  quickShown: "quick:shown",
   /** Debounced to one per 50 ms. Re-run the search. */
   historyChanged: "history:changed",
   settingsOpen: "settings:open",
@@ -594,6 +612,7 @@ function on(event: string, handler: Handler): Promise<UnlistenFn> {
 
 /** The bar became visible: focus and select the input. */
 export const onBarShown = (h: Handler) => on(EVENTS.barShown, h);
+export const onQuickShown = (h: Handler) => on(EVENTS.quickShown, h);
 export const onBarHidden = (h: Handler) => on(EVENTS.barHidden, h);
 export const onHistoryChanged = (h: Handler) => on(EVENTS.historyChanged, h);
 /** The tray asked for the settings view. */
