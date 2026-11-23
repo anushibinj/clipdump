@@ -47,12 +47,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # Tag runs can only read caches saved from the default branch, so they never save
-      # one (`save-if`); .github/workflows/cache-warm.yml fills them from main.
+      # one (`save-if`); .github/workflows/cache-warm.yml fills them from master.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           shared-key: checks
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
@@ -133,7 +133,7 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: build-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
