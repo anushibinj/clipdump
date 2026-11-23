@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  ChevronRight,
   Flame,
   Link2,
   ListChecks,
@@ -112,6 +113,8 @@ export function TasksView({
   const notesRef = useRef<HTMLTextAreaElement | null>(null);
   const parkRef = useRef<HTMLInputElement | null>(null);
   const [picking, setPicking] = useState<Picking | null>(null);
+  // While locked, the other tasks are tucked away unless asked for.
+  const [showOthers, setShowOthers] = useState(false);
   const lockedId = focus.lockedId;
   const setNotes = useCallback((open: boolean) => {
     setNotesOpen(open);
@@ -715,7 +718,7 @@ export function TasksView({
           onMouseDown={(e) => {
             // Not a window drag, and clicks on the buttons keep the caret in the task input.
             e.stopPropagation();
-            if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault();
+            if (!["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) e.preventDefault();
           }}
         >
           {picking && lockedId === null && (
@@ -731,6 +734,23 @@ export function TasksView({
             />
           )}
           <FocusBanner
+            notes={
+              lockedVisible && selectedTask ? (
+                <TaskNotes
+                  embedded
+                  task={selectedTask}
+                  now={api.now}
+                  onSave={saveNote}
+                  onClose={() => {}}
+                  onReturnFocus={returnFocus}
+                  textareaRef={notesRef}
+                  draftRequest={draftTick}
+                  onUnlink={unlink}
+                  onFail={fail}
+                  onSplitCreated={api.refresh}
+                />
+              ) : undefined
+            }
             focus={focus}
             parkRef={parkRef}
             onReturnFocus={returnFocus}
@@ -767,7 +787,21 @@ export function TasksView({
         />
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col">
+      {lockedVisible && (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-expanded={showOthers}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setShowOthers((v) => !v)}
+          className="flex shrink-0 items-center gap-1.5 border-b px-4 py-2 text-left text-xs text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground"
+        >
+          <ChevronRight className={`size-3.5 transition-transform ${showOthers ? "rotate-90" : ""}`} aria-hidden />
+          {showOthers ? "Hide" : "Show"} remaining tasks ({view.rows.length - 1})
+        </button>
+      )}
+      <div className={`flex min-h-0 flex-1 ${lockedVisible && !showOthers ? "hidden" : ""}`}>
         <div
           id={LIST_ID}
           role="listbox"
@@ -815,7 +849,7 @@ export function TasksView({
             ))
           )}
         </div>
-        {notesOpen && selectedTask && (
+        {notesOpen && selectedTask && !lockedVisible && (
           <TaskNotes
             task={selectedTask}
             now={api.now}
@@ -832,6 +866,7 @@ export function TasksView({
             onSplitCreated={api.refresh}
           />
         )}
+      </div>
       </div>
     </div>
   );
