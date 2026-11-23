@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
@@ -135,6 +135,7 @@ function List({ title, items }: { title: string; items: Shortcut[] }) {
 /** The "Shortcuts" modal: every keyboard shortcut in one list. */
 export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChange, onCloseAutoFocus, view = "search" }: Props) {
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   // A fresh search every time the dialog opens.
   useEffect(() => {
     if (!open) setQuery("");
@@ -159,12 +160,21 @@ export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChang
           : [clipboard, tasks, notes, ask];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm gap-3 p-4" aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent
+        className="max-w-sm gap-3 p-4"
+        aria-describedby={undefined}
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          inputRef.current?.focus();
+        }}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle className="text-base">Shortcuts</DialogTitle>
           <DialogDescription className="sr-only">Keyboard shortcuts</DialogDescription>
         </DialogHeader>
         <Input
+          ref={inputRef}
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
