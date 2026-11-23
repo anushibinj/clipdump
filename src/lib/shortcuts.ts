@@ -5,7 +5,7 @@ import type { TypeFilter } from "@/lib/ipc";
 
 export interface KeyInfo {
   key: string;
-  /** Physical key (`Digit1`, `KeyP`, ...). Layout independent, so Alt+digit works on every layout. */
+  /** Physical key (`Digit1`, `KeyP`, ...). Layout independent, so digit shortcuts work on every layout. */
   code: string;
   ctrlKey: boolean;
   shiftKey: boolean;
@@ -18,11 +18,11 @@ export interface KeyInfo {
 
 export type View = "search" | "settings" | "tasks" | "notes" | "ask";
 
-/** The app modes reachable with `Alt+<position>`. */
+/** The app modes reachable with `Ctrl+<position>`. */
 export type ModeView = "search" | "notes" | "tasks";
 
 /**
- * The order of the app modes, same as the title bar icons: `Alt+1` is the first, `Alt+2` the second...
+ * The order of the app modes, same as the title bar icons: `Ctrl+1` is the first, `Ctrl+2` the second...
  * A new mode is appended here, so it takes the next free number and the existing ones never move.
  */
 export const MODE_ORDER: readonly ModeView[] = ["search", "notes", "tasks"];
@@ -46,14 +46,14 @@ export type Action =
   | { type: "toggleTasks" }
   /** Ctrl+Shift+N: between the clipboard search and the notes. */
   | { type: "toggleNotes" }
-  /** Alt+1..N: jump straight to an app mode (see `MODE_ORDER`). */
+  /** Ctrl+1..N: jump straight to an app mode (see `MODE_ORDER`). */
   | { type: "switchMode"; view: ModeView }
   /** Alt+/ or Alt+?: open the Ask view with the caret in its input. */
   | { type: "openAsk" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
-/** The order of `Alt+Shift+1..4` (plain `Alt+digit` switches the app mode). */
+/** The order of `Alt+Shift+1..4` (plain `Ctrl+digit` switches the app mode). */
 export const FILTER_ORDER: readonly TypeFilter[] = ["all", "text", "images", "files"];
 
 /** How far PageUp and PageDown move the selection. */
@@ -111,9 +111,9 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (ctrl && shift && !alt && (e.code === "KeyN" || e.key.toLowerCase() === "n")) {
     return { type: "toggleNotes" };
   }
-  // Alt+1..N switches the app mode from any view (clipboard, notes, tasks, ...).
+  // Ctrl+1..N switches the app mode from any view (clipboard, notes, tasks, ...).
   const mode = digit(e);
-  if (alt && !ctrl && !shift && mode !== null && mode >= 1 && mode <= MODE_ORDER.length) {
+  if (ctrl && !alt && !shift && mode !== null && mode >= 1 && mode <= MODE_ORDER.length) {
     return { type: "switchMode", view: MODE_ORDER[mode - 1] };
   }
   // Alt+/ or Alt+? (Alt+Shift+/ on a US layout): Ask, reached from every view. Matched by
@@ -129,7 +129,7 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   if (alt && !ctrl && shift && d !== null && d >= 1 && d <= FILTER_ORDER.length) {
     return { type: "filter", filter: FILTER_ORDER[d - 1] };
   }
-  if (ctrl && !alt && !shift && d !== null && d >= 1 && d <= 9) {
+  if (alt && !ctrl && !shift && d !== null && d >= 1 && d <= 9) {
     return { type: "copyNth", n: d };
   }
   if (ctrl && shift && !alt && (e.code === "KeyS" || e.key.toLowerCase() === "s")) {
