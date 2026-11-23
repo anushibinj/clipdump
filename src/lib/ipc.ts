@@ -479,6 +479,8 @@ export interface AskSearched {
   scanned: number;
   /** Whether items were also ranked by meaning (an embedding model is set up). */
   semantic: boolean;
+  /** Searches made: 1, plus one for each time the model searched again with other words. */
+  rounds: number;
 }
 
 export interface AskAnswer {

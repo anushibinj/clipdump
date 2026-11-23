@@ -75,6 +75,7 @@ describe("labels", () => {
       sources: ["note", "task", "clip"],
       scanned: 412,
       semantic: false,
+      rounds: 1,
     };
     expect(searchedLine(s)).toBe("Looked in notes, tasks and clipboard · 2026-11-05 to 2026-11-08 · 412 items");
     expect(searchedLine({ ...s, from: null, to: null, sources: ["task"], scanned: 1 })).toBe(
@@ -82,6 +83,9 @@ describe("labels", () => {
     );
     expect(searchedLine({ ...s, from: null, to: null, semantic: true })).toBe(
       "Looked in notes, tasks and clipboard · 412 items · by meaning too",
+    );
+    expect(searchedLine({ ...s, from: null, to: null, rounds: 3 })).toBe(
+      "Looked in notes, tasks and clipboard · 412 items · 3 searches",
     );
     expect(searchedLine({ ...s, to: "2026-11-05", sources: ["note", "clip"] })).toBe(
       "Looked in notes and clipboard · 2026-11-05 · 412 items",

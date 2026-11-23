@@ -494,6 +494,7 @@ function runAsk(question: unknown): unknown {
     sources: ["note", "task", "clip"],
     scanned: all.length,
     semantic: Boolean(settings.llmEmbeddingModel),
+    rounds: 1,
   };
   const hits = scored.map(({ c }, i) => ({
     n: i + 1,
