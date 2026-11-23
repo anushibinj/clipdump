@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { Check, Coffee, Flame, Lock, Pause, Play, Timer } from "lucide-react";
 import { ParkedList } from "@/components/ParkedList";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,8 @@ interface FocusBannerProps {
   canContinue: (taskId: number) => boolean;
   /** Turn a parked thought into a task. */
   onAddTask: (item: ParkedItem) => void;
+  /** The notes of the locked task, shown under its title while the lock is on. */
+  notes?: ReactNode;
 }
 
 /**
@@ -61,7 +63,7 @@ function StreakChip({ focus }: { focus: FocusApi }) {
 }
 
 /** A session is running: the list is locked. */
-function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone }: FocusBannerProps) {
+function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes }: FocusBannerProps) {
   const s = focus.data.session!;
   const left = remainingMs(s, focus.now);
   const paused = s.pausedAt !== null;
@@ -93,14 +95,20 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone }: FocusB
         <span className="min-w-0 flex-1 truncate font-medium" title={s.title}>
           {s.title}
         </span>
+        <StreakChip focus={focus} />
+      </div>
+
+      <div className="flex gap-2">
+        <div className="flex min-w-0 basis-[70%]">{notes}</div>
+        <div className="flex basis-[30%] flex-col items-stretch justify-start gap-2 rounded-md border bg-background/60 p-3">
         <span
-          className="shrink-0 text-base font-semibold tabular-nums"
+          className="text-center text-3xl font-semibold tabular-nums"
           role="timer"
           aria-label={`${formatClock(left)} left`}
         >
           {formatClock(left)}
         </span>
-        <StreakChip focus={focus} />
+
         <Button
           type="button"
           size="xs"
@@ -130,6 +138,7 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone }: FocusB
             Pause
           </Button>
         )}
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
