@@ -8,6 +8,10 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Hovering a task no longer moves the selection in the Tasks view; click a task to select it.
+
 ## [0.5.1] - 2026-11-23
 
 ### Fixed
