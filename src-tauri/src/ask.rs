@@ -865,5 +865,7 @@ pub fn ask(
     })
 }
 
+pub mod semantic;
+
 #[cfg(test)]
 mod tests;
