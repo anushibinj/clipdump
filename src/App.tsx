@@ -231,7 +231,6 @@ function App() {
     [showNotice],
   );
 
-  const onHover = s.select;
   const onActivate = useCallback(
     (id: number) => {
       latest.current.select(id);
@@ -601,7 +600,6 @@ function App() {
                   results={s.results}
                   selectedId={s.selectedId}
                   now={s.now}
-                  onHover={onHover}
                   onActivate={onActivate}
                   onKeyDownCapture={onKeyDownCapture}
                   header={

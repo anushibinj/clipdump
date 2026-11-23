@@ -1,4 +1,4 @@
-import { memo, type PointerEvent } from "react";
+import { memo } from "react";
 import { Check, Circle, CircleDot, Clock, Hourglass, Lock, NotebookPen, Paperclip, Star, Timer } from "lucide-react";
 import { formatDuration } from "@/lib/focus";
 import type { Task } from "@/lib/ipc";
@@ -17,7 +17,7 @@ interface TaskRowProps {
   selected: boolean;
   /** Minute rounded "now" (lib/time.ts `minuteNow`), so the memo holds within a minute. */
   now: number;
-  onHover: (id: number) => void;
+  onSelect: (id: number) => void;
   /** Click on the status circle: waiting, in flight, done, and around. */
   onAdvance: (id: number) => void;
   onToggleImportant: (id: number) => void;
@@ -50,7 +50,7 @@ export const TaskRow = memo(function TaskRow({
   task,
   selected,
   now,
-  onHover,
+  onSelect,
   onAdvance,
   onToggleImportant,
   onOpenNotes,
@@ -82,8 +82,8 @@ export const TaskRow = memo(function TaskRow({
         locked && "opacity-40",
         focused && "bg-primary/[0.08] ring-1 ring-primary/40",
       )}
-      onPointerMove={(e: PointerEvent) => {
-        if (!locked && (e.movementX !== 0 || e.movementY !== 0)) onHover(task.id);
+      onClick={() => {
+        if (!locked) onSelect(task.id);
       }}
       // Keep keyboard focus in the input.
       onMouseDown={(e) => e.preventDefault()}

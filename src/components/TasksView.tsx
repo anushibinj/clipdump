@@ -427,7 +427,7 @@ export function TasksView({
     [run],
   );
 
-  const onHover = useCallback((id: number) => {
+  const onSelect = useCallback((id: number) => {
     if (latest.current.lockedId !== null) return;
     if (id !== latest.current.selected) hoverMoved.current = true;
     setSelectedId(id);
@@ -801,7 +801,7 @@ export function TasksView({
                     task={t}
                     selected={t.id === selected}
                     now={api.now}
-                    onHover={onHover}
+                    onSelect={onSelect}
                     onAdvance={onAdvance}
                     onToggleImportant={onToggleImportant}
                     onOpenNotes={onOpenNotes}
