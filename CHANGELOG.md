@@ -18,16 +18,16 @@ All notable changes to Clipdump are listed here. The format follows
 
 - The shortcuts dialog has a search box, focused when it opens. `Ctrl+/` and `Ctrl+?` both open it.
 
-- `Alt+1`, `Alt+2`, `Alt+3` switch between the modes: clipboard, notes, tasks (the order of the title bar
+- `Ctrl+1`, `Ctrl+2`, `Ctrl+3` switch between the modes: clipboard, notes, tasks (the order of the title bar
   icons). Works from every view. A new mode takes the next number (`MODE_ORDER` in `lib/shortcuts.ts`).
 
 - `Alt+/` or `Alt+?` opens Ask with the caret in its input, from every view.
 
-- The mode keys (`Alt+1..3`) and the filter keys (`Alt+Shift+1..4`) are shown as hints in the UI.
+- The mode keys (`Ctrl+1..3`) and the filter keys (`Alt+Shift+1..4`) are shown as hints in the UI.
 
 ### Changed
 
-- The clipboard type filters moved from `Alt+1..4` to `Alt+Shift+1..4`, to free `Alt+digit` for the modes.
+- The clipboard type filters moved from `Alt+1..4` to `Alt+Shift+1..4`. Copying the Nth result moved from `Ctrl+1..9` to `Alt+1..9`, to free `Ctrl+digit` for the modes.
 - The Ask button moved to the bottom-left footer and is no longer in the filter row. The old Ask
   shortcut is dropped in favor of `Alt+/`.
 

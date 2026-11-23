@@ -203,9 +203,9 @@ async function keys(browser, url) {
   await settle();
   const c4 = await lastCall("copy_item");
   check("Ctrl+Enter still only copies with the setting on", c4?.args.id === w3 && c4?.args.paste === false, JSON.stringify(c4));
-  await page.keyboard.press("Control+2");
+  await page.keyboard.press("Alt+2");
   await settle();
-  check("Ctrl+2 still only copies with the setting on", (await lastCall("copy_item"))?.args.paste === false);
+  check("Alt+2 still only copies with the setting on", (await lastCall("copy_item"))?.args.paste === false);
   // the setting is read again when the bar is shown: after a reset of the backend it is off again
   await reset();
   await page.evaluate(() => window.__clipMock.emit("bar:shown"));
@@ -214,21 +214,21 @@ async function keys(browser, url) {
   await settle();
   check("Enter does not paste again after the setting was reset", (await lastCall("copy_item"))?.args.paste === false);
 
-  // Ctrl+1 and Ctrl+3
+  // Alt+1 and Alt+3
   await reset();
   await page.keyboard.type("a");
   await settle();
   const ids2 = await rowIds();
-  await page.keyboard.press("Control+1");
-  check("Ctrl+1 copies the first visible row", (await lastCall("copy_item"))?.args.id === ids2[0]);
-  await page.keyboard.press("Control+3");
-  check("Ctrl+3 copies the third visible row", (await lastCall("copy_item"))?.args.id === ids2[2]);
+  await page.keyboard.press("Alt+1");
+  check("Alt+1 copies the first visible row", (await lastCall("copy_item"))?.args.id === ids2[0]);
+  await page.keyboard.press("Alt+3");
+  check("Alt+3 copies the third visible row", (await lastCall("copy_item"))?.args.id === ids2[2]);
   await reset();
   await page.keyboard.type("zzzzqq");
   await settle();
   const before = (await calls("copy_item")).length;
-  await page.keyboard.press("Control+5");
-  check("Ctrl+5 with fewer rows does nothing", (await calls("copy_item")).length === before);
+  await page.keyboard.press("Alt+5");
+  check("Alt+5 with fewer rows does nothing", (await calls("copy_item")).length === before);
 
   // copy failure shows a message and the bar keeps working
   await reset();

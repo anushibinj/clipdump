@@ -509,7 +509,7 @@ WebView2, so everything below still needs a Windows run.
 - [ ] `Ctrl+Enter` and `Enter` both copy and hide the bar; `Enter` also pastes
       once "Paste on Enter" is on (Phase 11 section). A copy that fails shows
       "Could not copy: ..." in the footer, the bar stays open and keeps working.
-- [ ] `Ctrl+1` to `Ctrl+9`, `Ctrl+P`, `Ctrl+Delete`, `Shift+Delete`: act on the
+- [ ] `Alt+1` to `Alt+9`, `Ctrl+P`, `Ctrl+Delete`, `Shift+Delete`: act on the
       right row. After a delete the next row is selected.
 - [ ] `Ctrl+Shift+Delete`: the footer asks to press again (with the count of
       unpinned items), expires after 3 seconds, `Esc` cancels it, a second press
@@ -654,7 +654,7 @@ Settings, General, "Paste on Enter". Saved to `settings.json` since Phase 12.
 - [ ] On: open Notepad, press the hotkey, search, select an item, press `Enter`:
       the bar hides and the item appears in Notepad without touching `Ctrl+V`.
 - [ ] On: clicking a result row does the same as `Enter`.
-- [ ] On: `Ctrl+Enter` and `Ctrl+1` to `Ctrl+9` still only copy, they never paste.
+- [ ] On: `Ctrl+Enter` and `Alt+1` to `Alt+9` still only copy, they never paste.
 - [ ] On: the text appears once, not twice. Hold `Shift` while pressing `Enter`:
       the held modifiers are released before `Ctrl+V`, so it is a plain paste, not
       `Ctrl+Shift+V` ("paste as plain text" in some apps).

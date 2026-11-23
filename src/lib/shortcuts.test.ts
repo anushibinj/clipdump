@@ -39,11 +39,12 @@ describe("resolveShortcut in the search view", () => {
     expect(resolveShortcut(k("S", { ctrlKey: true, shiftKey: true }), "settings")).toBeNull();
   });
 
-  it("Ctrl+1..9 copies the Nth row, Ctrl+0 does nothing", () => {
+  it("Alt+1..9 copies the Nth row, Alt+0 does nothing", () => {
+    const alt = { altKey: true };
     for (let n = 1; n <= 9; n += 1) {
-      expect(r(k(String(n), ctrl))).toEqual({ type: "copyNth", n });
+      expect(r(k(String(n), alt))).toEqual({ type: "copyNth", n });
     }
-    expect(r(k("0", ctrl))).toBeNull();
+    expect(r(k("0", alt))).toBeNull();
   });
 
   it("Alt+Shift+1..4 pick the filters in order, Alt+Shift+5 is nothing", () => {
@@ -60,7 +61,7 @@ describe("resolveShortcut in the search view", () => {
       type: "filter",
       filter: "all",
     });
-    expect(r({ ...k("2", ctrl), code: "Numpad2" })).toEqual({ type: "copyNth", n: 2 });
+    expect(r({ ...k("2", { altKey: true }), code: "Numpad2" })).toEqual({ type: "copyNth", n: 2 });
   });
 
   it("Ctrl+P pins, plain P and Ctrl+Shift+P are typing or untouched", () => {
@@ -133,7 +134,7 @@ describe("resolveShortcut in the settings view", () => {
     expect(r(k("Escape"))).toEqual({ type: "escape" });
     expect(r(k(",", ctrl))).toEqual({ type: "toggleSettings" });
     expect(r(k("Enter", ctrl))).toBeNull();
-    expect(r(k("1", { altKey: true }))).toEqual({ type: "switchMode", view: "search" });
+    expect(r(k("1", ctrl))).toEqual({ type: "switchMode", view: "search" });
     expect(r(k("Delete", ctrl))).toBeNull();
     expect(r(k("ArrowDown"))).toBeNull();
     expect(r(k("Tab"))).toBeNull();
@@ -194,9 +195,9 @@ describe("Ctrl+/ and Ctrl+?", () => {
   });
 });
 
-describe("Alt+digit switches the app mode", () => {
-  const alt = { altKey: true };
-  it("Alt+1 clipboard, Alt+2 notes, Alt+3 tasks, from every view", () => {
+describe("Ctrl+digit switches the app mode", () => {
+  const alt = { ctrlKey: true };
+  it("Ctrl+1 clipboard, Ctrl+2 notes, Ctrl+3 tasks, from every view", () => {
     for (const view of ["search", "notes", "tasks", "ask", "settings"] as const) {
       const r = (e: KeyInfo) => resolveShortcut(e, view);
       expect(r(k("1", alt))).toEqual({ type: "switchMode", view: "search" });
