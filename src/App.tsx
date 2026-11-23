@@ -22,6 +22,7 @@ import { usePreview } from "@/hooks/usePreview";
 import { useSearch } from "@/hooks/useSearch";
 import { useSplit } from "@/hooks/useSplit";
 import { useFocus } from "@/hooks/useFocus";
+import { formatClock, remainingMs } from "@/lib/focus";
 import { useAsk } from "@/hooks/useAsk";
 import { useNotes } from "@/hooks/useNotes";
 import { useTasks } from "@/hooks/useTasks";
@@ -544,6 +545,11 @@ function App() {
               onClose={dismiss}
               onDrag={dragFromHeader}
               workingOn={inFlight[0]?.title}
+              timeLeft={
+                focus.data.session
+                  ? formatClock(remainingMs(focus.data.session, focus.now))
+                  : undefined
+              }
             />
             <FocusProgressBar session={focus.data.session} now={focus.now} />
             <div className="min-h-0 flex-1">

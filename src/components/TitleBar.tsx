@@ -22,6 +22,8 @@ interface TitleBarProps {
   onDrag: (e: MouseEvent) => void;
   /** Title of the task in flight, shown as a hint on the Tasks icon. */
   workingOn?: string;
+  /** Time left in a locked focus session as mm:ss, shown next to the Tasks icon. */
+  timeLeft?: string;
 }
 
 const iconBtn =
@@ -40,6 +42,7 @@ export const TitleBar = memo(function TitleBar({
   onClose,
   onDrag,
   workingOn,
+  timeLeft,
 }: TitleBarProps) {
   const tabs: {
     id: "search" | "notes" | "tasks";
@@ -82,13 +85,19 @@ export const TitleBar = memo(function TitleBar({
             onClick={() => onSwitch(id)}
             className={cn(
               iconBtn,
+              id === "tasks" && timeLeft && "w-auto gap-1.5 px-2",
               view === id
                 ? "bg-foreground/[0.08] text-foreground"
                 : "text-muted-foreground",
             )}
           >
             <Icon className="size-4" aria-hidden />
-            {id === "tasks" && workingOn && (
+            {id === "tasks" && timeLeft && (
+              <span className="text-xs font-medium tabular-nums" role="timer">
+                {timeLeft}
+              </span>
+            )}
+            {id === "tasks" && workingOn && !timeLeft && (
               <span
                 className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
                 aria-hidden
