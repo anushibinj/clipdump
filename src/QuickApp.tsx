@@ -12,7 +12,7 @@ import {
   type ClipKind,
   type ResultDto,
 } from "@/lib/ipc";
-import { QUICK_LIMIT, rowForDigit, stepSelection } from "@/lib/quick";
+import { QUICK_LIMIT, QUICK_VISIBLE, rowForDigit, stepSelection } from "@/lib/quick";
 import { cn } from "@/lib/utils";
 
 const KIND_ICON: Record<ClipKind, typeof FileText> = {
@@ -22,7 +22,7 @@ const KIND_ICON: Record<ClipKind, typeof FileText> = {
 };
 
 /**
- * The tiny clipboard (Ctrl twice): one input, the three best matches, Enter or a click copies.
+ * The tiny clipboard (Ctrl twice): one input, the recent history (pinned items in their natural place), three rows visible and the rest scrolls, Enter or a click copies.
  * Up/Down move, Alt+1..3 copy a row directly, Esc closes. The pin keeps it open after a copy
  * and when the focus goes elsewhere.
  */
@@ -33,6 +33,7 @@ export default function QuickApp() {
   const [pinned, setPinned] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLUListElement>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
   // Drops the answer of an older search that finishes after a newer one.
@@ -40,7 +41,7 @@ export default function QuickApp() {
 
   const run = useCallback((q: string) => {
     const mine = ++seq.current;
-    search(q, "all", QUICK_LIMIT)
+    search(q, "all", QUICK_LIMIT, false)
       .then((r) => {
         if (mine !== seq.current) return;
         setRows(r.slice(0, QUICK_LIMIT));
@@ -68,6 +69,11 @@ export default function QuickApp() {
       subs.forEach((p) => void p.then((un) => un()));
     };
   }, [run]);
+
+  // Keep the selected row in view while stepping with the arrow keys.
+  useEffect(() => {
+    list.current?.children[sel]?.scrollIntoView({ block: "nearest" });
+  }, [sel, rows]);
 
   const copy = useCallback((r: ResultDto | undefined) => {
     if (!r) return;
@@ -132,7 +138,7 @@ export default function QuickApp() {
           {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
         </button>
       </div>
-      <ul role="listbox" className="flex-1 p-1">
+      <ul ref={list} role="listbox" className="flex-1 overflow-y-auto p-1">
         {rows.map((r, i) => {
           const Icon = r.kind === "files" && r.fileCount === 1 ? Folder : KIND_ICON[r.kind];
           const text = r.snippet ?? r.preview;
@@ -153,7 +159,9 @@ export default function QuickApp() {
               <span className="line-clamp-2 min-w-0 flex-1 break-words text-xs leading-snug">
                 <Highlighted text={text} indices={r.matchIndices} />
               </span>
-              <kbd className="shrink-0 text-[10px] text-muted-foreground">Alt+{i + 1}</kbd>
+              {i < QUICK_VISIBLE && (
+                <kbd className="shrink-0 text-[10px] text-muted-foreground">Alt+{i + 1}</kbd>
+              )}
             </li>
           );
         })}
