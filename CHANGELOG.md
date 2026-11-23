@@ -8,16 +8,38 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
 ### Added
+
+- A title bar above every view: it shows the app version, is the only place to drag the window, and
+  holds the mode icons (clipboard, notes, tasks), the pin and the close button. The per-view pin,
+  close and back buttons are gone.
+
+- The shortcuts dialog has a search box, focused when it opens. `Ctrl+/` and `Ctrl+?` both open it.
 
 - `Alt+1`, `Alt+2`, `Alt+3` switch between the modes: clipboard, notes, tasks (the order of the title bar
   icons). Works from every view. A new mode takes the next number (`MODE_ORDER` in `lib/shortcuts.ts`).
 
 - `Alt+/` or `Alt+?` opens Ask with the caret in its input, from every view.
 
+- The mode keys (`Alt+1..3`) and the filter keys (`Alt+Shift+1..4`) are shown as hints in the UI.
+
 ### Changed
 
 - The clipboard type filters moved from `Alt+1..4` to `Alt+Shift+1..4`, to free `Alt+digit` for the modes.
+- The Ask button moved to the bottom-left footer and is no longer in the filter row. The old Ask
+  shortcut is dropped in favor of `Alt+/`.
+
+### Fixed
+
+- Hovering with the mouse no longer scrolls the result list or the task list when it moves the selection.
+- Removed the transparent padding around the window card.
+
+### Internal
+
+- CI: Rust caches are saved from `master` with fixed keys, and a cache-warm workflow fills them.
+- The package version is exposed to the UI as `__APP_VERSION__`.
 
 ## [0.3.0] - 2026-11-23
 
