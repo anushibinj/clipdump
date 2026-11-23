@@ -8,6 +8,31 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Ask is a conversation. A follow-up ("and who else was there?") is sent with the last three questions
+  and answers, so the model can work out what it means; the thread stays on screen above the new
+  answer and `Esc` clears it.
+- Ask can search by meaning. Set an **Embedding model** in Settings (for example `nomic-embed-text`) and
+  the items nearest in meaning to the question join the word hits in the ranking, so "what did my boss
+  want" finds "Priya asked for the Q4 numbers". It is off until you set the model, because the text of
+  every note, task and clipboard item is sent to your server once to be embedded. The vectors are kept
+  in memory only (never on disk); the newest 800 items are embedded on the first question and the rest
+  on the next ones.
+- Ask can dig. When the excerpts are not enough, the model may search again with other words and dates
+  (twice at most), or open an item in full; new items are added after the old ones so numbers never
+  shift. A first search that finds nothing is retried once, told which words failed. The line under an
+  answer says how many searches it took and whether meaning was used.
+- Ask answers summaries ("what did I copy this week?"): a `summary` answer may cite whole items, shown
+  without a highlighted quote.
+
+### Changed
+
+- Ask sends up to 40 excerpts of 1,000 characters (was 25 of 600), within a 24,000 character prompt.
+- An answer's quote is checked ignoring punctuation as well as case and whitespace, so a dropped full
+  stop or a curly quote no longer turns a right answer into "not found". A fact still needs a quote
+  that occurs in its item; only a summary may cite without one.
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

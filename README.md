@@ -23,7 +23,10 @@ tasks, `Ctrl+K` finds the tasks in a pasted or just copied text, and a task that
 The **Ask** button at the bottom left opens **Ask**: type a question such as "what was that thing my manager told me 2 weeks ago?" and
 the same LLM server answers it from your notes, tasks and clipboard history. It works out the dates and
 the likely wording, finds the matching items on the machine, and shows an answer only when it can quote
-the item it came from; the quote is highlighted under the answer, so you can check it.
+the item it came from; the quote is highlighted under the answer, so you can check it. Ask is a
+conversation (a follow-up is understood from the earlier questions), the model can search again with
+other words or open an item in full when the first excerpts are not enough, and with an embedding model
+set in Settings it also finds items by meaning, not only by words.
 
 Status: version 0.1.0, not released. The code is tested on Linux and cross-checked against the Windows
 APIs; it has not been run on Windows yet (`docs/manual-checks.md` lists what is left to verify).
