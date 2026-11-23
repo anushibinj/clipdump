@@ -624,9 +624,11 @@ export function TasksView({
   const maxLength = MAX_TITLE_CHARS;
   const hasExtras = view.hiddenCount > 0 || view.doneRecently > 0;
 
+  // Locked with the other tasks tucked away: the lock area takes the whole window.
+  const collapsedLock = lockedVisible && !showOthers;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div>
+      <div className={collapsedLock ? "flex min-h-0 flex-1 flex-col" : undefined}>
         <div className="flex h-12 items-center gap-2.5 border-b px-4 transition-shadow has-[input:focus-visible]:border-ring has-[input:focus-visible]:shadow-[inset_0_-1px_0_0_var(--ring)]">
           <ListTodo
             className="size-4 shrink-0 text-muted-foreground"
@@ -715,6 +717,7 @@ export function TasksView({
         </div>
 
         <div
+          className={collapsedLock ? "flex min-h-0 flex-1 flex-col" : undefined}
           onMouseDown={(e) => {
             // Not a window drag, and clicks on the buttons keep the caret in the task input.
             e.stopPropagation();
@@ -734,6 +737,7 @@ export function TasksView({
             />
           )}
           <FocusBanner
+            fill={collapsedLock}
             notes={
               lockedVisible && selectedTask ? (
                 <TaskNotes
@@ -787,7 +791,7 @@ export function TasksView({
         />
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className={`flex min-h-0 flex-col ${collapsedLock ? "shrink-0" : "flex-1"}`}>
       {lockedVisible && (
         <button
           type="button"

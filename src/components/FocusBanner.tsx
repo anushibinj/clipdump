@@ -30,6 +30,8 @@ interface FocusBannerProps {
   onAddTask: (item: ParkedItem) => void;
   /** The notes of the locked task, shown under its title while the lock is on. */
   notes?: ReactNode;
+  /** Stretch the lock panel to fill the height it is given (the list below is collapsed). */
+  fill?: boolean;
 }
 
 /**
@@ -63,7 +65,7 @@ function StreakChip({ focus }: { focus: FocusApi }) {
 }
 
 /** A session is running: the list is locked. */
-function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes }: FocusBannerProps) {
+function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes, fill }: FocusBannerProps) {
   const s = focus.data.session!;
   const left = remainingMs(s, focus.now);
   const paused = s.pausedAt !== null;
@@ -89,7 +91,7 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes }:
   };
 
   return (
-    <div className={`${bar} bg-primary/[0.06]`} role="region" aria-label="Focus lock">
+    <div className={`${bar} bg-primary/[0.06] ${fill ? "min-h-0 flex-1" : ""}`} role="region" aria-label="Focus lock">
       <div className="flex items-center gap-2.5">
         <Lock className="size-3.5 shrink-0 text-primary" aria-hidden />
         <span className="min-w-0 flex-1 truncate font-medium" title={s.title}>
@@ -98,7 +100,7 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes }:
         <StreakChip focus={focus} />
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex min-h-0 flex-1 gap-2">
         <div className="flex min-w-0 basis-[70%]">{notes}</div>
         <div className="flex basis-[30%] flex-col items-center justify-center gap-2 rounded-md border bg-background/60 p-3">
         <span

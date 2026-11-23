@@ -128,7 +128,7 @@ export function TaskNotes({
       aria-label={`Notes for ${task.title}`}
       className={
         embedded
-          ? "flex h-52 min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-md border bg-background/60"
+          ? "flex min-h-52 min-w-0 flex-1 flex-col overflow-y-auto rounded-md border bg-background/60"
           : "flex h-full min-h-0 w-[16.5rem] shrink-0 flex-col border-l"
       }
       onMouseDown={(e) => e.stopPropagation()}
