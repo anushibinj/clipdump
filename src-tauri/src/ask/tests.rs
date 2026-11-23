@@ -625,3 +625,96 @@ fn text_that_looks_like_instructions_is_only_data() {
     );
     assert!(http.user(1).contains("ignore previous instructions"));
 }
+
+// --- semantic neighbours ---------------------------------------------------
+
+#[test]
+fn a_neighbour_in_meaning_is_found_without_a_shared_word() {
+    // "boss" appears nowhere in the item that answers; only its meaning links them.
+    let corpus = vec![
+        cand(
+            Source::Note,
+            1,
+            (2026, 11, 6),
+            "",
+            "Priya asked for the Q4 numbers",
+        ),
+        cand(Source::Note, 2, (2026, 11, 6), "", "buy tomatoes"),
+    ];
+    let plan = fallback_plan();
+    assert!(retrieve("what did my boss want", &plan, &corpus).is_empty());
+    let hits = retrieve_with(
+        "what did my boss want",
+        &plan,
+        &corpus,
+        &[(Source::Note, 1)],
+    );
+    assert_eq!(ids(&hits), vec![(Source::Note, 1)]);
+}
+
+#[test]
+fn a_word_hit_that_is_also_a_neighbour_outranks_a_word_hit_alone() {
+    let corpus = vec![
+        cand(Source::Note, 1, (2026, 11, 6), "", "manager lunch"),
+        cand(Source::Note, 2, (2026, 11, 7), "", "manager report"),
+    ];
+    let plan = fallback_plan();
+    let plain = retrieve("manager", &plan, &corpus);
+    assert_eq!(plain[0].id, 2, "newest wins a tie");
+    let fused = retrieve_with("manager", &plan, &corpus, &[(Source::Note, 1)]);
+    assert_eq!(fused[0].id, 1);
+}
+
+#[test]
+fn a_neighbour_outside_the_range_is_demoted_not_dropped() {
+    let corpus = vec![
+        cand(Source::Note, 1, (2026, 1, 1), "", "old thing"),
+        cand(Source::Note, 2, (2026, 11, 6), "", "new thing"),
+    ];
+    let plan = plan_in("2026-11-06", "2026-11-06", &[]);
+    let hits = retrieve_with(
+        "zzz",
+        &plan,
+        &corpus,
+        &[(Source::Note, 1), (Source::Note, 2)],
+    );
+    assert_eq!(ids(&hits), vec![(Source::Note, 2), (Source::Note, 1)]);
+}
+
+#[test]
+fn neighbours_of_a_source_the_plan_excludes_are_ignored() {
+    let corpus = vec![cand(Source::Clip, 1, (2026, 11, 6), "", "copied text")];
+    let mut plan = fallback_plan();
+    plan.sources = vec![Source::Note];
+    assert!(retrieve_with("zzz", &plan, &corpus, &[(Source::Clip, 1)]).is_empty());
+}
+
+#[test]
+fn the_answer_says_whether_meaning_was_used() {
+    let corpus = vec![cand(
+        Source::Note,
+        1,
+        (2026, 11, 6),
+        "",
+        "Priya asked for the Q4 numbers",
+    )];
+    let replies = [
+        r#"{"terms":[]}"#,
+        r#"{"found":true,"answer":"Priya asked for numbers [1].","sources":[{"n":1,"quote":"asked for the Q4 numbers"}]}"#,
+    ];
+    let opts = Options {
+        semantic: vec![(Source::Note, 1)],
+    };
+    let got = ask_with(
+        &cfg(),
+        &Seq::new(&replies),
+        "what did my boss want",
+        now(),
+        &corpus,
+        &opts,
+    )
+    .unwrap();
+    assert!(got.found && got.searched.semantic);
+    let got = ask(&cfg(), &Seq::new(&replies[..1]), "boss", now(), &corpus).unwrap();
+    assert!(!got.searched.semantic);
+}

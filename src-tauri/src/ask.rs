@@ -524,6 +524,19 @@ fn by_newest(a: &Candidate, b: &Candidate) -> Ordering {
 /// question like "what did I copy last Tuesday" works without any word), and word hits outside
 /// the range at [`OUTSIDE_WEIGHT`]: a range the model got wrong then only demotes them.
 pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hit> {
+    retrieve_with(question, plan, candidates, &[])
+}
+
+/// [`retrieve`] with a fourth ranked list: the items closest in meaning to the question
+/// (`semantic`, nearest first, from [`semantic::rank`]). It is fused like the word hits, so an
+/// item that is both a word hit and a neighbour rises, and a neighbour outside the date range
+/// is discounted like a word hit outside it.
+pub fn retrieve_with(
+    question: &str,
+    plan: &Plan,
+    candidates: &[Candidate],
+    semantic: &[(Source, u64)],
+) -> Vec<Hit> {
     // Word, weight: the person's own words count double the model's synonyms.
     let mut terms: Vec<(String, u32)> = Vec::new();
     for w in question_words(question) {
@@ -586,6 +599,25 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
         window.sort_by(|a, b| by_newest(pool[*a], pool[*b]));
         for (rank, i) in window.into_iter().take(WINDOW_FILL).enumerate() {
             add(i, rank, 1.0);
+        }
+    }
+
+    if !semantic.is_empty() {
+        let at: HashMap<(Source, u64), usize> = pool
+            .iter()
+            .enumerate()
+            .map(|(i, c)| ((c.source, c.id), i))
+            .collect();
+        let near: Vec<usize> = semantic.iter().filter_map(|k| at.get(k).copied()).collect();
+        let (inside, outside): (Vec<_>, Vec<_>) = match plan.range {
+            Some(r) => near.iter().partition(|i| in_range(pool[**i], r)),
+            None => (near.iter().collect(), Vec::new()),
+        };
+        for (rank, i) in inside.into_iter().enumerate() {
+            add(*i, rank, 1.0);
+        }
+        for (rank, i) in outside.into_iter().enumerate() {
+            add(*i, rank, OUTSIDE_WEIGHT);
         }
     }
 
@@ -809,6 +841,16 @@ pub struct Searched {
     pub sources: Vec<Source>,
     /// Items looked through.
     pub scanned: usize,
+    /// Whether items were also ranked by meaning (an embedding model is set up and answered).
+    pub semantic: bool,
+}
+
+/// What Ask is given besides the question.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// Items nearest in meaning to the question, nearest first; empty when semantic search is
+    /// off or its server could not embed.
+    pub semantic: Vec<(Source, u64)>,
 }
 
 /// Plan, retrieve, answer, verify. `candidates` is everything searchable right now.
@@ -822,18 +864,31 @@ pub fn ask(
     now: i64,
     candidates: &[Candidate],
 ) -> Result<Answer, String> {
+    ask_with(cfg, http, question, now, candidates, &Options::default())
+}
+
+/// [`ask`] with [`Options`].
+pub fn ask_with(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    question: &str,
+    now: i64,
+    candidates: &[Candidate],
+    options: &Options,
+) -> Result<Answer, String> {
     let question = clip_to(question.trim(), MAX_QUESTION_CHARS);
     if question.is_empty() {
         return Err("type a question first".to_owned());
     }
     let plan = plan(cfg, http, question, now)?;
-    let mut hits = retrieve(question, &plan, candidates);
+    let mut hits = retrieve_with(question, &plan, candidates, &options.semantic);
     let searched = Searched {
         from: plan.shown.as_ref().map(|(a, _)| a.clone()),
         to: plan.shown.as_ref().map(|(_, b)| b.clone()),
         terms: plan.terms.iter().take(12).cloned().collect(),
         sources: plan.sources.clone(),
         scanned: candidates.len(),
+        semantic: !options.semantic.is_empty(),
     };
     let not_found = |hits: Vec<Hit>, searched: Searched| Answer {
         found: false,
