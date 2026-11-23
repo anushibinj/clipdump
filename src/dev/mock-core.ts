@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS = {
   startAtLogin: true,
   llmBaseUrl: "http://localhost:11434/v1",
   llmModel: "llama3.2",
+  llmEmbeddingModel: "",
   llmApiKeySet: false,
   llmApiKey: null as string | null,
 };
@@ -493,6 +494,8 @@ function runAsk(question: unknown): unknown {
     terms: words.slice(0, 12),
     sources: ["note", "task", "clip"],
     scanned: all.length,
+    semantic: Boolean(settings.llmEmbeddingModel),
+    rounds: 1,
   };
   const hits = scored.map(({ c }, i) => ({
     n: i + 1,

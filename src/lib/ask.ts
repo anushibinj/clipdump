@@ -1,7 +1,24 @@
 // Pure helpers of the Ask view: turning an answer into text and citation chips, finding the verified
 // quote inside an excerpt, and the words that say what was searched.
 
-import type { AskHit, AskSearched, AskSource } from "@/lib/ipc";
+import type { AskAnswer, AskHit, AskSearched, AskSource, AskTurn } from "@/lib/ipc";
+
+/** Finished questions kept for a conversation, and sent along with a follow-up (the backend uses the last three). */
+export const MAX_HISTORY = 6;
+
+/** One finished question with the answer it got. */
+export interface AskExchange {
+  question: string;
+  answer: AskAnswer;
+}
+
+/** What is sent as history: the answer text only when one was found. */
+export function toHistory(turns: readonly AskExchange[]): AskTurn[] {
+  return turns.slice(-MAX_HISTORY).map((t) => ({
+    question: t.question,
+    answer: t.answer.found ? t.answer.answer : "",
+  }));
+}
 
 export type AnswerPart = { kind: "text"; text: string } | { kind: "cite"; n: number };
 
@@ -38,13 +55,14 @@ export function splitAnswer(answer: string, hits: readonly Pick<AskHit, "n">[]):
 
 /**
  * Where `quote` sits in `excerpt` as `[start, end)` UTF-16 offsets, or null. The backend verified the
- * quote with whitespace and case ignored, so the match does the same: the words of the quote joined by
- * any run of whitespace, case insensitive.
+ * quote with case, whitespace and punctuation ignored, so the match does the same: the quote's words
+ * (letters and digits) joined by any run of other characters, case insensitive. The range runs from
+ * the first word to the last, so surrounding punctuation is not part of the highlight.
  */
 export function quoteRange(excerpt: string, quote: string): [number, number] | null {
-  const words = quote.split(/\s+/).filter((w) => w !== "");
+  const words = quote.split(/[^\p{L}\p{N}]+/u).filter((w) => w !== "");
   if (words.length === 0) return null;
-  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\p{L}\\p{N}]+"), "iu");
   const m = re.exec(excerpt);
   return m ? [m.index, m.index + m[0].length] : null;
 }
@@ -72,7 +90,17 @@ export function searchedLine(s: AskSearched): string {
   const out = [`Looked in ${list}`];
   if (s.from && s.to) out.push(s.from === s.to ? s.from : `${s.from} to ${s.to}`);
   out.push(`${s.scanned} ${s.scanned === 1 ? "item" : "items"}`);
+  if (s.semantic) out.push("by meaning too");
+  if (s.rounds > 1) out.push(`${s.rounds} searches`);
   return out.join(" · ");
+}
+
+/**
+ * An earlier answer as plain text. Its `[n]` markers named items of that search, which are not on
+ * screen any more, so they are dropped (with the space before them).
+ */
+export function plainAnswer(answer: string): string {
+  return answer.replace(/\s?\[\d{1,3}\]/g, "");
 }
 
 /** The question as it is sent: whitespace trimmed. Null when there is nothing to ask. */

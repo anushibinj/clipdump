@@ -53,6 +53,9 @@ pub struct SettingsDto {
     pub llm_base_url: String,
     /// Model name sent to that server.
     pub llm_model: String,
+    /// Embedding model for semantic search in Ask. Empty: off.
+    #[serde(default)]
+    pub llm_embedding_model: String,
     /// Whether an API key is stored. Output only; the key itself never leaves the backend.
     #[serde(default)]
     pub llm_api_key_set: bool,
@@ -81,6 +84,7 @@ impl SettingsDto {
             start_at_login: s.start_at_login,
             llm_base_url: s.llm_base_url.clone(),
             llm_model: s.llm_model.clone(),
+            llm_embedding_model: s.llm_embedding_model.clone(),
             llm_api_key_set: !s.llm_api_key.is_empty(),
             llm_api_key: None,
         }
@@ -99,6 +103,7 @@ pub fn validate(mut dto: SettingsDto) -> Result<SettingsDto, String> {
     dto.ignored_apps = tidy_ignored_apps(&dto.ignored_apps, true)?;
     dto.llm_base_url = dto.llm_base_url.trim().to_owned();
     dto.llm_model = dto.llm_model.trim().to_owned();
+    dto.llm_embedding_model = dto.llm_embedding_model.trim().to_owned();
     if !dto.llm_base_url.is_empty() {
         crate::llm::endpoint(&dto.llm_base_url)?;
     }
@@ -106,6 +111,7 @@ pub fn validate(mut dto: SettingsDto) -> Result<SettingsDto, String> {
     let too_long = |t: &str| t.chars().count() > MAX_LLM_FIELD_CHARS;
     if too_long(&dto.llm_base_url)
         || too_long(&dto.llm_model)
+        || too_long(&dto.llm_embedding_model)
         || dto.llm_api_key.as_deref().is_some_and(too_long)
     {
         return Err("an LLM setting is too long".to_owned());
@@ -201,6 +207,7 @@ impl SettingsEnv<'_> {
             s.start_at_login = dto.start_at_login;
             s.llm_base_url = dto.llm_base_url.clone();
             s.llm_model = dto.llm_model.clone();
+            s.llm_embedding_model = dto.llm_embedding_model.clone();
             if let Some(key) = &dto.llm_api_key {
                 s.llm_api_key = key.clone();
             }

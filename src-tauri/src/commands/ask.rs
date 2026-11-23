@@ -6,10 +6,13 @@
 //! Nothing here changes a note, a task or a clip, and nothing leaves the machine except the
 //! question and the few excerpts `ask::retrieve` picks.
 
+use std::sync::{Mutex, OnceLock};
+
 use tauri::{AppHandle, Manager};
 
 use super::tasks::{system_now_ms, tasks};
-use crate::ask::{self, Answer, Candidate, Source};
+use crate::ask::semantic::{self, EmbedCache};
+use crate::ask::{self, Answer, Candidate, Options, Source, Turn};
 use crate::llm::{LlmConfig, UreqHttp};
 use crate::model::{ClipItem, ClipKind};
 use crate::notes::Note;
@@ -27,6 +30,25 @@ fn config(app: &AppHandle) -> Result<LlmConfig, String> {
             .unwrap_or_else(|e| e.into_inner()),
     )
     .ok_or_else(|| NOT_SET_UP.to_owned())
+}
+
+/// The vectors of the items seen so far. In memory for the life of the app, so only the first
+/// question after a start (or a new model) embeds the history.
+fn embed_cache() -> &'static Mutex<EmbedCache> {
+    static CACHE: OnceLock<Mutex<EmbedCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(EmbedCache::default()))
+}
+
+/// The embedding model, when semantic search is on.
+fn embedding_model(app: &AppHandle) -> Option<String> {
+    let model = app
+        .state::<AppState>()
+        .settings
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .llm_embedding_model
+        .clone();
+    (!model.is_empty()).then_some(model)
 }
 
 fn file_name(path: &str) -> &str {
@@ -125,9 +147,15 @@ pub fn candidates(notes: &[Note], tasks: &[Task], history: &Store) -> Vec<Candid
     out
 }
 
-/// Answer `question` from the notes, the tasks and the clipboard history.
+/// Answer `question` from the notes, the tasks and the clipboard history. `history` is the
+/// conversation so far (oldest first), so a follow-up can lean on it.
 #[tauri::command(async)]
-pub fn ask_everything(app: AppHandle, question: String) -> Result<Answer, String> {
+pub fn ask_everything(
+    app: AppHandle,
+    question: String,
+    history: Option<Vec<Turn>>,
+) -> Result<Answer, String> {
+    let history = history.unwrap_or_default();
     let cfg = config(&app)?;
     let history = super::store(&app)?;
     let notes = app
@@ -139,7 +167,27 @@ pub fn ask_everything(app: AppHandle, question: String) -> Result<Answer, String
     // The task list is optional too: a question can still be answered from the rest.
     let task_list = tasks(&app).map(|t| t.list()).unwrap_or_default();
     let all = candidates(&notes, &task_list, &history);
-    ask::ask(&cfg, &UreqHttp, &question, system_now_ms(), &all)
+    // Ranking by meaning is a bonus: a server that cannot embed only means words alone.
+    // A vague follow-up ("and who else?") embeds next to the question it follows.
+    let mut query = history
+        .last()
+        .map(|t| format!("{} ", t.question))
+        .unwrap_or_default();
+    query.push_str(&question);
+    let semantic = embedding_model(&app)
+        .and_then(|model| {
+            let mut cache = embed_cache().lock().unwrap_or_else(|e| e.into_inner());
+            semantic::rank(&cfg, &model, &UreqHttp, &mut cache, &query, &all).ok()
+        })
+        .unwrap_or_default();
+    ask::ask_with(
+        &cfg,
+        &UreqHttp,
+        &question,
+        system_now_ms(),
+        &all,
+        &Options { semantic, history },
+    )
 }
 
 #[cfg(test)]

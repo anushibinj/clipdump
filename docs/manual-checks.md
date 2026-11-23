@@ -1342,3 +1342,18 @@ list shows how real model output behaves.
       counted, and the break is offered.
 - [ ] The strip shows the streak (flame) and "N m focused today"; hovering the flame lists the last 7 days.
       A task row shows the total time focused on it.
+
+## Ask (needs a real LLM server; `Alt+/`)
+
+- [ ] A question with a time ("what did my manager tell me 2 weeks ago?") answers with a quote that is
+      highlighted in its source card; the line under the answer names the dates searched.
+- [ ] A follow-up ("and what else did they say?") is understood: the earlier question and answer are
+      shown above, the placeholder says "Ask a follow-up", `Esc` twice clears the conversation.
+- [ ] A question whose wording matches nothing ("what did my boss want") still finds the item when the
+      model searches again: the line under the answer says "2 searches".
+- [ ] With an embedding model set (Settings), the same question finds an item that shares no word with
+      it, and the line says "by meaning too". With a wrong embedding model name, Ask still answers by
+      words alone (no error). Restart the app: the first question embeds the history again.
+- [ ] "Summarize what I copied this week" gives a short overview citing several items without a
+      highlighted quote.
+- [ ] Empty embedding model: no request to `/embeddings` reaches the server (check its log).

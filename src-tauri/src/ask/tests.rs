@@ -479,6 +479,35 @@ fn one_good_source_carries_the_answer_and_bad_markers_are_stripped() {
 }
 
 #[test]
+fn a_quote_differing_only_in_punctuation_still_verifies() {
+    let mut hits = two_hits();
+    let reply = r#"{"found":true,"answer":"Priya wants the report [2].","sources":[{"n":2,"quote":"Priya wants the Q4 report, by Friday!"}]}"#;
+    assert_eq!(
+        parse_answer(reply, &mut hits).unwrap(),
+        "Priya wants the report [2]."
+    );
+    assert!(hits[0].cited && hits[0].quote.is_some());
+}
+
+#[test]
+fn a_summary_may_cite_items_without_a_quote_but_a_fact_may_not() {
+    let summary = r#"{"found":true,"kind":"summary","answer":"A lunch plan [1] and a report due [2].","sources":[{"n":1,"quote":""},{"n":2,"quote":"not in the text"}]}"#;
+    let mut hits = two_hits();
+    assert_eq!(
+        parse_answer(summary, &mut hits).unwrap(),
+        "A lunch plan [1] and a report due [2]."
+    );
+    assert_eq!(hits.iter().filter(|h| h.cited).count(), 2);
+    assert!(hits.iter().all(|h| h.quote.is_none()));
+    // A summary still cannot cite an item that does not exist.
+    let ghost = r#"{"found":true,"kind":"summary","answer":"x [9]","sources":[{"n":9}]}"#;
+    assert_eq!(parse_answer(ghost, &mut two_hits()).unwrap(), "");
+    // The same quoteless citation as a fact is a guess.
+    let fact = summary.replace("summary", "fact");
+    assert_eq!(parse_answer(&fact, &mut two_hits()).unwrap(), "");
+}
+
+#[test]
 fn markers_that_are_not_numbers_stay() {
     assert_eq!(
         strip_unverified_markers("see [note] and [1] and [2]", &[1]),
@@ -525,13 +554,29 @@ fn ask_plans_retrieves_answers_and_verifies() {
 }
 
 #[test]
-fn ask_without_candidates_does_not_make_the_second_call() {
-    let http = Seq::new(&[r#"{"terms":["zebra"]}"#]);
+fn ask_without_candidates_retries_the_plan_once_and_never_asks_for_an_answer() {
+    let http = Seq::new(&[r#"{"terms":["zebra"]}"#, r#"{"terms":["stripes"]}"#]);
     let got = ask(&cfg(), &http, "zebra stripes", now(), &corpus()).unwrap();
     assert!(!got.found);
     assert_eq!(got.answer, NOT_FOUND);
     assert!(got.hits.is_empty());
-    assert_eq!(http.calls(), 1);
+    assert_eq!(http.calls(), 2);
+    assert!(http.system(1).contains("did not match anything: zebra"));
+    assert!(!http.system(0).contains("did not match"));
+    assert_eq!(got.searched.rounds, 2);
+}
+
+#[test]
+fn a_retried_plan_that_finds_something_goes_on_to_the_answer() {
+    let http = Seq::new(&[
+        r#"{"terms":["boss"]}"#,
+        r#"{"terms":["manager"]}"#,
+        r#"{"found":true,"answer":"Priya is the manager [2].","sources":[{"n":2,"quote":"Priya (my manager) wants"}]}"#,
+    ]);
+    let got = ask(&cfg(), &http, "my boss", now(), &corpus()).unwrap();
+    assert!(got.found, "{got:?}");
+    assert_eq!(got.searched.terms, vec!["boss", "manager"]);
+    assert_eq!(got.searched.rounds, 2);
 }
 
 #[test]
@@ -569,7 +614,7 @@ fn the_prompt_is_bounded_and_numbers_match_what_was_sent() {
         .collect();
     let mut hits = retrieve("manager", &fallback_plan(), &many);
     assert_eq!(hits.len(), MAX_SNIPPETS);
-    let user = answer_prompt("manager", &mut hits);
+    let user = answer_prompt("manager", &mut hits, &[]);
     assert!(hits.len() < MAX_SNIPPETS, "25 big excerpts do not fit");
     assert!(user.chars().count() < PROMPT_CHARS + 600);
     assert!(user.contains(&format!("[{}] note", hits.len())));
@@ -595,4 +640,309 @@ fn text_that_looks_like_instructions_is_only_data() {
         "an answer that its excerpt does not back is no answer"
     );
     assert!(http.user(1).contains("ignore previous instructions"));
+}
+
+// --- semantic neighbours ---------------------------------------------------
+
+#[test]
+fn a_neighbour_in_meaning_is_found_without_a_shared_word() {
+    // "boss" appears nowhere in the item that answers; only its meaning links them.
+    let corpus = vec![
+        cand(
+            Source::Note,
+            1,
+            (2026, 11, 6),
+            "",
+            "Priya asked for the Q4 numbers",
+        ),
+        cand(Source::Note, 2, (2026, 11, 6), "", "buy tomatoes"),
+    ];
+    let plan = fallback_plan();
+    assert!(retrieve("what did my boss want", &plan, &corpus).is_empty());
+    let hits = retrieve_with(
+        "what did my boss want",
+        &plan,
+        &corpus,
+        &[(Source::Note, 1)],
+    );
+    assert_eq!(ids(&hits), vec![(Source::Note, 1)]);
+}
+
+#[test]
+fn a_word_hit_that_is_also_a_neighbour_outranks_a_word_hit_alone() {
+    let corpus = vec![
+        cand(Source::Note, 1, (2026, 11, 6), "", "manager lunch"),
+        cand(Source::Note, 2, (2026, 11, 7), "", "manager report"),
+    ];
+    let plan = fallback_plan();
+    let plain = retrieve("manager", &plan, &corpus);
+    assert_eq!(plain[0].id, 2, "newest wins a tie");
+    let fused = retrieve_with("manager", &plan, &corpus, &[(Source::Note, 1)]);
+    assert_eq!(fused[0].id, 1);
+}
+
+#[test]
+fn a_neighbour_outside_the_range_is_demoted_not_dropped() {
+    let corpus = vec![
+        cand(Source::Note, 1, (2026, 1, 1), "", "old thing"),
+        cand(Source::Note, 2, (2026, 11, 6), "", "new thing"),
+    ];
+    let plan = plan_in("2026-11-06", "2026-11-06", &[]);
+    let hits = retrieve_with(
+        "zzz",
+        &plan,
+        &corpus,
+        &[(Source::Note, 1), (Source::Note, 2)],
+    );
+    assert_eq!(ids(&hits), vec![(Source::Note, 2), (Source::Note, 1)]);
+}
+
+#[test]
+fn neighbours_of_a_source_the_plan_excludes_are_ignored() {
+    let corpus = vec![cand(Source::Clip, 1, (2026, 11, 6), "", "copied text")];
+    let mut plan = fallback_plan();
+    plan.sources = vec![Source::Note];
+    assert!(retrieve_with("zzz", &plan, &corpus, &[(Source::Clip, 1)]).is_empty());
+}
+
+#[test]
+fn the_answer_says_whether_meaning_was_used() {
+    let corpus = vec![cand(
+        Source::Note,
+        1,
+        (2026, 11, 6),
+        "",
+        "Priya asked for the Q4 numbers",
+    )];
+    let replies = [
+        r#"{"terms":[]}"#,
+        r#"{"found":true,"answer":"Priya asked for numbers [1].","sources":[{"n":1,"quote":"asked for the Q4 numbers"}]}"#,
+    ];
+    let opts = Options {
+        semantic: vec![(Source::Note, 1)],
+        ..Options::default()
+    };
+    let got = ask_with(
+        &cfg(),
+        &Seq::new(&replies),
+        "what did my boss want",
+        now(),
+        &corpus,
+        &opts,
+    )
+    .unwrap();
+    assert!(got.found && got.searched.semantic);
+    let got = ask(
+        &cfg(),
+        &Seq::new(&[replies[0], replies[0]]),
+        "boss",
+        now(),
+        &corpus,
+    )
+    .unwrap();
+    assert!(!got.searched.semantic);
+}
+
+// --- asking for more -------------------------------------------------------
+
+const FOUND_2: &str = r#"{"found":true,"answer":"The wifi password is hunter2 [2].","sources":[{"n":2,"quote":"password is hunter2"}]}"#;
+
+fn wifi_corpus() -> Vec<Candidate> {
+    vec![
+        cand(
+            Source::Note,
+            1,
+            (2026, 11, 6),
+            "Meeting",
+            "budget meeting notes, nothing about passwords",
+        ),
+        cand(
+            Source::Clip,
+            2,
+            (2026, 11, 1),
+            "",
+            "the wifi password is hunter2 for the guest network",
+        ),
+    ]
+}
+
+#[test]
+fn the_model_can_search_again_and_the_new_items_come_after_the_old_ones() {
+    let http = Seq::new(&[
+        r#"{"terms":["meeting"]}"#,
+        r#"{"more":{"from":null,"to":null,"terms":["wifi","password"],"sources":["clips"]}}"#,
+        FOUND_2,
+    ]);
+    let got = ask(&cfg(), &http, "meeting stuff", now(), &wifi_corpus()).unwrap();
+    assert!(got.found, "{got:?}");
+    assert_eq!(http.calls(), 3);
+    // Round two: the old item keeps number 1, the new one is 2, and the answer cites 2.
+    let second = http.user(2);
+    assert!(second.contains("[1] note"));
+    assert!(second.contains("[2] clipboard"));
+    assert_eq!(got.hits[0].n, 2);
+    assert!(got.hits[0].cited);
+    assert_eq!(got.searched.rounds, 2);
+    assert_eq!(got.searched.terms, vec!["meeting", "wifi", "password"]);
+    assert!(got.searched.sources.contains(&Source::Clip));
+    assert!(
+        http.system(1).contains("\"more\""),
+        "the model is told it may ask"
+    );
+}
+
+#[test]
+fn a_search_that_adds_nothing_ends_the_asking() {
+    let http = Seq::new(&[
+        r#"{"terms":["meeting"]}"#,
+        r#"{"more":{"terms":["meeting"]}}"#,
+        r#"{"more":{"terms":["something else"]}}"#,
+    ]);
+    let got = ask(&cfg(), &http, "meeting stuff", now(), &wifi_corpus()).unwrap();
+    assert!(!got.found);
+    assert_eq!(http.calls(), 3, "plan, answer, then the forced last answer");
+    assert!(http.system(2).contains("last step"));
+    assert!(!http.system(2).contains("\"more\""));
+}
+
+#[test]
+fn asking_for_more_forever_is_capped() {
+    let more = r#"{"more":{"terms":["wifi"],"sources":["clips"]}}"#;
+    let other = r#"{"more":{"terms":["password"]}}"#;
+    let third = r#"{"more":{"terms":["guest"]}}"#;
+    let http = Seq::new(&[r#"{"terms":["meeting"]}"#, more, other, third]);
+    let got = ask(&cfg(), &http, "meeting", now(), &wifi_corpus()).unwrap();
+    assert!(!got.found);
+    assert_eq!(http.calls(), 2 + MAX_MORE_ROUNDS);
+}
+
+#[test]
+fn the_model_can_open_an_item_to_read_it_in_full() {
+    let long = format!("{} the code word is osprey", "filler ".repeat(300));
+    let corpus = vec![cand(Source::Note, 1, (2026, 11, 6), "", &long)];
+    let http = Seq::new(&[
+        r#"{"terms":["filler"]}"#,
+        r#"{"open":[1,1,9]}"#,
+        r#"{"found":true,"answer":"The code word is osprey [1].","sources":[{"n":1,"quote":"the code word is osprey"}]}"#,
+    ]);
+    let got = ask(&cfg(), &http, "filler", now(), &corpus).unwrap();
+    assert!(got.found, "the quote sits past the first excerpt: {got:?}");
+    assert!(!http.user(1).contains("osprey"));
+    assert!(http.user(2).contains("osprey"));
+    assert_eq!(got.searched.rounds, 1, "opening is not a search");
+}
+
+#[test]
+fn open_only_names_items_that_exist_and_at_most_a_few() {
+    let mut hits = two_hits();
+    assert_eq!(
+        parse_step(r#"{"open":[2,0,7,2,1]}"#, &mut hits).unwrap(),
+        Step::Open(vec![2, 1])
+    );
+    let many: Vec<Hit> = (1..=9)
+        .map(|n| Hit {
+            n,
+            ..two_hits().remove(0)
+        })
+        .collect();
+    let Step::Open(ns) = parse_step(r#"{"open":[1,2,3,4,5,6]}"#, &mut many.clone()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(ns.len(), 4);
+}
+
+#[test]
+fn a_reply_with_neither_more_nor_open_is_an_answer() {
+    let mut hits = two_hits();
+    let reply = r#"{"found":false,"answer":"","sources":[]}"#;
+    assert_eq!(
+        parse_step(reply, &mut hits).unwrap(),
+        Step::Done(String::new())
+    );
+    let more = parse_step(
+        r#"{"more":{"terms":["X Y"],"from":"2026-11-01"}}"#,
+        &mut hits,
+    )
+    .unwrap();
+    let Step::More(p) = more else { panic!() };
+    assert_eq!(p.terms, vec!["x y"]);
+    assert!(p.range.is_some());
+    assert!(parse_step("nope", &mut hits).is_err());
+}
+
+#[test]
+fn merging_skips_known_items_and_numbers_the_rest_after_the_old_ones() {
+    let mut hits = two_hits();
+    let mut dup = two_hits().remove(0);
+    dup.n = 1;
+    let mut fresh = two_hits().remove(0);
+    fresh.id = 99;
+    assert_eq!(merge_hits(&mut hits, vec![dup, fresh]), 1);
+    assert_eq!(hits.len(), 3);
+    assert_eq!((hits[2].n, hits[2].id), (3, 99));
+}
+
+// --- follow-ups ------------------------------------------------------------
+
+fn turn(q: &str, a: &str) -> Turn {
+    Turn {
+        question: q.into(),
+        answer: a.into(),
+    }
+}
+
+#[test]
+fn history_goes_into_the_data_block_without_the_old_numbers() {
+    let block = history_block(&[turn("who is my manager?", "Priya [3] and Sam [12].")]);
+    assert!(block.contains("Q: who is my manager?\nA: Priya and Sam.\n"));
+    assert!(!block.contains('['));
+    assert!(block.contains("never a source"));
+    assert_eq!(history_block(&[]), "");
+    assert_eq!(history_block(&[turn("  ", "x")]), "");
+}
+
+#[test]
+fn only_the_last_turns_are_kept_and_each_is_bounded() {
+    let turns: Vec<Turn> = (0..5).map(|i| turn(&format!("question {i}"), "")).collect();
+    let block = history_block(&turns);
+    assert!(!block.contains("question 0") && !block.contains("question 1"));
+    assert!(block.contains("question 2") && block.contains("question 4"));
+    assert!(!block.contains("A: "), "no answer, no answer line");
+    let long = history_block(&[turn(&"q".repeat(1000), &"a".repeat(2000))]);
+    assert!(long.chars().count() < 1200);
+}
+
+#[test]
+fn a_follow_up_is_planned_and_answered_with_the_earlier_turns() {
+    let http = Seq::new(&[
+        r#"{"terms":["manager","report"]}"#,
+        r#"{"found":true,"answer":"Priya [1].","sources":[{"n":1,"quote":"Priya (my manager) wants"}]}"#,
+    ]);
+    let opts = Options {
+        history: vec![turn("what did my manager want?", "The Q4 report [1].")],
+        ..Options::default()
+    };
+    let got = ask_with(&cfg(), &http, "and who was it?", now(), &corpus(), &opts).unwrap();
+    assert!(got.found, "{got:?}");
+    let plan_user = http.user(0);
+    assert!(plan_user.starts_with("<data>\nEarlier in this conversation"));
+    assert!(plan_user.contains("A: The Q4 report.\n"));
+    assert!(plan_user.ends_with("New question: and who was it?\n</data>"));
+    assert!(http.system(0).contains("follow-up"));
+    let answer_user = http.user(1);
+    assert!(answer_user.contains("Q: what did my manager want?"));
+    let history_at = answer_user.find("Earlier in this conversation").unwrap();
+    assert!(
+        history_at > answer_user.find("<data>").unwrap(),
+        "inside the data block"
+    );
+    assert!(history_at < answer_user.find("[1] note").unwrap());
+}
+
+#[test]
+fn without_history_the_prompts_are_what_they_were() {
+    let http = Seq::new(&[r#"{"terms":["boss"]}"#]);
+    plan(&cfg(), &http, "boss", now()).unwrap();
+    assert_eq!(http.user(0), "<data>\nboss\n</data>");
+    assert!(!http.system(0).contains("follow-up"));
 }

@@ -109,6 +109,10 @@ pub struct Settings {
     /// sent to the webview, see `SettingsDto`), so it is only as private as the
     /// user's profile folder.
     pub llm_api_key: String,
+    /// Embedding model of the same server (`nomic-embed-text`, `text-embedding-3-small`). Empty
+    /// means semantic search in Ask is off: embedding sends the text of every note, task and
+    /// clipboard item to the server once, which is why it is opt-in.
+    pub llm_embedding_model: String,
 }
 
 impl Default for Settings {
@@ -132,6 +136,7 @@ impl Default for Settings {
             llm_base_url: String::new(),
             llm_model: String::new(),
             llm_api_key: String::new(),
+            llm_embedding_model: String::new(),
         }
     }
 }
@@ -303,6 +308,7 @@ impl Settings {
             llm_base_url: field(obj, "llm_base_url", d.llm_base_url, issues),
             llm_model: field(obj, "llm_model", d.llm_model, issues),
             llm_api_key: field(obj, "llm_api_key", d.llm_api_key, issues),
+            llm_embedding_model: field(obj, "llm_embedding_model", d.llm_embedding_model, issues),
         };
         s.sanitize(issues);
         Some(s)
@@ -333,6 +339,7 @@ impl Settings {
             &mut self.llm_base_url,
             &mut self.llm_model,
             &mut self.llm_api_key,
+            &mut self.llm_embedding_model,
         ] {
             *text = text.trim().to_owned();
             if text.chars().count() > MAX_LLM_FIELD_CHARS {

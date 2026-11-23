@@ -46,17 +46,17 @@ const MAX_TERMS: usize = 30;
 /// Longest search word kept (characters).
 const MAX_TERM_CHARS: usize = 40;
 /// Excerpts sent to the model at most.
-pub const MAX_SNIPPETS: usize = 25;
+pub const MAX_SNIPPETS: usize = 40;
 /// Characters of one excerpt.
-pub const SNIPPET_CHARS: usize = 600;
+pub const SNIPPET_CHARS: usize = 1_000;
 /// Characters of all excerpts together; later (lower ranked) ones are dropped to fit.
-const PROMPT_CHARS: usize = 14_000;
+const PROMPT_CHARS: usize = 24_000;
 /// Items of the date range added by recency alone, before fusing.
 const WINDOW_FILL: usize = 50;
 /// Longest title shown (characters).
 const TITLE_CHARS: usize = 100;
 /// Longest answer kept (characters).
-const MAX_ANSWER_CHARS: usize = 1_500;
+const MAX_ANSWER_CHARS: usize = 2_500;
 /// Longest quote kept (characters), and the shortest that proves anything.
 const MAX_QUOTE_CHARS: usize = 300;
 const MIN_QUOTE_CHARS: usize = 3;
@@ -69,6 +69,50 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// guess up as "not found".
 pub const NOT_FOUND: &str = "I could not find that in your notes, tasks or clipboard history.";
 const BAD_REPLY: &str = "the model did not answer in the expected form";
+
+/// Earlier turns of the conversation passed along at most.
+pub const MAX_TURNS: usize = 3;
+/// Characters of an earlier question and of an earlier answer.
+const TURN_QUESTION_CHARS: usize = 300;
+const TURN_ANSWER_CHARS: usize = 600;
+
+/// One earlier question and the answer it got (empty when nothing was found).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Turn {
+    pub question: String,
+    #[serde(default)]
+    pub answer: String,
+}
+
+/// The last [`MAX_TURNS`] turns as text for a prompt, or "" without any. The answers' `[n]`
+/// markers are removed: those numbers belonged to another search's items and mean nothing now.
+/// It goes inside the data block: a past answer may repeat what a clipboard item said.
+fn history_block(history: &[Turn]) -> String {
+    let start = history.len().saturating_sub(MAX_TURNS);
+    let turns = &history[start..];
+    if turns.iter().all(|t| t.question.trim().is_empty()) {
+        return String::new();
+    }
+    let squash = |s: &str, max: usize| {
+        clip_to(&s.split_whitespace().collect::<Vec<_>>().join(" "), max).to_owned()
+    };
+    let mut out = String::from(
+        "Earlier in this conversation (context for understanding the question; these are not items and are never a source):\n",
+    );
+    for t in turns.iter().filter(|t| !t.question.trim().is_empty()) {
+        out.push_str("Q: ");
+        out.push_str(&squash(&t.question, TURN_QUESTION_CHARS));
+        out.push('\n');
+        let answer = strip_unverified_markers(&t.answer, &[]);
+        if !answer.trim().is_empty() {
+            out.push_str("A: ");
+            out.push_str(&squash(&answer, TURN_ANSWER_CHARS));
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
 
 /// Where an item came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -292,7 +336,10 @@ fn source_of(word: &str) -> Option<Source> {
 /// unknown source list means all of them. A reply that is not JSON at all is an error (the
 /// caller then falls back to [`fallback_plan`]).
 pub fn parse_plan(reply: &str) -> Result<Plan, String> {
-    let raw: RawPlan = parse(reply)?;
+    Ok(plan_from_raw(parse(reply)?))
+}
+
+fn plan_from_raw(raw: RawPlan) -> Plan {
     let from = raw.from.as_deref().and_then(parse_ymd);
     let to = raw.to.as_deref().and_then(parse_ymd);
     // One bound given: the other is the same day. Both wrong way round: swap.
@@ -323,12 +370,12 @@ pub fn parse_plan(reply: &str) -> Result<Plan, String> {
     if sources.is_empty() {
         sources = ALL_SOURCES.to_vec();
     }
-    Ok(Plan {
+    Plan {
         range,
         shown,
         terms,
         sources,
-    })
+    }
 }
 
 /// No dates, no synonyms, every source: what to search when the model's plan is unreadable.
@@ -439,14 +486,46 @@ pub fn plan(
     question: &str,
     now: i64,
 ) -> Result<Plan, String> {
+    plan_in_context(cfg, http, question, now, &[], &[])
+}
+
+/// [`plan`] with what came before: `tried` are the search words that found nothing (the model
+/// is told to come up with different wording and a wider range instead of the same plan) and
+/// `history` the earlier turns, which a follow-up ("and who else was there?") leans on.
+fn plan_in_context(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    question: &str,
+    now: i64,
+    tried: &[String],
+    history: &[Turn],
+) -> Result<Plan, String> {
     let mut system = String::from(PLAN_PROMPT);
+    if !tried.is_empty() {
+        system.push_str("\nA first search found nothing. These words did not match anything: ");
+        system.push_str(&tried.join(", "));
+        system.push_str(
+            ". Try different wording and other synonyms, and a wider date range (or none) \
+unless the question is clear about the time.",
+        );
+    }
     system.push_str("\nToday is ");
     system.push_str(weekday(now));
     system.push(' ');
     system.push_str(&ymd(now));
     system.push_str(".\n");
+    let context = history_block(history);
+    if !context.is_empty() {
+        system.push_str(
+            "\nThe question may be a follow-up (\"and who else?\", \"that one\"): use the earlier conversation to work out what it means in full, and plan the search for that.",
+        );
+    }
     system.push_str(DATA_RULE);
     let mut user = String::from("<data>\n");
+    if !context.is_empty() {
+        user.push_str(&context);
+        user.push_str("New question: ");
+    }
     user.push_str(clip_to(question.trim(), MAX_QUESTION_CHARS));
     user.push_str("\n</data>");
     let reply = complete(cfg, http, &system, &user, 0.0)?;
@@ -524,6 +603,19 @@ fn by_newest(a: &Candidate, b: &Candidate) -> Ordering {
 /// question like "what did I copy last Tuesday" works without any word), and word hits outside
 /// the range at [`OUTSIDE_WEIGHT`]: a range the model got wrong then only demotes them.
 pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hit> {
+    retrieve_with(question, plan, candidates, &[])
+}
+
+/// [`retrieve`] with a fourth ranked list: the items closest in meaning to the question
+/// (`semantic`, nearest first, from [`semantic::rank`]). It is fused like the word hits, so an
+/// item that is both a word hit and a neighbour rises, and a neighbour outside the date range
+/// is discounted like a word hit outside it.
+pub fn retrieve_with(
+    question: &str,
+    plan: &Plan,
+    candidates: &[Candidate],
+    semantic: &[(Source, u64)],
+) -> Vec<Hit> {
     // Word, weight: the person's own words count double the model's synonyms.
     let mut terms: Vec<(String, u32)> = Vec::new();
     for w in question_words(question) {
@@ -589,6 +681,25 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
         }
     }
 
+    if !semantic.is_empty() {
+        let at: HashMap<(Source, u64), usize> = pool
+            .iter()
+            .enumerate()
+            .map(|(i, c)| ((c.source, c.id), i))
+            .collect();
+        let near: Vec<usize> = semantic.iter().filter_map(|k| at.get(k).copied()).collect();
+        let (inside, outside): (Vec<_>, Vec<_>) = match plan.range {
+            Some(r) => near.iter().partition(|i| in_range(pool[**i], r)),
+            None => (near.iter().collect(), Vec::new()),
+        };
+        for (rank, i) in inside.into_iter().enumerate() {
+            add(*i, rank, 1.0);
+        }
+        for (rank, i) in outside.into_iter().enumerate() {
+            add(*i, rank, OUTSIDE_WEIGHT);
+        }
+    }
+
     let mut order: Vec<(usize, f64)> = fused.into_iter().collect();
     order.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
@@ -629,17 +740,38 @@ pub fn retrieve(question: &str, plan: &Plan, candidates: &[Candidate]) -> Vec<Hi
 const ANSWER_PROMPT: &str = "You answer a person's question about their own notes, to-do tasks and clipboard history.\n\
 Use only the numbered items between <data> and </data>. Each item starts with its number, its kind (note, task or clipboard) and its date. \
 Never fill a gap from outside knowledge or guess: when the items do not contain the answer, say so.\n\
-Reply with JSON only, in exactly this shape: {\"found\":true,\"answer\":\"...\",\"sources\":[{\"n\":1,\"quote\":\"...\"}]}\n\
+Reply with JSON only, in exactly this shape: {\"found\":true,\"kind\":\"fact\",\"answer\":\"...\",\"sources\":[{\"n\":1,\"quote\":\"...\"}]}\n\
 found: false when the items do not answer the question (then answer is \"\" and sources is []).\n\
+kind: \"fact\" when the answer is something the items say (a name, a number, who said what, when); \"summary\" when the question asks for an overview, \
+a recap or a list across many items (\"what did I copy this week\", \"summarize my notes on the budget\").\n\
 answer: short and direct, in the language of the question, with the item number in square brackets after each claim, like [2]. \
-Say when something was said or written by using the item's date; copy names, numbers and dates exactly as written.\n\
+A summary may be a few sentences or a short list. Say when something was said or written by using the item's date; copy names, numbers and dates exactly as written.\n\
 sources: for every item the answer rests on, its number n and a quote, copied character for character from that item, \
-that shows the claim (the shortest stretch that does, at most one sentence).";
+that shows the claim (the shortest stretch that does, at most one sentence). A summary may leave the quote empty.";
+
+/// Added to the answer prompt while the model may still ask for more.
+const MORE_RULE: &str = "\nIf the items are not enough but a better search would likely find the answer, reply instead with \
+{\"more\":{\"from\":\"YYYY-MM-DD or null\",\"to\":\"YYYY-MM-DD or null\",\"terms\":[\"...\"],\"sources\":[\"notes\",\"tasks\",\"clips\"]}} \
+(other words and dates than before; the new items are added after the ones you have). \
+If an item is cut off and its full text would help, reply with {\"open\":[3,5]} (item numbers, at most 4) to read it in full. \
+Do this only when it is likely to help, never to repeat a search.";
+
+/// Added once no more searching is allowed.
+const LAST_RULE: &str = "\nThis is the last step: answer now from these items, or say found: false. Do not ask for more.";
+
+/// Extra searches or full reads the model may ask for before it must answer.
+pub const MAX_MORE_ROUNDS: usize = 2;
+/// Items opened in full at once at most, and characters of an opened item.
+const MAX_OPEN: usize = 4;
+const OPEN_CHARS: usize = 4_000;
 
 #[derive(Deserialize)]
 struct RawAnswer {
     #[serde(default)]
     found: bool,
+    /// `"summary"` answers may cite an item without a quote; anything else is a fact.
+    #[serde(default)]
+    kind: String,
     #[serde(default)]
     answer: String,
     #[serde(default)]
@@ -653,9 +785,13 @@ struct RawSource {
     quote: String,
 }
 
-/// Whitespace collapsed and lowercased, for comparing a quote with an excerpt.
+/// Words only, lowercased and joined by single spaces: whitespace, case and punctuation are
+/// ignored when a quote is compared with an excerpt, because models drop a trailing full stop,
+/// swap a curly quote for a straight one or turn a line break into a space, and none of that
+/// changes what was quoted.
 fn norm(s: &str) -> String {
-    s.split_whitespace()
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
@@ -695,21 +831,27 @@ fn strip_unverified_markers(answer: &str, cited: &[usize]) -> String {
 /// to the front in the order the model cited them.
 ///
 /// Verified means: the item number exists, and the quote occurs in that item's excerpt
-/// (whitespace and case aside) and is at least [`MIN_QUOTE_CHARS`] long. A claim with no
-/// verified source is no answer.
+/// (whitespace, case and punctuation aside) and is at least [`MIN_QUOTE_CHARS`] long. A
+/// `summary` answer may also cite an item without a verifying quote (the hit is then `cited`
+/// with `quote: None`). A claim with no verified source is no answer.
 pub fn parse_answer(reply: &str, hits: &mut Vec<Hit>) -> Result<String, String> {
     let raw: RawAnswer = parse(reply)?;
-    let mut verified: Vec<(usize, String)> = Vec::new();
+    let summary = raw.kind.trim().eq_ignore_ascii_case("summary");
+    let mut verified: Vec<(usize, Option<String>)> = Vec::new();
     if raw.found {
         for s in raw.sources {
             let quote = clip_to(s.quote.trim(), MAX_QUOTE_CHARS).to_owned();
-            let ok = s.n >= 1
-                && s.n <= hits.len()
-                && quote.chars().count() >= MIN_QUOTE_CHARS
-                && norm(&hits[s.n - 1].excerpt).contains(&norm(&quote))
-                && !verified.iter().any(|(n, _)| *n == s.n);
-            if ok {
-                verified.push((s.n, quote));
+            if s.n < 1 || s.n > hits.len() || verified.iter().any(|(n, _)| *n == s.n) {
+                continue;
+            }
+            let quoted = quote.chars().count() >= MIN_QUOTE_CHARS
+                && norm(&hits[s.n - 1].excerpt).contains(&norm(&quote));
+            if quoted {
+                verified.push((s.n, Some(quote)));
+            } else if summary {
+                // An overview rests on whole items; the item is real, only no sentence of it
+                // is singled out. A fact never gets this: a wrong quote there means a guess.
+                verified.push((s.n, None));
             }
         }
     }
@@ -727,7 +869,7 @@ pub fn parse_answer(reply: &str, hits: &mut Vec<Hit>) -> Result<String, String> 
     for (n, quote) in &verified {
         if let Some(mut h) = old[n - 1].take() {
             h.cited = true;
-            h.quote = Some(quote.clone());
+            h.quote = quote.clone();
             hits.push(h);
         }
     }
@@ -735,13 +877,94 @@ pub fn parse_answer(reply: &str, hits: &mut Vec<Hit>) -> Result<String, String> 
     Ok(answer)
 }
 
+/// What the model did with the items it was given.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Step {
+    /// A verified answer, or an empty string for "not found" (see [`parse_answer`]).
+    Done(String),
+    /// A new search plan: look again.
+    More(Plan),
+    /// Item numbers to read in full.
+    Open(Vec<usize>),
+}
+
+/// The model's reply to the answer prompt: an answer, a request to search again (`more`) or a
+/// request to read items in full (`open`). A reply with neither is an answer.
+pub fn parse_step(reply: &str, hits: &mut Vec<Hit>) -> Result<Step, String> {
+    let v: serde_json::Value = parse(reply)?;
+    if let Some(more) = v.get("more").filter(|m| m.is_object()) {
+        let raw: RawPlan =
+            serde_json::from_value(more.clone()).map_err(|_| BAD_REPLY.to_owned())?;
+        return Ok(Step::More(plan_from_raw(raw)));
+    }
+    if let Some(open) = v.get("open").and_then(|o| o.as_array()) {
+        let mut ns: Vec<usize> = Vec::new();
+        for n in open.iter().filter_map(|n| n.as_u64()).map(|n| n as usize) {
+            if n >= 1 && n <= hits.len() && !ns.contains(&n) {
+                ns.push(n);
+            }
+            if ns.len() == MAX_OPEN {
+                break;
+            }
+        }
+        return Ok(Step::Open(ns));
+    }
+    parse_answer(reply, hits).map(Step::Done)
+}
+
+/// Append `new` hits that are not in `hits` yet, numbered after the ones the model has already
+/// seen (so a citation it may make stays valid). Returns how many were added.
+fn merge_hits(hits: &mut Vec<Hit>, new: Vec<Hit>) -> usize {
+    let mut added = 0;
+    for mut h in new {
+        if hits.len() >= 2 * MAX_SNIPPETS {
+            break;
+        }
+        if hits.iter().any(|x| (x.source, x.id) == (h.source, h.id)) {
+            continue;
+        }
+        h.n = hits.len() + 1;
+        hits.push(h);
+        added += 1;
+    }
+    added
+}
+
+/// Replace the excerpts of items `ns` with their text up to [`OPEN_CHARS`]. Returns how many
+/// got longer (an item already shown whole, or no longer there, changes nothing).
+fn open_hits(hits: &mut [Hit], ns: &[usize], candidates: &[Candidate]) -> usize {
+    let mut longer = 0;
+    for n in ns {
+        let Some(h) = hits.get_mut(n - 1) else {
+            continue;
+        };
+        let Some(c) = candidates
+            .iter()
+            .find(|c| (c.source, c.id) == (h.source, h.id))
+        else {
+            continue;
+        };
+        let full = clip_to(&c.text, OPEN_CHARS);
+        let mut text = full.to_owned();
+        if full.len() < c.text.len() {
+            text.push('…');
+        }
+        if text.chars().count() > h.excerpt.chars().count() {
+            h.excerpt = text;
+            longer += 1;
+        }
+    }
+    longer
+}
+
 /// The prompt's user part: question and numbered excerpts, as many as fit [`PROMPT_CHARS`].
 /// Hits that do not fit are removed from `hits`, so the numbers the model sees are the
 /// positions in `hits`.
-fn answer_prompt(question: &str, hits: &mut Vec<Hit>) -> String {
+fn answer_prompt(question: &str, hits: &mut Vec<Hit>, history: &[Turn]) -> String {
     let mut user = String::from("Question: ");
     user.push_str(&question.split_whitespace().collect::<Vec<_>>().join(" "));
     user.push_str("\n<data>\n");
+    user.push_str(&history_block(history));
     let mut kept = 0;
     let mut used = 0;
     for (i, h) in hits.iter().enumerate() {
@@ -794,6 +1017,20 @@ pub struct Searched {
     pub sources: Vec<Source>,
     /// Items looked through.
     pub scanned: usize,
+    /// Whether items were also ranked by meaning (an embedding model is set up and answered).
+    pub semantic: bool,
+    /// Searches made: 1, plus one for each time the model asked to look again.
+    pub rounds: usize,
+}
+
+/// What Ask is given besides the question.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// Earlier turns of this conversation, oldest first; only the last [`MAX_TURNS`] are used.
+    pub history: Vec<Turn>,
+    /// Items nearest in meaning to the question, nearest first; empty when semantic search is
+    /// off or its server could not embed.
+    pub semantic: Vec<(Source, u64)>,
 }
 
 /// Plan, retrieve, answer, verify. `candidates` is everything searchable right now.
@@ -807,19 +1044,42 @@ pub fn ask(
     now: i64,
     candidates: &[Candidate],
 ) -> Result<Answer, String> {
+    ask_with(cfg, http, question, now, candidates, &Options::default())
+}
+
+/// [`ask`] with [`Options`].
+pub fn ask_with(
+    cfg: &LlmConfig,
+    http: &dyn HttpPost,
+    question: &str,
+    now: i64,
+    candidates: &[Candidate],
+    options: &Options,
+) -> Result<Answer, String> {
     let question = clip_to(question.trim(), MAX_QUESTION_CHARS);
     if question.is_empty() {
         return Err("type a question first".to_owned());
     }
-    let plan = plan(cfg, http, question, now)?;
-    let mut hits = retrieve(question, &plan, candidates);
-    let searched = Searched {
+    let mut plan = plan_in_context(cfg, http, question, now, &[], &options.history)?;
+    let mut hits = retrieve_with(question, &plan, candidates, &options.semantic);
+    let mut searched = Searched {
         from: plan.shown.as_ref().map(|(a, _)| a.clone()),
         to: plan.shown.as_ref().map(|(_, b)| b.clone()),
-        terms: plan.terms.iter().take(12).cloned().collect(),
+        terms: Vec::new(),
         sources: plan.sources.clone(),
         scanned: candidates.len(),
+        semantic: !options.semantic.is_empty(),
+        rounds: 1,
     };
+    // Every search's words, deduplicated, for showing what was tried.
+    let note_terms = |searched: &mut Searched, plan: &Plan| {
+        for t in &plan.terms {
+            if searched.terms.len() < 12 && !searched.terms.contains(t) {
+                searched.terms.push(t.clone());
+            }
+        }
+    };
+    note_terms(&mut searched, &plan);
     let not_found = |hits: Vec<Hit>, searched: Searched| Answer {
         found: false,
         answer: NOT_FOUND.to_owned(),
@@ -827,18 +1087,61 @@ pub fn ask(
         searched,
     };
     if hits.is_empty() {
-        return Ok(not_found(hits, searched));
+        // Nothing matched the first wording: one more try, told which words failed.
+        plan = plan_in_context(cfg, http, question, now, &plan.terms, &options.history)?;
+        hits = retrieve_with(question, &plan, candidates, &options.semantic);
+        searched.rounds += 1;
+        note_terms(&mut searched, &plan);
+        searched.from = plan.shown.as_ref().map(|(a, _)| a.clone());
+        searched.to = plan.shown.as_ref().map(|(_, b)| b.clone());
+        searched.sources = plan.sources.clone();
+        if hits.is_empty() {
+            return Ok(not_found(hits, searched));
+        }
     }
-    let user = answer_prompt(question, &mut hits);
-    let mut system = String::from(ANSWER_PROMPT);
-    system.push_str("\nToday is ");
-    system.push_str(weekday(now));
-    system.push(' ');
-    system.push_str(&ymd(now));
-    system.push_str(".\n");
-    system.push_str(DATA_RULE);
-    let reply = complete(cfg, http, &system, &user, 0.0)?;
-    let answer = parse_answer(&reply, &mut hits)?;
+    let mut more_left = MAX_MORE_ROUNDS;
+    let answer = loop {
+        let user = answer_prompt(question, &mut hits, &options.history);
+        let mut system = String::from(ANSWER_PROMPT);
+        system.push_str(if more_left > 0 { MORE_RULE } else { LAST_RULE });
+        system.push_str("\nToday is ");
+        system.push_str(weekday(now));
+        system.push(' ');
+        system.push_str(&ymd(now));
+        system.push_str(".\n");
+        system.push_str(DATA_RULE);
+        let reply = complete(cfg, http, &system, &user, 0.0)?;
+        match parse_step(&reply, &mut hits)? {
+            Step::Done(answer) => break answer,
+            // Asked for more after being told not to: that is no answer.
+            Step::More(_) | Step::Open(_) if more_left == 0 => break String::new(),
+            Step::More(next) => {
+                more_left -= 1;
+                searched.rounds += 1;
+                note_terms(&mut searched, &next);
+                if next.shown.is_some() {
+                    searched.from = next.shown.as_ref().map(|(a, _)| a.clone());
+                    searched.to = next.shown.as_ref().map(|(_, b)| b.clone());
+                }
+                for src in &next.sources {
+                    if !searched.sources.contains(src) {
+                        searched.sources.push(*src);
+                    }
+                }
+                let found = retrieve_with(question, &next, candidates, &options.semantic);
+                // A search that adds nothing is not worth another round.
+                if merge_hits(&mut hits, found) == 0 {
+                    more_left = 0;
+                }
+            }
+            Step::Open(ns) => {
+                more_left -= 1;
+                if open_hits(&mut hits, &ns, candidates) == 0 {
+                    more_left = 0;
+                }
+            }
+        }
+    };
     if answer.is_empty() {
         return Ok(not_found(hits, searched));
     }
@@ -849,6 +1152,8 @@ pub fn ask(
         searched,
     })
 }
+
+pub mod semantic;
 
 #[cfg(test)]
 mod tests;
