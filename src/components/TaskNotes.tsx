@@ -27,6 +27,8 @@ interface TaskNotesProps {
   onFail: (e: unknown) => void;
   /** Tasks were created from the notes: reload the list. */
   onSplitCreated: () => void;
+  /** Inside the focus lock: fills its slot instead of being a sidebar, and cannot be closed. */
+  embedded?: boolean;
 }
 
 /**
@@ -44,6 +46,7 @@ export function TaskNotes({
   onUnlink,
   onFail,
   onSplitCreated,
+  embedded = false,
 }: TaskNotesProps) {
   const [text, setText] = useState(task.note);
   // The assistant's draft of "where I left off": shown for the person to take or leave, never saved by itself.
@@ -123,7 +126,11 @@ export function TaskNotes({
   return (
     <aside
       aria-label={`Notes for ${task.title}`}
-      className="flex h-full min-h-0 w-[16.5rem] shrink-0 flex-col border-l"
+      className={
+        embedded
+          ? "flex h-52 min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-md border bg-background/60"
+          : "flex h-full min-h-0 w-[16.5rem] shrink-0 flex-col border-l"
+      }
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3 text-xs">
@@ -134,6 +141,7 @@ export function TaskNotes({
         >
           Created {relativeTime(task.createdAt, now)}
         </span>
+        {!embedded && (
         <Button
           type="button"
           variant="ghost"
@@ -150,6 +158,7 @@ export function TaskNotes({
         >
           <X aria-hidden />
         </Button>
+        )}
       </div>
       <div className="truncate px-3 pt-2 text-xs font-medium" title={task.title}>
         {task.title}
