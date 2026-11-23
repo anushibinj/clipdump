@@ -32,7 +32,7 @@ export function EmptyState({ query, filter, totalItems, error }: EmptyStateProps
     hint = "Copy text, a screenshot or files and it shows up here.";
   } else if (query.trim() === "") {
     title = `No ${filter === "all" ? "items" : filter}`;
-    hint = "Press Alt+1 to show every kind of item.";
+    hint = "Press Alt+Shift+1 to show every kind of item.";
   } else {
     title = `No matches${FILTER_WORDS[filter]}`;
     hint = "Try fewer letters, or img:, file:, txt: to pick a kind.";

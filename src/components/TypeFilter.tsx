@@ -18,7 +18,7 @@ interface TypeFilterProps {
   trailing?: ReactNode;
 }
 
-/** All / Text / Images / Files, bound to Alt+1..4 (the key handling lives in useKeyboard). */
+/** All / Text / Images / Files, bound to Alt+Shift+1..4 (the key handling lives in useKeyboard). */
 export const TypeFilter = memo(function TypeFilter({ value, onChange, trailing }: TypeFilterProps) {
   return (
     <div className="flex h-10 items-center justify-between gap-2 border-b px-3">
@@ -36,7 +36,7 @@ export const TypeFilter = memo(function TypeFilter({ value, onChange, trailing }
             key={f}
             value={f}
             tabIndex={-1}
-            title={`${LABELS[f]} (Alt+${i + 1})`}
+            title={`${LABELS[f]} (Alt+Shift+${i + 1})`}
             className="h-7 min-w-0 gap-1.5 px-2.5 text-xs text-muted-foreground data-[state=on]:text-foreground"
             // Keep the caret in the search input when a filter is clicked.
             onMouseDown={(e) => e.preventDefault()}

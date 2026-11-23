@@ -46,13 +46,13 @@ export const TitleBar = memo(function TitleBar({
     label: string;
     Icon: LucideIcon;
   }[] = [
-    { id: "search", label: "Clipboard", Icon: ClipboardList },
-    { id: "notes", label: "Notes (Ctrl+Shift+N)", Icon: NotebookPen },
+    { id: "search", label: "Clipboard (Alt+1)", Icon: ClipboardList },
+    { id: "notes", label: "Notes (Alt+2, Ctrl+Shift+N)", Icon: NotebookPen },
     {
       id: "tasks",
       label: workingOn
-        ? `Tasks (Ctrl+T), working on: ${workingOn}`
-        : "Tasks (Ctrl+T)",
+        ? `Tasks (Alt+3, Ctrl+T), working on: ${workingOn}`
+        : "Tasks (Alt+3, Ctrl+T)",
       Icon: ListTodo,
     },
   ];
