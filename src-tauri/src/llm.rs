@@ -86,6 +86,66 @@ pub fn endpoint(base: &str) -> Result<String, String> {
     })
 }
 
+/// The embeddings endpoint next to the chat one: `<base>/embeddings`. Accepts the same pasted
+/// spellings as [`endpoint`] (a base URL or the full chat endpoint).
+pub fn embeddings_endpoint(base: &str) -> Result<String, String> {
+    let chat = endpoint(base)?;
+    let root = chat.strip_suffix("/chat/completions").unwrap_or(&chat);
+    Ok(format!("{root}/embeddings"))
+}
+
+/// Embed `inputs` with `model` on the configured server: one vector per input, in order, all of
+/// the same length. The vectors are only ever compared with each other (cosine), so what they
+/// mean is the server's business. A reply with a different count, a missing or empty vector, or
+/// vectors of different lengths is an error: a half-answered batch must not shift every later
+/// vector onto the wrong item.
+pub fn embed(
+    cfg: &LlmConfig,
+    model: &str,
+    http: &dyn HttpPost,
+    inputs: &[&str],
+) -> Result<Vec<Vec<f32>>, String> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let url = embeddings_endpoint(&cfg.base_url)?;
+    let bearer = Some(cfg.api_key.as_str()).filter(|k| !k.is_empty());
+    let body = http.post_json(&url, bearer, &json!({ "model": model, "input": inputs }))?;
+    let bad =
+        || "the server's embeddings could not be read (does it support /embeddings?)".to_owned();
+    let v: Value = serde_json::from_str(&body).map_err(|_| bad())?;
+    let data = v.get("data").and_then(Value::as_array).ok_or_else(bad)?;
+    if data.len() != inputs.len() {
+        return Err(bad());
+    }
+    // Servers may answer out of order; each entry says which input it belongs to.
+    let mut out: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
+    for (pos, d) in data.iter().enumerate() {
+        let at = d
+            .get("index")
+            .and_then(Value::as_u64)
+            .map_or(pos, |i| i as usize);
+        let vec: Vec<f32> = d
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(bad)?
+            .iter()
+            .map(|x| x.as_f64().map(|f| f as f32))
+            .collect::<Option<_>>()
+            .ok_or_else(bad)?;
+        let slot = out.get_mut(at).ok_or_else(bad)?;
+        if vec.is_empty() || slot.is_some() {
+            return Err(bad());
+        }
+        *slot = Some(vec);
+    }
+    let out: Vec<Vec<f32>> = out.into_iter().collect::<Option<_>>().ok_or_else(bad)?;
+    if out.iter().any(|v| v.len() != out[0].len()) {
+        return Err(bad());
+    }
+    Ok(out)
+}
+
 const SYSTEM_PROMPT: &str = "You split a pasted text into the separate items a person would want to copy one at a time. \
 Items can be anything copyable: phone numbers, e-mail addresses, user names, passwords, API keys, tokens, \
 IDs, order or invoice numbers, URLs, addresses, codes, amounts, dates, names, file paths. Do not assume a fixed list: \
@@ -377,6 +437,61 @@ mod tests {
         assert_eq!(body["temperature"], 0.3);
         assert_eq!(body["messages"][0]["content"], "be brief");
         assert_eq!(body["messages"][1]["content"], "hi");
+    }
+
+    #[test]
+    fn the_embeddings_endpoint_sits_next_to_the_chat_one() {
+        assert_eq!(
+            embeddings_endpoint("http://h:1/v1/").unwrap(),
+            "http://h:1/v1/embeddings"
+        );
+        assert_eq!(
+            embeddings_endpoint("https://h/v1/chat/completions").unwrap(),
+            "https://h/v1/embeddings"
+        );
+        assert!(embeddings_endpoint("nope").is_err());
+    }
+
+    fn embedding_reply(vectors: &[(u64, &[f64])]) -> String {
+        let data: Vec<Value> = vectors
+            .iter()
+            .map(|(i, v)| json!({ "index": i, "embedding": v }))
+            .collect();
+        json!({ "data": data }).to_string()
+    }
+
+    #[test]
+    fn embed_posts_the_inputs_and_puts_vectors_back_in_input_order() {
+        let http = Fake {
+            reply: Ok(embedding_reply(&[(1, &[0.0, 1.0]), (0, &[1.0, 0.0])])),
+            seen: RefCell::default(),
+        };
+        let got = embed(&cfg(), "emb", &http, &["a", "b"]).unwrap();
+        assert_eq!(got, vec![vec![1.0, 0.0], vec![0.0, 1.0]]);
+        let seen = http.seen.borrow();
+        assert_eq!(seen[0].0, "http://localhost:11434/v1/embeddings");
+        assert_eq!(seen[0].2, json!({ "model": "emb", "input": ["a", "b"] }));
+        assert!(embed(&cfg(), "emb", &http, &[]).unwrap().is_empty());
+        assert_eq!(seen.len(), 1, "nothing to embed, no call");
+    }
+
+    #[test]
+    fn a_short_or_ragged_or_empty_embedding_reply_is_an_error() {
+        for reply in [
+            embedding_reply(&[(0, &[1.0])]),
+            embedding_reply(&[(0, &[1.0]), (1, &[1.0, 2.0])]),
+            embedding_reply(&[(0, &[]), (1, &[])]),
+            embedding_reply(&[(0, &[1.0]), (0, &[1.0])]),
+            embedding_reply(&[(0, &[1.0]), (5, &[1.0])]),
+            "<html>".to_owned(),
+            "{}".to_owned(),
+        ] {
+            let http = Fake {
+                reply: Ok(reply.clone()),
+                seen: RefCell::default(),
+            };
+            assert!(embed(&cfg(), "emb", &http, &["a", "b"]).is_err(), "{reply}");
+        }
     }
 
     #[test]
