@@ -3,6 +3,7 @@
 //! the OCR engine (Phase 7), the clipboard writer and auto-paste (Phase 11) and
 //! the session end shutdown order (Phase 13).
 
+pub mod ctrl_hook;
 pub mod dpapi;
 pub mod focus;
 pub mod ocr;
