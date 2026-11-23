@@ -1,3 +1,4 @@
+import { Settings } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -75,6 +76,22 @@ const ASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Enter"], label: "Ask the question" },
   { keys: ["Esc"], label: "Clear the text, then the answer, then close" },
 ];
+
+/** The bottom right gear: opens settings. */
+export const SettingsButton = memo(function SettingsButton({ onClick, active }: { onClick: () => void; active?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Settings"
+      title="Settings (Ctrl+,)"
+      aria-pressed={active}
+      className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <Settings className="size-3.5" aria-hidden />
+    </button>
+  );
+});
 
 /** The bottom right trigger: opens the shortcuts help. */
 export const ShortcutsButton = memo(function ShortcutsButton({ onClick }: { onClick: () => void }) {
