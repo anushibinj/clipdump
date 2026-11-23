@@ -71,7 +71,21 @@ pub fn search_items(
     filter: TypeFilter,
     limit: Option<usize>,
 ) -> Vec<ResultDto> {
+    search_items_ordered(store, paths, query, filter, limit, true)
+}
+
+/// [`search_items`] with a choice for the empty query: `pinned_first` false lists
+/// pinned items in plain recency order.
+pub fn search_items_ordered(
+    store: &Store,
+    paths: &dyn PathChecker,
+    query: &str,
+    filter: TypeFilter,
+    limit: Option<usize>,
+    pinned_first: bool,
+) -> Vec<ResultDto> {
     let mut req = SearchRequest::new(query, filter, store.now_ms());
+    req.pinned_first = pinned_first;
     if let Some(limit) = limit {
         req.limit = limit;
     }
@@ -87,16 +101,18 @@ pub fn search(
     query: String,
     filter: Option<TypeFilter>,
     limit: Option<usize>,
+    pinned_first: Option<bool>,
 ) -> Result<Vec<ResultDto>, String> {
     let t = perf::start();
     let store = store(&app)?;
     let state = app.state::<AppState>();
-    let found = search_items(
+    let found = search_items_ordered(
         &store,
         state.paths.as_ref(),
         &query,
         filter.unwrap_or_default(),
         limit,
+        pinned_first.unwrap_or(true),
     );
     perf::finish(t, Event::SearchIpc, found.len() as u64);
     Ok(found)
