@@ -167,6 +167,13 @@ its first run.
 
 ## Code signing (future step)
 
+**macOS:** the app is ad-hoc signed (`bundle.macOS.signingIdentity` is `"-"`), not signed with a Developer ID
+or notarized. Apple silicon refuses a quarantined app with no signature at all ("clipdump is damaged"); an
+ad-hoc signature turns that into the normal "unidentified developer" prompt, so users right-click the app, choose
+Open, then Open again (or run `xattr -cr /Applications/clipdump.app`). For a clean install, enrol in the Apple
+Developer Program and set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
+`APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` in the release job; Tauri then signs and notarizes.
+
 Nothing is signed today: no certificate is configured, no `signCommand`, no thumbprint. An unsigned
 installer works, but Windows SmartScreen shows "Windows protected your PC / Unknown publisher" until the
 file builds reputation, and some antivirus products are suspicious of unsigned installers. Users get past
