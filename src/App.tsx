@@ -337,6 +337,11 @@ function App() {
           disarm();
           setView((v) => (v === "notes" ? "search" : "notes"));
           break;
+        case "switchMode":
+          // Alt+1..N: straight to a mode (`MODE_ORDER`); pressing the current one stays put.
+          disarm();
+          setView(a.view);
+          break;
         case "escape":
           // Layers, innermost first: pending confirmation, settings, the recovery notice (the
           // keyboard way to dismiss it), then the bar. The right pane is not a layer: it is
