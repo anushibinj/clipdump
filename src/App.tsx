@@ -501,8 +501,8 @@ function App() {
 
   return (
     <TooltipProvider>
-      {/* 8 px padding leaves room for the native window shadow and the card shadow. */}
-      <div className="h-screen w-screen p-2">
+      {/* No padding: the card fills the window. The native window shadow draws outside it. */}
+      <div className="h-screen w-screen">
         <main
           ref={mainRef}
           tabIndex={-1}
@@ -512,7 +512,7 @@ function App() {
           aria-modal={inSettings ? true : undefined}
           aria-label={inSettings ? "Settings" : undefined}
           onKeyDownCapture={view !== "search" ? onKeyDownCapture : undefined}
-          className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground shadow-[0_8px_24px_-4px_rgb(0_0_0/0.22),0_2px_6px_rgb(0_0_0/0.1)] backdrop-blur-xl"
+          className="h-full w-full overflow-hidden rounded-xl border outline-none border-border bg-popover/95 text-popover-foreground backdrop-blur-xl"
         >
           <div className="flex h-full flex-col">
             <TitleBar
