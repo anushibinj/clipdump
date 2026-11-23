@@ -8,6 +8,11 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- "Split work with AI" under a task's notes: the assistant proposes tasks from what the notes say, each with a
+  checkmark and an editable title and note; only the ticked ones are created.
+
 ## [0.5.1] - 2026-11-23
 
 ### Fixed
