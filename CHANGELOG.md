@@ -8,6 +8,23 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
+### Added
+
+- While a task is locked in a focus session, its notes now show inside the lock, laid out as the title, then
+  notes (70%) beside the timer (30%), then parking.
+- The remaining tasks are collapsed while the focus lock is on; a toggle docked at the bottom expands them.
+
+### Changed
+
+- The locked panel stretches to fill the window while the other tasks are collapsed.
+
+### Fixed
+
+- The timer panel in the focus lock is centered.
+- The quiet-task nudge is hidden while the focus lock is on.
+
 ## [0.8.0] - 2026-11-23
 
 ### Added
