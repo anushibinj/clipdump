@@ -1,8 +1,8 @@
-import { useCallback, useState, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Copy, FileText, ListChecks, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AskApi } from "@/hooks/useAsk";
-import { cleanQuestion, searchedLine, sourceLabel, splitAnswer, splitAtQuote } from "@/lib/ask";
+import { cleanQuestion, plainAnswer, searchedLine, sourceLabel, splitAnswer, splitAtQuote } from "@/lib/ask";
 import { copyItem, errorMessage, type AskHit } from "@/lib/ipc";
 import { relativeTime, fullTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -43,11 +43,21 @@ export function AskView({
   onClose,
 }: AskViewProps) {
   const [draft, setDraft] = useState("");
-  const { status, answer, error, asked } = api;
+  const { status, answer, error, asked, earlier } = api;
+  const current = useRef<HTMLDivElement>(null);
+  const following = earlier.length > 0 || status !== "idle";
+
+  // A new question or answer comes into view, below the conversation so far.
+  useEffect(() => {
+    if (status !== "idle") current.current?.scrollIntoView({ block: "start" });
+  }, [status, asked]);
 
   const submit = useCallback(() => {
     const q = cleanQuestion(draft);
-    if (q !== null && status !== "loading") api.ask(q);
+    if (q !== null && status !== "loading") {
+      api.ask(q);
+      setDraft("");
+    }
   }, [api, draft, status]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -89,7 +99,7 @@ export function AskView({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Ask your notes, tasks and clipboard anything"
+            placeholder={following ? "Ask a follow-up" : "Ask your notes, tasks and clipboard anything"}
             aria-label="Question"
             maxLength={MAX_QUESTION}
             autoFocus
@@ -103,6 +113,20 @@ export function AskView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {earlier.length > 0 && (
+          <section aria-label="Earlier in this conversation" className="mb-4 flex flex-col gap-2">
+            {earlier.map((t, i) => (
+              <div key={i} className="rounded-md bg-foreground/[0.03] px-3 py-2 text-xs">
+                <p className="font-medium text-foreground/80">{t.question}</p>
+                <p className="mt-0.5 text-muted-foreground">
+                  {t.answer.found ? plainAnswer(t.answer.answer) : t.answer.answer}
+                </p>
+              </div>
+            ))}
+          </section>
+        )}
+
+        <div ref={current} className="scroll-mt-1">
         {status === "idle" && (
           <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-center">
             <Sparkles className="mb-1 size-8 text-muted-foreground/60" strokeWidth={1.5} aria-hidden />
@@ -197,6 +221,7 @@ export function AskView({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

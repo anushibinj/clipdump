@@ -492,12 +492,20 @@ export interface AskAnswer {
   searched: AskSearched;
 }
 
+/** One earlier question and its answer text (empty when nothing was found), sent with a follow-up. */
+export interface AskTurn {
+  question: string;
+  answer: string;
+}
+
 /**
  * Answer a question from the notes, the tasks and the clipboard history with the LLM server set up
- * in Settings. Two round trips; nothing but the question and a few excerpts leaves the machine.
+ * in Settings. `history` is the conversation so far, so a follow-up can lean on it. Nothing but the
+ * questions and a few excerpts leaves the machine (and, with an embedding model set up, the text of
+ * every item once, to be embedded).
  */
-export function askEverything(question: string): Promise<AskAnswer> {
-  return invoke<AskAnswer>("ask_everything", { question });
+export function askEverything(question: string, history: AskTurn[] = []): Promise<AskAnswer> {
+  return invoke<AskAnswer>("ask_everything", { question, history });
 }
 
 // ---------------------------------------------------------------------------

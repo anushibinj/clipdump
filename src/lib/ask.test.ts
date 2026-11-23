@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AskSearched } from "./ipc";
-import { cleanQuestion, quoteRange, searchedLine, sourceLabel, splitAnswer, splitAtQuote } from "./ask";
+import { cleanQuestion, MAX_HISTORY, plainAnswer, toHistory, quoteRange, searchedLine, sourceLabel, splitAnswer, splitAtQuote } from "./ask";
 
 const hits = [{ n: 2 }, { n: 5 }];
 
@@ -60,6 +60,24 @@ describe("splitAtQuote", () => {
   });
 });
 
+describe("toHistory", () => {
+  const ex = (question: string, found: boolean, answer: string) => ({
+    question,
+    answer: { found, answer, hits: [], searched: { from: null, to: null, terms: [], sources: [], scanned: 0, semantic: false, rounds: 1 } },
+  });
+
+  it("sends the answer only when one was found, and only the latest turns", () => {
+    expect(toHistory([ex("a", true, "yes [1]"), ex("b", false, "I could not find that")])).toEqual([
+      { question: "a", answer: "yes [1]" },
+      { question: "b", answer: "" },
+    ]);
+    const many = Array.from({ length: MAX_HISTORY + 3 }, (_, i) => ex(`q${i}`, true, "x"));
+    const sent = toHistory(many);
+    expect(sent).toHaveLength(MAX_HISTORY);
+    expect(sent[0]?.question).toBe("q3");
+  });
+});
+
 describe("labels", () => {
   it("names the sources", () => {
     expect(sourceLabel("clip")).toBe("Clipboard");
@@ -90,6 +108,11 @@ describe("labels", () => {
     expect(searchedLine({ ...s, to: "2026-11-05", sources: ["note", "clip"] })).toBe(
       "Looked in notes and clipboard · 2026-11-05 · 412 items",
     );
+  });
+
+  it("drops the citation markers of an earlier answer", () => {
+    expect(plainAnswer("Priya [2] wants it Friday [2][5].")).toBe("Priya wants it Friday.");
+    expect(plainAnswer("keep [note] and [x1]")).toBe("keep [note] and [x1]");
   });
 
   it("cleans a question", () => {

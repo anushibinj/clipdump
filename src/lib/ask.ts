@@ -1,7 +1,24 @@
 // Pure helpers of the Ask view: turning an answer into text and citation chips, finding the verified
 // quote inside an excerpt, and the words that say what was searched.
 
-import type { AskHit, AskSearched, AskSource } from "@/lib/ipc";
+import type { AskAnswer, AskHit, AskSearched, AskSource, AskTurn } from "@/lib/ipc";
+
+/** Finished questions kept for a conversation, and sent along with a follow-up (the backend uses the last three). */
+export const MAX_HISTORY = 6;
+
+/** One finished question with the answer it got. */
+export interface AskExchange {
+  question: string;
+  answer: AskAnswer;
+}
+
+/** What is sent as history: the answer text only when one was found. */
+export function toHistory(turns: readonly AskExchange[]): AskTurn[] {
+  return turns.slice(-MAX_HISTORY).map((t) => ({
+    question: t.question,
+    answer: t.answer.found ? t.answer.answer : "",
+  }));
+}
 
 export type AnswerPart = { kind: "text"; text: string } | { kind: "cite"; n: number };
 
@@ -76,6 +93,14 @@ export function searchedLine(s: AskSearched): string {
   if (s.semantic) out.push("by meaning too");
   if (s.rounds > 1) out.push(`${s.rounds} searches`);
   return out.join(" · ");
+}
+
+/**
+ * An earlier answer as plain text. Its `[n]` markers named items of that search, which are not on
+ * screen any more, so they are dropped (with the space before them).
+ */
+export function plainAnswer(answer: string): string {
+  return answer.replace(/\s?\[\d{1,3}\]/g, "");
 }
 
 /** The question as it is sent: whitespace trimmed. Null when there is nothing to ask. */
