@@ -866,6 +866,15 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
       return null;
     case "start_drag":
       return null; // the browser has no window to move
+    case "quick_copy": {
+      const row = find(Number(args.id));
+      if (control.copyError) throw control.copyError;
+      row.useCount += 1;
+      return null;
+    }
+    case "set_quick_pinned":
+    case "hide_quick":
+      return null;
     case "hide_bar":
       setTimeout(() => emit("bar:hidden"), 0);
       return null;
