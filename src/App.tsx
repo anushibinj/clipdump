@@ -6,6 +6,7 @@ import { Notice, type NoticeState } from "@/components/Notice";
 import { PreviewPane } from "@/components/PreviewPane";
 import { ResultList } from "@/components/ResultList";
 import { rowId } from "@/components/ResultItem";
+import { FocusProgressBar } from "@/components/FocusProgressBar";
 import { TitleBar } from "@/components/TitleBar";
 import { SearchBar } from "@/components/SearchBar";
 import { SettingsView } from "@/components/SettingsView";
@@ -544,6 +545,7 @@ function App() {
               onDrag={dragFromHeader}
               workingOn={inFlight[0]?.title}
             />
+            <FocusProgressBar session={focus.data.session} now={focus.now} />
             <div className="min-h-0 flex-1">
               <div
                 role="status"
