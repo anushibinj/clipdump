@@ -4,10 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent,
   type RefObject,
 } from "react";
-import { NotebookPen, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { NotebookPen, Plus } from "lucide-react";
 import { NoteEditor, type LiveNote } from "@/components/NoteEditor";
 import { NoteRow, noteRowId } from "@/components/NoteRow";
 import { Button } from "@/components/ui/button";
@@ -32,14 +31,8 @@ interface NotesViewProps {
   /** The App's one input ref: the bar focuses it when it is shown. */
   inputRef: RefObject<HTMLInputElement | null>;
   onNotice: (kind: "error" | "info", message: string) => void;
-  /** Back to the clipboard search. */
-  onBack: () => void;
   /** Hide the bar. */
   onClose: () => void;
-  /** Drag the window by the header. */
-  onDragHeader: (e: MouseEvent) => void;
-  pinned: boolean;
-  onTogglePinned: () => void;
 }
 
 const LIST_ID = "note-list";
@@ -56,11 +49,7 @@ export function NotesView({
   api,
   inputRef,
   onNotice,
-  onBack,
   onClose,
-  onDragHeader,
-  pinned,
-  onTogglePinned,
 }: NotesViewProps) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -205,7 +194,7 @@ export function NotesView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div onMouseDown={onDragHeader}>
+      <div>
         <div className="flex h-12 items-center gap-2.5 border-b px-4 transition-shadow has-[input:focus-visible]:border-ring has-[input:focus-visible]:shadow-[inset_0_-1px_0_0_var(--ring)]">
           <NotebookPen className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <input
@@ -240,46 +229,6 @@ export function NotesView({
               <Plus aria-hidden />
               New
               <Kbd className="h-4 min-w-4 px-1 text-[10px]">Ctrl ↵</Kbd>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              tabIndex={-1}
-              title="Back to clipboard search (Ctrl+Shift+N)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onBack}
-              className="gap-1.5 text-muted-foreground"
-            >
-              <Search aria-hidden />
-              Search
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              tabIndex={-1}
-              aria-label={pinned ? "Unpin window" : "Pin window open"}
-              aria-pressed={pinned}
-              title={pinned ? "Unpin: hide when focus is lost" : "Pin: keep the window open"}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onTogglePinned}
-              className={pinned ? "text-foreground" : "text-muted-foreground"}
-            >
-              {pinned ? <Pin className="fill-current" aria-hidden /> : <PinOff aria-hidden />}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              tabIndex={-1}
-              aria-label="Dismiss"
-              title="Dismiss (Esc)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onClose}
-              className="text-muted-foreground"
-            >
-              <X aria-hidden />
             </Button>
           </div>
         </div>
