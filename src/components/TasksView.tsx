@@ -764,7 +764,7 @@ export function TasksView({
       </div>
 
       {ai.panel && <TaskAiPanel panel={ai.panel} tasks={api.tasks} actions={aiActions} />}
-      {nudgeTask && (
+      {nudgeTask && lockedId === null && (
         <TaskNudge
           task={nudgeTask}
           count={quiet.length}
