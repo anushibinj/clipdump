@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS = {
   ocrEnabled: true,
   autoPasteOnEnter: false,
   pinnedBar: false,
+  quickCtrlTwice: true,
   paused: false,
   hotkey: "Ctrl+Shift+Space",
   startAtLogin: true,

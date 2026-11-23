@@ -424,6 +424,13 @@ export function SettingsView({ settings, stats, onSave, themePref, onThemeChange
                 onChange={(v) => void save({ pinnedBar: v })}
               />
               <SwitchRow
+                id="quick-ctrl-twice"
+                label="Tiny clipboard on Ctrl twice"
+                hint="Press Ctrl twice anywhere to open a small search popup next to your cursor (Windows)."
+                checked={settings.quickCtrlTwice}
+                onChange={(v) => void save({ quickCtrlTwice: v })}
+              />
+              <SwitchRow
                 id="autostart"
                 label="Start at login"
                 hint="Starts in the tray when you sign in to Windows."

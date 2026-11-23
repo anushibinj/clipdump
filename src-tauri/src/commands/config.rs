@@ -41,6 +41,8 @@ pub struct SettingsDto {
     pub auto_paste_on_enter: bool,
     /// Keep the bar visible and do not hide it on blur or after a copy.
     pub pinned_bar: bool,
+    /// Ctrl pressed twice opens the tiny clipboard popup.
+    pub quick_ctrl_twice: bool,
     /// Capture paused (the tray toggle sets the same flag). Not saved to disk.
     pub paused: bool,
     /// The global hotkey, canonical chord text such as `Ctrl+Shift+Space`.
@@ -73,6 +75,7 @@ impl SettingsDto {
             ocr_enabled: s.ocr_enabled,
             auto_paste_on_enter: s.auto_paste_on_enter,
             pinned_bar: s.pinned_bar,
+            quick_ctrl_twice: s.quick_ctrl_twice,
             paused,
             hotkey: s.hotkey.clone(),
             start_at_login: s.start_at_login,
@@ -193,6 +196,7 @@ impl SettingsEnv<'_> {
             s.ocr_enabled = dto.ocr_enabled;
             s.auto_paste_on_enter = dto.auto_paste_on_enter;
             s.pinned_bar = dto.pinned_bar;
+            s.quick_ctrl_twice = dto.quick_ctrl_twice;
             s.hotkey = dto.hotkey.clone();
             s.start_at_login = dto.start_at_login;
             s.llm_base_url = dto.llm_base_url.clone();

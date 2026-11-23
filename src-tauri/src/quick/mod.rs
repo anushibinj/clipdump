@@ -119,7 +119,20 @@ pub fn on_window_event(app: &AppHandle, event: &tauri::WindowEvent) {
 /// Start the Ctrl-twice watcher. A failure only means there is no such shortcut.
 pub fn start_watcher(app: &AppHandle) {
     let handle = app.clone();
-    if let Err(e) = platform::watch_double_ctrl(move || toggle(&handle)) {
+    let on_double = move || {
+        // Read on every double tap, so the Settings switch applies at once. The hook
+        // stays installed but idle while it is off.
+        let on = handle
+            .state::<AppState>()
+            .settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .quick_ctrl_twice;
+        if on {
+            toggle(&handle);
+        }
+    };
+    if let Err(e) = platform::watch_double_ctrl(on_double) {
         eprintln!("clipdump: Ctrl-twice shortcut not started: {e}");
     }
 }

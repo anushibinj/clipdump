@@ -101,6 +101,8 @@ export interface SettingsDto {
   autoPasteOnEnter: boolean;
   /** Keep the bar visible; it does not hide on blur. */
   pinnedBar: boolean;
+  /** Ctrl pressed twice opens the tiny clipboard popup. */
+  quickCtrlTwice: boolean;
   /** Capture paused. Not saved: the app always starts capturing. */
   paused: boolean;
   /** The global hotkey as chord text, for example "Ctrl+Shift+Space" (modifiers Ctrl, Alt, Shift, Super). */

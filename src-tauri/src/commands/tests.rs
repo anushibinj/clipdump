@@ -917,6 +917,7 @@ fn get_settings_returns_the_defaults_with_the_runtime_flags() {
         "ocrEnabled",
         "autoPasteOnEnter",
         "pinnedBar",
+        "quickCtrlTwice",
         "paused",
         "hotkey",
         "startAtLogin",
@@ -925,6 +926,7 @@ fn get_settings_returns_the_defaults_with_the_runtime_flags() {
     }
     assert_eq!(dto.hotkey, "Ctrl+Shift+Space");
     assert!(dto.start_at_login, "on by default");
+    assert!(dto.quick_ctrl_twice, "on by default");
 }
 
 #[test]
