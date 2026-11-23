@@ -78,6 +78,8 @@ pub fn show(app: &AppHandle) {
             let _ = w.set_size(PhysicalSize::new(pw as u32, ph as u32));
         }
     }
+    // Remember the window the popup came from, so Enter can paste back into it.
+    platform::remember_foreground(app, &w);
     let _ = w.show();
     let _ = w.set_focus();
     let _ = w.emit_to(LABEL, events::QUICK_SHOWN, ());
@@ -141,14 +143,22 @@ pub fn start_watcher(app: &AppHandle) {
 // Commands (the popup's own permissions, see capabilities/quick.json)
 // ---------------------------------------------------------------------------
 
-/// Copy item `id` to the clipboard (never pastes) and hide the popup unless it is pinned.
+/// Copy item `id` to the clipboard and hide the popup unless it is pinned. With `paste`
+/// (Enter or a click) and the "Paste on Enter" setting on, it also pastes into the window
+/// the popup came from, like the main bar does.
 #[tauri::command(async)]
-pub fn quick_copy(app: AppHandle, id: u64) -> Result<(), String> {
+pub fn quick_copy(app: AppHandle, id: u64, paste: bool) -> Result<(), String> {
     let store = app
         .try_state::<std::sync::Arc<crate::store::Store>>()
         .map(|s| std::sync::Arc::clone(s.inner()))
         .ok_or_else(|| "the history is not available".to_owned())?;
     let state = app.state::<AppState>();
+    let paste = paste
+        && state
+            .settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .auto_paste_on_enter;
     let env = CopyEnv {
         store: &store,
         paths: &FsPathChecker,
@@ -157,7 +167,7 @@ pub fn quick_copy(app: AppHandle, id: u64) -> Result<(), String> {
         own_window: own_window_handle(&app),
         clock: mono_ms,
     };
-    copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, false, || {
+    copy_item_with::<platform::Writer, platform::PasterImpl>(&env, id, paste, || {
         if !pinned(&app) {
             hide(&app);
         }
