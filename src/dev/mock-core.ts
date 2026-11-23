@@ -493,6 +493,7 @@ function runAsk(question: unknown): unknown {
     terms: words.slice(0, 12),
     sources: ["note", "task", "clip"],
     scanned: all.length,
+    semantic: Boolean(settings.llmEmbeddingModel),
   };
   const hits = scored.map(({ c }, i) => ({
     n: i + 1,

@@ -73,6 +73,7 @@ export function searchedLine(s: AskSearched): string {
   const out = [`Looked in ${list}`];
   if (s.from && s.to) out.push(s.from === s.to ? s.from : `${s.from} to ${s.to}`);
   out.push(`${s.scanned} ${s.scanned === 1 ? "item" : "items"}`);
+  if (s.semantic) out.push("by meaning too");
   return out.join(" · ");
 }
 

@@ -477,6 +477,8 @@ export interface AskSearched {
   sources: AskSource[];
   /** Items looked through. */
   scanned: number;
+  /** Whether items were also ranked by meaning (an embedding model is set up). */
+  semantic: boolean;
 }
 
 export interface AskAnswer {
