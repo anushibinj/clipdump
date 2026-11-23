@@ -1,12 +1,12 @@
 name: cache-warm
 
 # Tag builds (release.yml) can only restore caches saved from the default branch. This
-# workflow compiles the same dependencies on main, under the same cache keys, so a
+# workflow compiles the same dependencies on master, under the same cache keys, so a
 # release starts warm. The weekly run keeps the caches from being evicted after 7 days
 # without use.
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "src-tauri/Cargo.lock"
       - "src-tauri/Cargo.toml"
