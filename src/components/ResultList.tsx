@@ -80,7 +80,7 @@ export function ResultList({
       }}
     >
       {header}
-      <div className="@container/body flex min-h-0 flex-1 flex-col @xl/body:flex-row">
+      <div className="@container/body flex min-h-0 flex-1 flex-col">
         <div className="@container min-h-0 min-w-0 flex-1">
           <CommandList className="h-full max-h-none py-1">
             {results.length === 0 ? (
