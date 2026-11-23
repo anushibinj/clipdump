@@ -48,6 +48,8 @@ export type Action =
   | { type: "toggleNotes" }
   /** Alt+1..N: jump straight to an app mode (see `MODE_ORDER`). */
   | { type: "switchMode"; view: ModeView }
+  /** Alt+/ or Alt+?: open the Ask view with the caret in its input. */
+  | { type: "openAsk" }
   | { type: "move"; delta: number }
   | { type: "escape" };
 
@@ -113,6 +115,11 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   const mode = digit(e);
   if (alt && !ctrl && !shift && mode !== null && mode >= 1 && mode <= MODE_ORDER.length) {
     return { type: "switchMode", view: MODE_ORDER[mode - 1] };
+  }
+  // Alt+/ or Alt+? (Alt+Shift+/ on a US layout): Ask, reached from every view. Matched by
+  // character or by the physical slash key, with or without Shift.
+  if (alt && !ctrl && (e.key === "?" || e.key === "/" || e.code === "Slash")) {
+    return { type: "openAsk" };
   }
   // The settings, task, notes and ask views have their own fields and keys: only Esc, Ctrl+, Ctrl+?,
   // Ctrl+T, Tab (tasks) and Ctrl+Shift+N act here.

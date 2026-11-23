@@ -215,3 +215,18 @@ describe("Alt+digit switches the app mode", () => {
     });
   });
 });
+
+describe("Alt+/ and Alt+? open Ask", () => {
+  it("from every view, by character or physical key", () => {
+    for (const view of ["search", "notes", "tasks", "ask", "settings"] as const) {
+      const r = (e: KeyInfo) => resolveShortcut(e, view);
+      expect(r({ ...k("/", { altKey: true }), code: "Slash" })).toEqual({ type: "openAsk" });
+      expect(r({ ...k("?", { altKey: true, shiftKey: true }), code: "Slash" })).toEqual({ type: "openAsk" });
+    }
+  });
+  it("Ctrl+/ still opens the shortcuts help", () => {
+    expect(resolveShortcut({ ...k("/", { ctrlKey: true }), code: "Slash" }, "search")).toEqual({
+      type: "toggleShortcuts",
+    });
+  });
+});
