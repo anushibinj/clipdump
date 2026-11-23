@@ -25,6 +25,21 @@
         "shadow": true,
         "focus": false
       }
+      ,{
+        "label": "quick",
+        "title": "clipdump quick",
+        "url": "index.html?w=quick",
+        "width": 360,
+        "height": 196,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "shadow": true,
+        "focus": false
+      }
     ],
     "security": {
       "csp": null

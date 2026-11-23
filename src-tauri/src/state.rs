@@ -43,6 +43,9 @@ pub struct AppState {
     /// after a copy. Mirrors `Settings::pinned_bar` as an atomic so the blur
     /// handler and the hotkey never take the settings lock. Default off.
     pub pinned_bar: AtomicBool,
+    /// The tiny clipboard is pinned: it stays after a copy or a click elsewhere.
+    /// Reset to false whenever it hides.
+    pub quick_pinned: AtomicBool,
     /// Raw handle (HWND on Windows, 0 elsewhere) of the window that had focus
     /// before the bar opened. `copy_item` takes it for auto-paste.
     pub prev_foreground: AtomicIsize,

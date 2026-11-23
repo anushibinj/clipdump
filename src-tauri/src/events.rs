@@ -3,6 +3,8 @@
 
 /// The bar became visible and should focus and select its input.
 pub const BAR_SHOWN: &str = "bar:shown";
+/// The tiny clipboard (Ctrl twice) was shown: reset its query and focus its input.
+pub const QUICK_SHOWN: &str = "quick:shown";
 /// The bar was hidden.
 pub const BAR_HIDDEN: &str = "bar:hidden";
 /// The history changed (new item, OCR result, delete, pin). Debounced to at most

@@ -145,10 +145,17 @@ pub fn run() {
             commands::notes::add_note,
             commands::notes::update_note,
             commands::notes::delete_note,
-            commands::perf_ack
+            commands::perf_ack,
+            quick::quick_copy,
+            quick::set_quick_pinned,
+            quick::hide_quick
         ])
         .manage(AppState::default())
         .on_window_event(|win, event| {
+            if win.label() == quick::LABEL {
+                quick::on_window_event(win.app_handle(), event);
+                return;
+            }
             if win.label() != window::LABEL {
                 return;
             }
@@ -193,6 +200,8 @@ pub fn run() {
                 *state.hotkey_error.lock().unwrap() = note;
             }
             tray::build(app)?;
+            #[cfg(desktop)]
+            quick::start_watcher(app.handle());
             start_capture(app);
             if state.pinned_bar.load(std::sync::atomic::Ordering::Relaxed) {
                 window::show_pinned(app.handle());

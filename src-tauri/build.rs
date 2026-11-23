@@ -39,6 +39,9 @@ const COMMANDS: &[&str] = &[
     "update_note",
     "delete_note",
     "perf_ack",
+    "quick_copy",
+    "set_quick_pinned",
+    "hide_quick",
 ];
 
 fn main() {

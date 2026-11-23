@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick",
+  "description": "Tiny clipboard popup (Ctrl twice): listen to events, search the history, copy one item, pin and hide itself. Nothing else.",
+  "windows": ["quick"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-search",
+    "allow-quick-copy",
+    "allow-set-quick-pinned",
+    "allow-hide-quick"
+  ]
+}
