@@ -20,8 +20,11 @@
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+        "minWidth": 360,
+        "minHeight": 260,
         "visible": false,
-        "resizable": false,
+        "resizable": true,
+        "zoomHotkeysEnabled": true,
         "shadow": true,
         "focus": false
       }
