@@ -1,6 +1,6 @@
 [package]
 name = "clipdump"
-version = "0.5.1"
+version = "0.6.0"
 description = "Ultra-fast clipboard dumpyard"
 authors = []
 edition = "2024"
