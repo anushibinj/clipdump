@@ -154,6 +154,7 @@ export function DelegationsView({ api, inputRef, onNotice, onClose }: Props) {
               guard(() => {
                 api.addMember(name);
                 setName("");
+                setTeamOpen(true); // stays open for the next person once the team is no longer empty
               });
             }}
             className="flex items-center gap-1"
