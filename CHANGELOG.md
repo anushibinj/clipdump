@@ -12,12 +12,15 @@ All notable changes to Clipdump are listed here. The format follows
 
 ### Added
 
+- The Done section in the Tasks view can be collapsed and expanded.
 - Delegations: marking one done now keeps it, with its notes, under a collapsible Done list. From there it can be
   reopened or deleted for good. Done work never counts as overdue and never alerts.
 - Delegations: a section in the shortcuts help.
 
 ### Changed
 
+- macOS bundles are now ad-hoc signed, so Apple silicon shows the usual "unidentified developer" prompt instead of
+  reporting the app as damaged. See `docs/packaging.md` for the steps and the Developer ID upgrade path.
 - Delegations: removing a team member now also removes their done delegations (their open ones still block it).
 
 ## [0.10.0] - 2026-11-27
