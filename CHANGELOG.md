@@ -8,6 +8,17 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-27
+
+### Added
+
+- A Delegations tab (`Ctrl+4`) to follow up on work handed to the team. Every delegation needs a follow-up time.
+- A fixed Team list, edited in the tab, to pick the assignee from. Delegations are grouped by person; people with
+  nothing delegated are not shown.
+- A sidebar per delegation for notes, reassigning, and postponing the deadline (1 day, 1 week, or a chosen time).
+- A sound and a system notification when a deadline passes, and a red circle on the tab icon with the number of
+  overdue delegations.
+
 ## [0.9.0] - 2026-11-23
 
 ### Added
