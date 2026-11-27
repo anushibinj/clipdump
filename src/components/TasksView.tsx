@@ -121,10 +121,20 @@ export function TasksView({
     writeTaskNotesOpen(open);
   }, []);
 
-  const view = useMemo(
+  // The Done section can be folded to just its header; its tasks then leave the selectable rows.
+  const [doneCollapsed, setDoneCollapsed] = useState(false);
+  const fullView = useMemo(
     () => buildTaskView(api.tasks, { showHidden, now: api.now, quickOnly }),
     [api.tasks, api.now, showHidden, quickOnly],
   );
+  const view = useMemo(() => {
+    if (!doneCollapsed) return fullView;
+    const doneIds = new Set(
+      fullView.sections.find((s) => s.key === "done")?.tasks.map((t) => t.id),
+    );
+    if (doneIds.size === 0) return fullView;
+    return { ...fullView, rows: fullView.rows.filter((t) => !doneIds.has(t.id)) };
+  }, [fullView, doneCollapsed]);
   const quiet = useMemo(() => quietTasks(api.tasks, api.now), [api.tasks, api.now]);
 
   const focusedByTask = useMemo(() => {
@@ -201,6 +211,7 @@ export function TasksView({
     if (!latest.current.view.rows.some((t) => t.id === id)) {
       setQuickOnly(false);
       setShowHidden(true);
+      setDoneCollapsed(false);
     }
     setSelectedId(id);
   }, []);
@@ -822,9 +833,10 @@ export function TasksView({
               unsized={view.unsized}
             />
           ) : (
-            view.sections.map((s) => (
-              <section key={s.key} aria-label={s.title}>
-                <h3 className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            view.sections.map((s) => {
+              const folded = s.key === "done" && doneCollapsed;
+              const title = (
+                <>
                   {s.title}{" "}
                   <span className="tabular-nums">{s.tasks.length}</span>
                   {SECTION_HINT[s.key] && (
@@ -832,8 +844,30 @@ export function TasksView({
                       {SECTION_HINT[s.key]}
                     </span>
                   )}
-                </h3>
-                {s.tasks.map((t) => (
+                </>
+              );
+              return (
+              <section key={s.key} aria-label={s.title}>
+                {s.key === "done" ? (
+                  <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-expanded={!folded}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setDoneCollapsed((c) => !c)}
+                      className="flex w-full items-center gap-1 px-4 pt-2 pb-1 text-left uppercase hover:text-foreground"
+                    >
+                      <ChevronRight className={`size-3.5 shrink-0 transition-transform ${folded ? "" : "rotate-90"}`} aria-hidden />
+                      <span>{title}</span>
+                    </button>
+                  </h3>
+                ) : (
+                  <h3 className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    {title}
+                  </h3>
+                )}
+                {!folded && s.tasks.map((t) => (
                   <TaskRow
                     key={t.id}
                     task={t}
@@ -850,7 +884,8 @@ export function TasksView({
                   />
                 ))}
               </section>
-            ))
+              );
+            })
           )}
         </div>
         {notesOpen && selectedTask && !lockedVisible && (

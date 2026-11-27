@@ -569,6 +569,20 @@ export function deleteNote(id: number): Promise<boolean> {
   return invoke<boolean>("delete_note", { id });
 }
 
+// ---------------------------------------------------------------------------
+// Delegations (src-tauri/src/delegations.rs, commands/delegations.rs)
+// ---------------------------------------------------------------------------
+
+/** The saved document as JSON text; empty when nothing was saved yet. The shape is `lib/delegations.ts`. */
+export function getDelegations(): Promise<string> {
+  return invoke<string>("get_delegations");
+}
+
+/** Replace the saved document. Rejects with a plain message (use `errorMessage`). */
+export function setDelegations(doc: string): Promise<void> {
+  return invoke<void>("set_delegations", { doc });
+}
+
 export function getStats(): Promise<StatsDto> {
   return invoke<StatsDto>("get_stats");
 }

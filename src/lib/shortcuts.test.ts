@@ -197,16 +197,17 @@ describe("Ctrl+/ and Ctrl+?", () => {
 
 describe("Ctrl+digit switches the app mode", () => {
   const alt = { ctrlKey: true };
-  it("Ctrl+1 clipboard, Ctrl+2 notes, Ctrl+3 tasks, from every view", () => {
-    for (const view of ["search", "notes", "tasks", "ask", "settings"] as const) {
+  it("Ctrl+1 clipboard, Ctrl+2 notes, Ctrl+3 tasks, Ctrl+4 delegations, from every view", () => {
+    for (const view of ["search", "notes", "tasks", "delegations", "ask", "settings"] as const) {
       const r = (e: KeyInfo) => resolveShortcut(e, view);
       expect(r(k("1", alt))).toEqual({ type: "switchMode", view: "search" });
       expect(r(k("2", alt))).toEqual({ type: "switchMode", view: "notes" });
       expect(r(k("3", alt))).toEqual({ type: "switchMode", view: "tasks" });
+      expect(r(k("4", alt))).toEqual({ type: "switchMode", view: "delegations" });
     }
   });
   it("numbers past the last mode do nothing, and Ctrl+Alt+digit is not a mode switch", () => {
-    expect(resolveShortcut(k("4", alt), "search")).toBeNull();
+    expect(resolveShortcut(k("5", alt), "search")).toBeNull();
     expect(resolveShortcut(k("1", { altKey: true, ctrlKey: true }), "search")).toBeNull();
   });
   it("uses the physical key", () => {
@@ -214,6 +215,13 @@ describe("Ctrl+digit switches the app mode", () => {
       type: "switchMode",
       view: "search",
     });
+  });
+});
+
+describe("the delegations view keeps Esc and Tab for itself", () => {
+  it("does not hide the bar on Esc nor switch to tasks on Tab", () => {
+    expect(resolveShortcut(k("Escape"), "delegations")).toBeNull();
+    expect(resolveShortcut(k("Tab"), "delegations")).toBeNull();
   });
 });
 
