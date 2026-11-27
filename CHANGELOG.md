@@ -8,6 +8,16 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Delegations: marking one done now keeps it, with its notes, under a collapsible Done list. From there it can be
+  reopened or deleted for good. Done work never counts as overdue and never alerts.
+- Delegations: a section in the shortcuts help.
+
+### Changed
+
+- Delegations: removing a team member now also removes their done delegations (their open ones still block it).
+
 ## [0.10.0] - 2026-11-27
 
 ### Added

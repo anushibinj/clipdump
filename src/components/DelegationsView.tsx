@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { Plus, UserCheck, Users, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, UserCheck, Users, X } from "lucide-react";
 import { DelegationPanel, fieldClass } from "@/components/DelegationPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import type { DelegationsApi } from "@/hooks/useDelegations";
 import {
   MAX_NAME_CHARS,
   MAX_TITLE_CHARS,
+  doneItems,
   dueLabel,
   fromLocalInput,
   groupByAssignee,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/delegations";
 import { requestAlertPermission } from "@/lib/focusAlert";
 import { errorMessage } from "@/lib/ipc";
+import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -37,8 +39,11 @@ export function DelegationsView({ api, inputRef, onNotice, onClose }: Props) {
   const [name, setName] = useState("");
   const [teamOpen, setTeamOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showDone, setShowDone] = useState(false);
 
   const groups = useMemo(() => groupByAssignee(doc), [doc]);
+  const done = useMemo(() => doneItems(doc), [doc]);
+  const open = doc.items.length - done.length;
   const selected = doc.items.find((d) => d.id === selectedId) ?? null;
   const showTeam = teamOpen || doc.team.length === 0;
   // The assignee select falls back to the only person there is, so a one-person team needs no click.
@@ -124,8 +129,14 @@ export function DelegationsView({ api, inputRef, onNotice, onClose }: Props) {
 
       <div className="flex h-9 items-center gap-3 border-b px-4 text-xs text-muted-foreground">
         <span className="tabular-nums">
-          {doc.items.length} {doc.items.length === 1 ? "delegation" : "delegations"}
+          {open} open
         </span>
+        {done.length > 0 && (
+          <Button type="button" variant="ghost" size="xs" aria-expanded={showDone} onClick={() => setShowDone((v) => !v)} className="gap-1">
+            {showDone ? <ChevronDown aria-hidden /> : <ChevronRight aria-hidden />}
+            Done ({done.length})
+          </Button>
+        )}
         <Button type="button" variant="ghost" size="xs" aria-pressed={showTeam} onClick={() => setTeamOpen((v) => !v)} className="ml-auto gap-1.5">
           <Users aria-hidden />
           Team ({doc.team.length})
@@ -177,7 +188,7 @@ export function DelegationsView({ api, inputRef, onNotice, onClose }: Props) {
 
       <div className="flex min-h-0 flex-1">
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-1">
-          {groups.length === 0 ? (
+          {groups.length === 0 && !(showDone && done.length > 0) ? (
             <Empty ready={api.ready} error={api.error} hasTeam={doc.team.length > 0} />
           ) : (
             groups.map(({ member, items }) => (
@@ -209,6 +220,29 @@ export function DelegationsView({ api, inputRef, onNotice, onClose }: Props) {
                 ))}
               </section>
             ))
+          )}
+          {showDone && done.length > 0 && (
+            <section aria-label="Done" className="py-1">
+              <h3 className="px-4 py-1 text-xs font-medium text-muted-foreground">
+                Done <span className="tabular-nums opacity-70">{done.length}</span>
+              </h3>
+              {done.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  aria-pressed={d.id === selectedId}
+                  onClick={() => setSelectedId(d.id === selectedId ? null : d.id)}
+                  className={cn(
+                    "flex w-full items-center gap-3 px-4 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-foreground/[0.05]",
+                    d.id === selectedId && "bg-foreground/[0.08]",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate line-through">{d.title}</span>
+                  <span className="shrink-0 text-xs">{doc.team.find((m) => m.id === d.assigneeId)?.name}</span>
+                  <span className="shrink-0 text-xs tabular-nums">{relativeTime(d.doneAt ?? 0, api.now)}</span>
+                </button>
+              ))}
+            </section>
           )}
         </div>
         {selected && <DelegationPanel key={selected.id} api={api} item={selected} guard={guard} onClose={() => setSelectedId(null)} />}

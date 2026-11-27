@@ -32,7 +32,7 @@ impl std::fmt::Display for DelegationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::NotJson => "the delegations are not valid",
-            Self::TooLarge => "too many delegations, finish some first",
+            Self::TooLarge => "too many delegations, delete some first",
             Self::Save => "could not save the delegations",
         })
     }

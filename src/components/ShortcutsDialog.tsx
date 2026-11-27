@@ -72,6 +72,12 @@ const NOTE_SHORTCUTS: Shortcut[] = [
   { keys: ["Esc"], label: "Clear the filter, close" },
 ];
 
+const DELEGATION_SHORTCUTS: Shortcut[] = [
+  { keys: ["Enter"], label: "Delegate the typed work (needs who and a follow-up time)" },
+  { keys: ["Tab"], label: "Move between the fields" },
+  { keys: ["Esc"], label: "Close the details, then the team list, then the bar" },
+];
+
 const ASK_SHORTCUTS: Shortcut[] = [
   { keys: ["Enter"], label: "Ask the question" },
   { keys: ["Esc"], label: "Clear the text, then the answer, then close" },
@@ -160,21 +166,25 @@ export const ShortcutsDialog = memo(function ShortcutsDialog({ open, onOpenChang
   const clipboardItems = filterShortcuts(SHORTCUTS, query);
   const taskItems = filterShortcuts(TASK_SHORTCUTS, query);
   const noteItems = filterShortcuts(NOTE_SHORTCUTS, query);
+  const delegationItems = filterShortcuts(DELEGATION_SHORTCUTS, query);
   const askItems = filterShortcuts(ASK_SHORTCUTS, query);
-  const noMatch = clipboardItems.length + taskItems.length + noteItems.length + askItems.length === 0;
+  const noMatch = clipboardItems.length + taskItems.length + noteItems.length + delegationItems.length + askItems.length === 0;
   const clipboard = <List key="clipboard" title="Clipboard search" items={clipboardItems} />;
   const tasks = <List key="tasks" title="Tasks" items={taskItems} />;
   const notes = <List key="notes" title="Notes" items={noteItems} />;
+  const delegations = <List key="delegations" title="Delegations" items={delegationItems} />;
   // The view behind the dialog comes first.
   const ask = <List key="ask" title="Ask" items={askItems} />;
   const sections =
     view === "tasks"
-      ? [tasks, clipboard, notes, ask]
+      ? [tasks, clipboard, notes, delegations, ask]
       : view === "notes"
-        ? [notes, clipboard, tasks, ask]
-        : view === "ask"
-          ? [ask, clipboard, tasks, notes]
-          : [clipboard, tasks, notes, ask];
+        ? [notes, clipboard, tasks, delegations, ask]
+        : view === "delegations"
+          ? [delegations, clipboard, tasks, notes, ask]
+          : view === "ask"
+            ? [ask, clipboard, tasks, notes, delegations]
+            : [clipboard, tasks, notes, delegations, ask];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
