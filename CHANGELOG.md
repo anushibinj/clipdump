@@ -8,6 +8,8 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-27
+
 ### Added
 
 - Delegations: marking one done now keeps it, with its notes, under a collapsible Done list. From there it can be
