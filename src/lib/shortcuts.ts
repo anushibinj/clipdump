@@ -16,16 +16,16 @@ export interface KeyInfo {
   keyCode?: number;
 }
 
-export type View = "search" | "settings" | "tasks" | "notes" | "ask";
+export type View = "search" | "settings" | "tasks" | "notes" | "delegations" | "ask";
 
 /** The app modes reachable with `Ctrl+<position>`. */
-export type ModeView = "search" | "notes" | "tasks";
+export type ModeView = "search" | "notes" | "tasks" | "delegations";
 
 /**
  * The order of the app modes, same as the title bar icons: `Ctrl+1` is the first, `Ctrl+2` the second...
  * A new mode is appended here, so it takes the next free number and the existing ones never move.
  */
-export const MODE_ORDER: readonly ModeView[] = ["search", "notes", "tasks"];
+export const MODE_ORDER: readonly ModeView[] = ["search", "notes", "tasks", "delegations"];
 
 export type Action =
   | { type: "copy"; paste: boolean }
@@ -71,7 +71,7 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
   const { ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta } = e;
   if (meta) return null;
 
-  // The task, notes and ask views peel their own layers with Esc (an edit, the typed text, then the bar).
+  // The task, notes, delegations and ask views peel their own layers with Esc (an edit, the typed text, then the bar).
   if (
     e.key === "Escape" &&
     !ctrl &&
@@ -79,6 +79,7 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
     !shift &&
     view !== "tasks" &&
     view !== "notes" &&
+    view !== "delegations" &&
     view !== "ask"
   ) {
     return { type: "escape" };
@@ -95,7 +96,7 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
     return { type: "toggleTasks" };
   }
   // Tab cycles the app modes: clipboard search <-> tasks. Settings keeps Tab for moving between its
-  // controls, and the notes keep it for the editor's own fields. Ask has nowhere to tab to.
+  // controls, and the notes and delegations keep it for their own fields. Ask has nowhere to tab to.
   if (
     e.key === "Tab" &&
     !ctrl &&
@@ -103,6 +104,7 @@ export function resolveShortcut(e: KeyInfo, view: View): Action | null {
     !shift &&
     view !== "settings" &&
     view !== "notes" &&
+    view !== "delegations" &&
     view !== "ask"
   ) {
     return { type: "toggleTasks" };

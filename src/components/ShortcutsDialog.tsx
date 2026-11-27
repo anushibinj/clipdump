@@ -23,7 +23,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "Del"], label: "Delete item" },
   { keys: ["Ctrl", "Shift", "Del"], label: "Clear history" },
   { keys: ["Alt", "Shift", "1-4"], label: "Filter: all, text, images, files" },
-  { keys: ["Ctrl", "1-3"], label: "Switch mode: clipboard, notes, tasks" },
+  { keys: ["Ctrl", "1-4"], label: "Switch mode: clipboard, notes, tasks, delegations" },
   { keys: ["Alt", "/"], label: "Ask (also Alt+?)" },
   { keys: ["Ctrl", "T"], label: "Tasks" },
   { keys: ["Ctrl", "Shift", "N"], label: "Notes" },
