@@ -37,6 +37,7 @@ pub mod ask;
 mod bounds_tests;
 pub mod config;
 pub mod copy;
+pub mod delegations;
 pub mod folder;
 pub mod notes;
 pub mod preview;
