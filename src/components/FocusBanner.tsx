@@ -94,7 +94,7 @@ function Locked({ focus, parkRef, onReturnFocus, onAddTask, onMarkDone, notes, f
     <div className={`${bar} bg-primary/[0.06] ${fill ? "min-h-0 flex-1" : ""}`} role="region" aria-label="Focus lock">
       <div className="flex items-center gap-2.5">
         <Lock className="size-3.5 shrink-0 text-primary" aria-hidden />
-        <span className="min-w-0 flex-1 truncate font-medium" title={s.title}>
+        <span className="min-w-0 flex-1 truncate text-2xl font-semibold" title={s.title}>
           {s.title}
         </span>
         <StreakChip focus={focus} />
