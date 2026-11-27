@@ -8,6 +8,13 @@ All notable changes to Clipdump are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-27
+
+### Fixed
+
+- The build failed on a stale command count in the capabilities test. The test now expects the 41 commands the
+  app registers. No change to app behaviour.
+
 ## [0.11.0] - 2026-11-27
 
 ### Added
