@@ -2,6 +2,7 @@ import { memo, type MouseEvent } from "react";
 import {
   ClipboardList,
   ListTodo,
+  UserCheck,
   NotebookPen,
   Pin,
   PinOff,
@@ -10,11 +11,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type TitleView = "search" | "notes" | "tasks" | "ask" | "settings";
+export type TitleView = "search" | "notes" | "tasks" | "delegations" | "ask" | "settings";
+type TabId = "search" | "notes" | "tasks" | "delegations";
 
 interface TitleBarProps {
   view: TitleView;
-  onSwitch: (view: "search" | "notes" | "tasks") => void;
+  onSwitch: (view: TabId) => void;
   pinned: boolean;
   onTogglePinned: () => void;
   onClose: () => void;
@@ -24,6 +26,8 @@ interface TitleBarProps {
   workingOn?: string;
   /** Time left in a locked focus session as mm:ss, shown next to the Tasks icon. */
   timeLeft?: string;
+  /** Delegations past their deadline: the red circle on the Delegations icon. */
+  overdue?: number;
 }
 
 const iconBtn =
@@ -43,9 +47,10 @@ export const TitleBar = memo(function TitleBar({
   onDrag,
   workingOn,
   timeLeft,
+  overdue = 0,
 }: TitleBarProps) {
   const tabs: {
-    id: "search" | "notes" | "tasks";
+    id: TabId;
     label: string;
     Icon: LucideIcon;
   }[] = [
@@ -57,6 +62,11 @@ export const TitleBar = memo(function TitleBar({
         ? `Tasks (Ctrl+3, Ctrl+T), working on: ${workingOn}`
         : "Tasks (Ctrl+3, Ctrl+T)",
       Icon: ListTodo,
+    },
+    {
+      id: "delegations",
+      label: overdue > 0 ? `Delegations (Ctrl+4), ${overdue} overdue` : "Delegations (Ctrl+4)",
+      Icon: UserCheck,
     },
   ];
   return (
@@ -95,6 +105,14 @@ export const TitleBar = memo(function TitleBar({
             {id === "tasks" && timeLeft && (
               <span className="text-xs font-medium tabular-nums" role="timer">
                 {timeLeft}
+              </span>
+            )}
+            {id === "delegations" && overdue > 0 && (
+              <span
+                className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold leading-none tabular-nums text-white"
+                aria-hidden
+              >
+                {overdue > 99 ? "99+" : overdue}
               </span>
             )}
             {id === "tasks" && workingOn && !timeLeft && (

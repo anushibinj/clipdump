@@ -39,6 +39,8 @@ const COMMANDS: &[&str] = &[
     "add_note",
     "update_note",
     "delete_note",
+    "get_delegations",
+    "set_delegations",
     "perf_ack",
     "quick_copy",
     "set_quick_pinned",

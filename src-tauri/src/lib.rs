@@ -47,6 +47,8 @@ mod ask;
 mod taskai;
 // The task list of the Tasks view, kept apart from the clipboard history.
 mod tasks;
+// The team and delegations of the Delegations view, kept apart from the clipboard history.
+mod delegations;
 // The notes of the Notes view, kept apart from the clipboard history.
 mod notes;
 // In-memory store, retention and blob cache. Search (Phase 8) and the IPC
@@ -146,6 +148,8 @@ pub fn run() {
             commands::notes::add_note,
             commands::notes::update_note,
             commands::notes::delete_note,
+            commands::delegations::get_delegations,
+            commands::delegations::set_delegations,
             commands::perf_ack,
             quick::quick_copy,
             quick::set_quick_pinned,
@@ -378,6 +382,24 @@ fn start_notes(
     let _ = app.state::<AppState>().notes.set(Arc::new(notes));
 }
 
+/// Open the delegations with the history's cipher. A failure only turns the Delegations view off.
+fn start_delegations(
+    app: &tauri::App,
+    dir: &std::path::Path,
+    persist: &std::sync::Arc<persist::Persist>,
+) {
+    use std::sync::Arc;
+    let now = commands::tasks::system_now_ms();
+    let (store, moved) = delegations::DelegationStore::open(dir, persist.crypto().clone(), now);
+    if let Some(to) = moved {
+        eprintln!(
+            "clipdump: the delegations were unreadable and were moved to {}",
+            to.display()
+        );
+    }
+    let _ = app.state::<AppState>().delegations.set(Arc::new(store));
+}
+
 /// Capture items waiting for ingest. Bounded so a stalled consumer cannot grow
 /// memory without limit; the watcher drops (and logs) instead of blocking.
 const INGEST_QUEUE: usize = 64;
@@ -467,6 +489,7 @@ fn start_ingest(
     let persist = Arc::clone(store.persist());
     start_tasks(app, &dir, &persist);
     start_notes(app, &dir, &persist);
+    start_delegations(app, &dir, &persist);
     if perf::enabled() {
         perf::record(
             perf::Event::StartupLoad,

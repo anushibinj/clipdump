@@ -44,6 +44,8 @@
     "allow-add-note",
     "allow-update-note",
     "allow-delete-note",
+    "allow-get-delegations",
+    "allow-set-delegations",
     "allow-perf-ack"
   ]
 }

@@ -13,6 +13,7 @@ import { SettingsView } from "@/components/SettingsView";
 import { SettingsButton, ShortcutsButton, ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { AskButton } from "@/components/AskButton";
 import { AskView } from "@/components/AskView";
+import { DelegationsView } from "@/components/DelegationsView";
 import { NotesView } from "@/components/NotesView";
 import { TasksView } from "@/components/TasksView";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -24,6 +25,7 @@ import { useSplit } from "@/hooks/useSplit";
 import { useFocus } from "@/hooks/useFocus";
 import { formatClock, remainingMs } from "@/lib/focus";
 import { useAsk } from "@/hooks/useAsk";
+import { useDelegations } from "@/hooks/useDelegations";
 import { useNotes } from "@/hooks/useNotes";
 import { useTasks } from "@/hooks/useTasks";
 import { readView, writeView } from "@/lib/view";
@@ -169,6 +171,8 @@ function App() {
     [showNotice],
   );
   const focus = useFocus(tasks.tasks, tasks.ready, focusNotice);
+  // Lives here, not in the view: deadlines alert and the tab's red circle counts with the view closed.
+  const delegations = useDelegations((m) => showNotice("error", m));
 
   const dismissNotice = useCallback(() => {
     window.clearTimeout(noticeTimer.current);
@@ -545,6 +549,7 @@ function App() {
               onClose={dismiss}
               onDrag={dragFromHeader}
               workingOn={inFlight[0]?.title}
+              overdue={delegations.overdue}
               timeLeft={
                 focus.data.session
                   ? formatClock(remainingMs(focus.data.session, focus.now))
@@ -580,6 +585,18 @@ function App() {
                   <div className="min-h-0 flex-1">
                     <NotesView
                       api={notes}
+                      inputRef={inputRef}
+                      onNotice={showNotice}
+                      onClose={dismiss}
+                    />
+                  </div>
+                  {footer}
+                </div>
+              ) : view === "delegations" ? (
+                <div className="flex h-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <DelegationsView
+                      api={delegations}
                       inputRef={inputRef}
                       onNotice={showNotice}
                       onClose={dismiss}
