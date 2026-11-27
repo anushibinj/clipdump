@@ -18,6 +18,8 @@ interface TaskRowProps {
   /** Minute rounded "now" (lib/time.ts `minuteNow`), so the memo holds within a minute. */
   now: number;
   onSelect: (id: number) => void;
+  /** Double-click on the row: edit the title in the input (same as F2). */
+  onEditTitle: (id: number) => void;
   /** Click on the status circle: waiting, in flight, done, and around. */
   onAdvance: (id: number) => void;
   onToggleImportant: (id: number) => void;
@@ -51,6 +53,7 @@ export const TaskRow = memo(function TaskRow({
   selected,
   now,
   onSelect,
+  onEditTitle,
   onAdvance,
   onToggleImportant,
   onOpenNotes,
@@ -84,6 +87,9 @@ export const TaskRow = memo(function TaskRow({
       )}
       onClick={() => {
         if (!locked) onSelect(task.id);
+      }}
+      onDoubleClick={() => {
+        if (!locked) onEditTitle(task.id);
       }}
       // Keep keyboard focus in the input.
       onMouseDown={(e) => e.preventDefault()}

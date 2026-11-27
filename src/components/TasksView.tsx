@@ -446,6 +446,16 @@ export function TasksView({
     if (id !== latest.current.selected) hoverMoved.current = true;
     setSelectedId(id);
   }, []);
+  const onEditTitle = useCallback(
+    (id: number) => {
+      const task = latest.current.api.tasks.find((t) => t.id === id);
+      if (!task || lockedOut(task)) return;
+      setSelectedId(id);
+      setMode({ kind: "title", id });
+      setText(task.title);
+    },
+    [lockedOut],
+  );
   const onAdvance = useCallback(
     (id: number) => {
       const task = latest.current.api.tasks.find((t) => t.id === id);
@@ -874,6 +884,7 @@ export function TasksView({
                     selected={t.id === selected}
                     now={api.now}
                     onSelect={onSelect}
+                    onEditTitle={onEditTitle}
                     onAdvance={onAdvance}
                     onToggleImportant={onToggleImportant}
                     onOpenNotes={onOpenNotes}
