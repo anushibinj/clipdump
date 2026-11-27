@@ -8,6 +8,7 @@ import {
   parseDoc,
   removeItem,
   removeMember,
+  setDone,
   unalerted,
   updateItem,
   type Delegation,
@@ -33,8 +34,10 @@ export interface DelegationsApi {
   removeMember: (id: number) => void;
   add: (title: string, assigneeId: number, dueAt: number) => void;
   update: (id: number, patch: Partial<Pick<Delegation, "title" | "assigneeId" | "dueAt" | "notes">>) => void;
-  /** Finished: the delegation leaves the list. */
-  finish: (id: number) => void;
+  /** Mark done (it leaves the open list, notes kept) or open again. */
+  setDone: (id: number, done: boolean) => void;
+  /** Delete for good, notes included. */
+  remove: (id: number) => void;
 }
 
 /**
@@ -115,6 +118,7 @@ export function useDelegations(onError: (message: string) => void): DelegationsA
     removeMember: useCallback((id) => act((d) => removeMember(d, id)), [act]),
     add: useCallback((title, assigneeId, dueAt) => act((d) => addItem(d, { title, assigneeId, dueAt }, Date.now())), [act]),
     update: useCallback((id, patch) => act((d) => updateItem(d, id, patch)), [act]),
-    finish: useCallback((id) => act((d) => removeItem(d, id)), [act]),
+    setDone: useCallback((id, done) => act((d) => setDone(d, id, done ? Date.now() : null)), [act]),
+    remove: useCallback((id) => act((d) => removeItem(d, id)), [act]),
   };
 }

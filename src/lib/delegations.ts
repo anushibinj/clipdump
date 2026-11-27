@@ -18,6 +18,8 @@ export interface Delegation {
   /** The `dueAt` an alert was already shown for, so each deadline alerts once (a postpone alerts again). */
   alertedFor: number | null;
   createdAt: number;
+  /** Unix ms it was marked done, or null while open. Done work stays (with its notes) until deleted. */
+  doneAt: number | null;
 }
 
 export interface Doc {
@@ -43,7 +45,8 @@ export function parseDoc(text: string): Doc {
     (d) => typeof d?.title === "string" && ids.has(d.assigneeId) && Number.isFinite(d.dueAt),
   );
   const top = Math.max(0, ...team.map((m) => m.id), ...items.map((d) => d.id));
-  return { nextId: Math.max(raw.nextId ?? 1, top + 1), team, items };
+  // `doneAt` did not exist in the first release: older documents have only open delegations.
+  return { nextId: Math.max(raw.nextId ?? 1, top + 1), team, items: items.map((d) => ({ ...d, doneAt: d.doneAt ?? null })) };
 }
 
 export function addMember(doc: Doc, name: string): Doc {
@@ -54,10 +57,10 @@ export function addMember(doc: Doc, name: string): Doc {
   return { ...doc, nextId: doc.nextId + 1, team: [...doc.team, { id: doc.nextId, name: n }] };
 }
 
-/** A person with open delegations cannot be removed: their work would lose its owner. */
+/** A person with open delegations cannot be removed: their work would lose its owner. Their done ones go with them. */
 export function removeMember(doc: Doc, id: number): Doc {
-  if (doc.items.some((d) => d.assigneeId === id)) throw new Error("reassign or finish their delegations first");
-  return { ...doc, team: doc.team.filter((m) => m.id !== id) };
+  if (doc.items.some((d) => d.assigneeId === id && d.doneAt === null)) throw new Error("reassign or finish their delegations first");
+  return { ...doc, team: doc.team.filter((m) => m.id !== id), items: doc.items.filter((d) => d.assigneeId !== id) };
 }
 
 function checkItem(doc: Doc, d: Pick<Delegation, "title" | "assigneeId" | "dueAt">): string {
@@ -71,7 +74,7 @@ function checkItem(doc: Doc, d: Pick<Delegation, "title" | "assigneeId" | "dueAt
 
 export function addItem(doc: Doc, d: Pick<Delegation, "title" | "assigneeId" | "dueAt">, now: number): Doc {
   const title = checkItem(doc, d);
-  const item: Delegation = { ...d, title, id: doc.nextId, notes: "", alertedFor: null, createdAt: now };
+  const item: Delegation = { ...d, title, id: doc.nextId, notes: "", alertedFor: null, createdAt: now, doneAt: null };
   return { ...doc, nextId: doc.nextId + 1, items: [...doc.items, item] };
 }
 
@@ -85,12 +88,19 @@ export function updateItem(doc: Doc, id: number, patch: Partial<Pick<Delegation,
   return { ...doc, items: doc.items.map((d) => (d.id === id ? { ...next, title } : d)) };
 }
 
-/** Finished work leaves the list (its notes go with it). */
+/** Delete for good, notes included. */
 export function removeItem(doc: Doc, id: number): Doc {
   return { ...doc, items: doc.items.filter((d) => d.id !== id) };
 }
 
-export const isOverdue = (d: Delegation, now: number): boolean => d.dueAt <= now;
+/** Done (`now`) or open again (`null`). Done work leaves the open list but keeps its notes. */
+export function setDone(doc: Doc, id: number, doneAt: number | null): Doc {
+  if (!doc.items.some((d) => d.id === id)) throw new Error("delegation not found");
+  return { ...doc, items: doc.items.map((d) => (d.id === id ? { ...d, doneAt } : d)) };
+}
+
+/** Only open work can be overdue: done work never counts or alerts. */
+export const isOverdue = (d: Delegation, now: number): boolean => d.doneAt === null && d.dueAt <= now;
 
 export const overdueCount = (items: Delegation[], now: number): number => items.filter((d) => isOverdue(d, now)).length;
 
@@ -107,16 +117,20 @@ export interface Group {
   items: Delegation[];
 }
 
-/** One group per person who has work, the most urgent first; people without delegations are left out. */
+/** One group per person who has open work, the most urgent first; people without any are left out. */
 export function groupByAssignee(doc: Doc): Group[] {
   return doc.team
     .map((member) => ({
       member,
-      items: doc.items.filter((d) => d.assigneeId === member.id).sort((a, b) => a.dueAt - b.dueAt),
+      items: doc.items.filter((d) => d.assigneeId === member.id && d.doneAt === null).sort((a, b) => a.dueAt - b.dueAt),
     }))
     .filter((g) => g.items.length > 0)
     .sort((a, b) => a.items[0].dueAt - b.items[0].dueAt);
 }
+
+/** The done delegations, the latest finished first. */
+export const doneItems = (doc: Doc): Delegation[] =>
+  doc.items.filter((d) => d.doneAt !== null).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
 
 /** "overdue 3h", "in 2d", or "due now". */
 export function dueLabel(dueAt: number, now: number): string {

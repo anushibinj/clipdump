@@ -3,6 +3,7 @@ import {
   EMPTY_DOC,
   addItem,
   addMember,
+  doneItems,
   dueLabel,
   fromLocalInput,
   groupByAssignee,
@@ -12,6 +13,7 @@ import {
   postponed,
   removeItem,
   removeMember,
+  setDone,
   toLocalInput,
   unalerted,
   updateItem,
@@ -81,6 +83,35 @@ describe("overdue and alerts", () => {
   });
 });
 
+describe("done work", () => {
+  const open = () => addItem(addItem(team(), { title: "a", assigneeId: 1, dueAt: NOW - H }, NOW), { title: "b", assigneeId: 2, dueAt: NOW - H }, NOW);
+  it("leaves the open list, stops counting and alerting, and keeps its notes", () => {
+    let doc = open();
+    doc = updateItem(doc, 1 + 2, { notes: "agreed Friday" }); // ids 1,2 are the team, so the items are 3 and 4
+    doc = setDone(doc, 3, NOW);
+    expect(groupByAssignee(doc).map((g) => g.member.name)).toEqual(["Ben"]);
+    expect(overdueCount(doc.items, NOW)).toBe(1);
+    expect(unalerted(doc.items, NOW).map((d) => d.id)).toEqual([4]);
+    expect(doneItems(doc).map((d) => d.notes)).toEqual(["agreed Friday"]);
+  });
+  it("comes back when reopened", () => {
+    const doc = setDone(setDone(open(), 3, NOW), 3, null);
+    expect(groupByAssignee(doc)).toHaveLength(2);
+    expect(doneItems(doc)).toHaveLength(0);
+    expect(() => setDone(doc, 99, NOW)).toThrow("not found");
+  });
+  it("lists the latest finished first", () => {
+    const doc = setDone(setDone(open(), 3, NOW), 4, NOW + H);
+    expect(doneItems(doc).map((d) => d.id)).toEqual([4, 3]);
+  });
+  it("lets a person go once only their done work is left, and takes it with them", () => {
+    const doc = setDone(open(), 3, NOW);
+    expect(() => removeMember(open(), 1)).toThrow("reassign");
+    const gone = removeMember(doc, 1);
+    expect(gone.items.map((d) => d.id)).toEqual([4]);
+  });
+});
+
 describe("times", () => {
   it("postpones from the old deadline, or from now when it has passed", () => {
     expect(postponed(NOW + H, NOW, 1)).toBe(NOW + H + 24 * H);
@@ -112,6 +143,7 @@ describe("parseDoc", () => {
     });
     const doc = parseDoc(text);
     expect(doc.items.map((d) => d.title)).toEqual(["ok"]);
+    expect(doc.items[0].doneAt).toBeNull(); // saved before done work was kept
     expect(doc.nextId).toBe(6); // never reuses an id already in the file
   });
 });
