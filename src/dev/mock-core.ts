@@ -412,7 +412,12 @@ const control = {
   estimateDelayMs: 300,
   /** Every note command rejects with this message when set. */
   notesError: null as string | null,
+  /** Both delegation commands reject with this message when set. */
+  delegationsError: null as string | null,
 };
+
+/** The saved delegations document (the real one is sealed on disk, `delegations.rs`). */
+let delegationsDoc = "";
 
 // ---------------------------------------------------------------------------
 // Notes (the same rules as src-tauri/src/notes.rs)
@@ -883,6 +888,12 @@ function run(cmd: string, args: Record<string, unknown>): unknown {
     case "delete_note":
       if (control.notesError) throw control.notesError;
       return runNote(cmd, args);
+    case "get_delegations":
+    case "set_delegations":
+      if (control.delegationsError) throw control.delegationsError;
+      if (cmd === "get_delegations") return delegationsDoc;
+      delegationsDoc = String(args.doc);
+      return null;
     case "copy_text":
       return null;
     case "start_drag":
@@ -964,6 +975,8 @@ const hooks = {
     control.notesError = null;
     notes = seedNotes();
     nextNoteId = 100;
+    control.delegationsError = null;
+    delegationsDoc = "";
     load(200);
     changed();
   },
